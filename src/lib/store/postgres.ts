@@ -42,8 +42,10 @@ function ensureSchema(): Promise<void> {
         competitors TEXT NOT NULL,
         category TEXT NOT NULL,
         audience TEXT,
+        schedule TEXT NOT NULL DEFAULT 'none',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS schedule TEXT NOT NULL DEFAULT 'none'`;
       await sql`CREATE TABLE IF NOT EXISTS prompts (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -107,6 +109,7 @@ function rowToProject(r: Record<string, unknown>): Project {
     competitors: JSON.parse(r.competitors as string),
     category: r.category as string,
     audience: (r.audience as string | null) ?? null,
+    schedule: (r.schedule as Project["schedule"]) ?? "none",
     created_at: iso(r.created_at)!,
   };
 }
@@ -144,6 +147,11 @@ export const pgStore: Store = {
     const sql = await db();
     const rows = await sql`SELECT * FROM projects ORDER BY created_at DESC`;
     return rows.map(rowToProject);
+  },
+
+  async updateProjectSchedule(id, schedule) {
+    const sql = await db();
+    await sql`UPDATE projects SET schedule = ${schedule} WHERE id = ${id}`;
   },
 
   async insertPrompts(projectId, prompts) {

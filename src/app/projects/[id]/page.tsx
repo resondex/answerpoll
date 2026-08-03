@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import type { Project, Prompt, Run } from "@/lib/types";
+import TrendChart from "./trend_chart";
+import type {
+  Project,
+  ProjectTrend,
+  Prompt,
+  Run,
+  RunSchedule,
+} from "@/lib/types";
 
 const MODELS = ["gpt-5-mini", "gpt-5", "gpt-4o"];
 
@@ -22,6 +29,7 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [trend, setTrend] = useState<ProjectTrend | null>(null);
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
@@ -43,7 +51,22 @@ export default function ProjectPage() {
     } else {
       setProgress(null);
     }
+    if (d.runs.filter((r) => r.status === "complete").length >= 2) {
+      const tr = await fetch(`/api/projects/${id}/trend`);
+      if (tr.ok) setTrend((await tr.json()).trend);
+    }
   }, [id]);
+
+  async function setSchedule(schedule: RunSchedule) {
+    setDetail((d) =>
+      d ? { ...d, project: { ...d.project, schedule } } : d
+    );
+    await fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schedule }),
+    });
+  }
 
   useEffect(() => {
     refresh();
@@ -138,11 +161,43 @@ export default function ProjectPage() {
           >
             {hasActiveRun ? "Run in progress…" : `Run ${totalCalls} queries`}
           </button>
+          <label className="grid gap-1.5 text-sm font-medium sm:ml-auto">
+            Automatic runs
+            <select
+              value={project.schedule}
+              onChange={(e) => setSchedule(e.target.value as RunSchedule)}
+              className="input w-36"
+            >
+              <option value="none">off</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+            </select>
+          </label>
         </div>
         <p className="text-[13px] text-ink-3 mt-3">
           {prompts.length} prompts × {repeats} repeats — more repeats, tighter
           confidence intervals.
+          {project.schedule !== "none" &&
+            ` Automatic ${project.schedule} runs fire at the daily 06:00 UTC check.`}
         </p>
+      </section>
+
+      <section className="card p-6">
+        <h2 className="section-label mb-1">Trend</h2>
+        {trend && trend.runs.length >= 2 ? (
+          <>
+            <p className="text-[13px] text-ink-3 mb-4">
+              {project.brand} vs. named competitors across {trend.runs.length}{" "}
+              completed runs.
+            </p>
+            <TrendChart trend={trend} />
+          </>
+        ) : (
+          <p className="text-sm text-ink-3 py-4">
+            The trend line starts with your second completed run — schedule
+            automatic runs and the history builds itself.
+          </p>
+        )}
       </section>
 
       <section>

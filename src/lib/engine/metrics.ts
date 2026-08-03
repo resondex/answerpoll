@@ -8,7 +8,7 @@ import type {
 } from "../types";
 
 /** Wilson 95% score interval for a binomial proportion. */
-function wilson(k: number, n: number): { low: number; high: number } {
+export function wilson(k: number, n: number): { low: number; high: number } {
   if (n === 0) return { low: 0, high: 0 };
   const z = 1.96;
   const p = k / n;

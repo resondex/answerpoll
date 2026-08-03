@@ -70,6 +70,13 @@ A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
 
 - More engines: Anthropic, Perplexity (citations → whose content drives
   answers), Gemini.
-- Trend view: re-run monthly, chart mention rate over time.
-- Auth + multi-tenancy (Supabase), billing, scheduled runs.
+- Auth + multi-tenancy (Supabase), billing.
 - Prompt editing / custom prompts per tracker.
+
+## Scheduled runs
+
+Set "Automatic runs" (weekly/monthly) on a tracker. A daily Vercel cron
+(`vercel.json`, 06:00 UTC) launches a run for every tracker that's due.
+Requires a `CRON_SECRET` env var in Vercel — any random string; Vercel sends
+it as the bearer token on cron invocations and the endpoint rejects
+everything else.

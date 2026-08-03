@@ -143,6 +143,84 @@ export default function DashboardPage() {
       </section>
 
       <section className="card p-6">
+        <h2 className="section-label mb-1">Brand summary</h2>
+        <p className="text-[13px] text-ink-3 mb-4">
+          Every brand named in this run, with its full metrics
+          {metrics.brands.length > 25
+            ? ` — top 25 of ${metrics.brands.length} shown`
+            : ""}
+          .
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+                <th className="py-2.5 pr-4 font-semibold">Brand</th>
+                <th className="py-2.5 pr-4 font-semibold">Type</th>
+                <th className="py-2.5 pr-4 font-semibold text-right">
+                  Mention rate
+                </th>
+                <th className="py-2.5 pr-4 font-semibold text-right">95% CI</th>
+                <th className="py-2.5 pr-4 font-semibold text-right">
+                  Avg position
+                </th>
+                <th className="py-2.5 pr-4 font-semibold text-right">
+                  Share of voice
+                </th>
+                <th className="py-2.5 pr-4 font-semibold text-right">
+                  Recommended
+                </th>
+                <th className="py-2.5 font-semibold text-right">Negative</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.brands.slice(0, 25).map((b) => (
+                <tr
+                  key={b.brand}
+                  className={`border-b border-line/60 ${
+                    b.isTarget ? "bg-primary-soft/50" : ""
+                  }`}
+                >
+                  <td
+                    className={`py-2.5 pr-4 ${
+                      b.isTarget ? "font-semibold text-primary" : "text-ink-2"
+                    }`}
+                  >
+                    {b.brand}
+                  </td>
+                  <td className="py-2.5 pr-4 text-xs text-ink-3 whitespace-nowrap">
+                    {b.isTarget
+                      ? "you"
+                      : b.isCompetitor
+                        ? "competitor"
+                        : "emerged"}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">
+                    {pct(b.mentionRate)}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
+                    {pct(b.ciLow)}–{pct(b.ciHigh)}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">
+                    {b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">
+                    {pct(b.shareOfVoice)}
+                  </td>
+                  <td className="py-2.5 pr-4 text-right tabular-nums">
+                    {b.framing.recommended}
+                  </td>
+                  <td className="py-2.5 text-right tabular-nums">
+                    {b.framing.negative}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card p-6">
         <h2 className="section-label mb-4">Where you show up — by prompt</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

@@ -30,6 +30,7 @@ function createDb(): Database.Database {
       competitors TEXT NOT NULL,
       category TEXT NOT NULL,
       audience TEXT,
+      schedule TEXT NOT NULL DEFAULT 'none',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS prompts (
@@ -71,6 +72,15 @@ function createDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id);
     CREATE INDEX IF NOT EXISTS idx_mentions_response ON mentions(response_id);
   `);
+  // Databases created before the schedule column existed need the ALTER.
+  const cols = db.prepare("PRAGMA table_info(projects)").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "schedule")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN schedule TEXT NOT NULL DEFAULT 'none'"
+    );
+  }
   return db;
 }
 
@@ -86,7 +96,11 @@ interface ProjectRaw extends Omit<Project, "competitors"> {
 }
 
 function parseProject(row: ProjectRaw): Project {
-  return { ...row, competitors: JSON.parse(row.competitors) };
+  return {
+    ...row,
+    competitors: JSON.parse(row.competitors),
+    schedule: row.schedule ?? "none",
+  };
 }
 
 export const sqliteStore: Store = {
@@ -120,6 +134,12 @@ export const sqliteStore: Store = {
       .prepare("SELECT * FROM projects ORDER BY created_at DESC")
       .all() as ProjectRaw[];
     return rows.map(parseProject);
+  },
+
+  async updateProjectSchedule(id, schedule) {
+    getDb()
+      .prepare("UPDATE projects SET schedule = ? WHERE id = ?")
+      .run(schedule, id);
   },
 
   async insertPrompts(projectId, prompts) {

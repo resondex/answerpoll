@@ -9,6 +9,8 @@ export type RunStatus = "pending" | "running" | "complete" | "failed";
 
 export type Framing = "recommended" | "mentioned" | "negative";
 
+export type RunSchedule = "none" | "weekly" | "monthly";
+
 export interface Project {
   id: string;
   name: string;
@@ -16,6 +18,7 @@ export interface Project {
   competitors: string[];
   category: string;
   audience: string | null;
+  schedule: RunSchedule;
   created_at: string;
 }
 
@@ -100,6 +103,24 @@ export interface RunProgress {
   total: number;
 }
 
+export interface TrendPoint {
+  rate: number;
+  ciLow: number;
+  ciHigh: number;
+  shareOfVoice: number;
+}
+
+export interface TrendSeries {
+  brand: string;
+  isTarget: boolean;
+  points: TrendPoint[];
+}
+
+export interface ProjectTrend {
+  runs: { runId: string; date: string; model: string; unbranded: number }[];
+  series: TrendSeries[];
+}
+
 /**
  * Async storage interface implemented by both drivers (SQLite for local dev,
  * Postgres when DATABASE_URL is set — serverless filesystems don't persist).
@@ -114,6 +135,7 @@ export interface Store {
   }): Promise<Project>;
   getProject(id: string): Promise<Project | null>;
   listProjects(): Promise<Project[]>;
+  updateProjectSchedule(id: string, schedule: RunSchedule): Promise<void>;
   insertPrompts(
     projectId: string,
     prompts: { text: string; theme: PromptTheme }[]
