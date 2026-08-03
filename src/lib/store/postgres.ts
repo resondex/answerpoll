@@ -17,10 +17,15 @@ declare global {
 
 function getSql() {
   if (!globalThis.__answerpoll_sql) {
-    // prepare:false — required for transaction-mode poolers (Supabase pgbouncer).
-    globalThis.__answerpoll_sql = postgres(process.env.DATABASE_URL!, {
+    const url = process.env.DATABASE_URL!;
+    // Hosted poolers (Supabase supavisor) expect TLS; local dev databases
+    // usually don't have certs. prepare:false is required for
+    // transaction-mode poolers.
+    const local = /localhost|127\.0\.0\.1/.test(url);
+    globalThis.__answerpoll_sql = postgres(url, {
       prepare: false,
       max: 5,
+      ssl: local ? undefined : "require",
     });
   }
   return globalThis.__answerpoll_sql;
