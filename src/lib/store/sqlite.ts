@@ -66,6 +66,7 @@ function createDb(): Database.Database {
       rank INTEGER NOT NULL,
       framing TEXT NOT NULL
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task ON responses(run_id, prompt_id, repeat_idx);
     CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project_id);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id);
@@ -187,16 +188,21 @@ export const sqliteStore: Store = {
     const db = getDb();
     const responseId = crypto.randomUUID();
     const insertAll = db.transaction(() => {
-      db.prepare(
-        `INSERT INTO responses (id, run_id, prompt_id, repeat_idx, text)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(
-        responseId,
-        input.runId,
-        input.promptId,
-        input.repeatIdx,
-        input.text
-      );
+      // OR IGNORE + unique(run, prompt, repeat): overlapping chunk workers
+      // can race on the same task; only the first insert lands.
+      const info = db
+        .prepare(
+          `INSERT OR IGNORE INTO responses (id, run_id, prompt_id, repeat_idx, text)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(
+          responseId,
+          input.runId,
+          input.promptId,
+          input.repeatIdx,
+          input.text
+        );
+      if (info.changes === 0) return;
       const stmt = db.prepare(
         `INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)
          VALUES (?, ?, ?, ?, ?, ?)`

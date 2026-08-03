@@ -80,6 +80,7 @@ function ensureSchema(): Promise<void> {
         rank INTEGER NOT NULL,
         framing TEXT NOT NULL
       )`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task ON responses(run_id, prompt_id, repeat_idx)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id)`;
@@ -201,8 +202,12 @@ export const pgStore: Store = {
     const sql = await db();
     const responseId = crypto.randomUUID();
     await sql.begin(async (tx) => {
-      await tx`INSERT INTO responses (id, run_id, prompt_id, repeat_idx, text)
-        VALUES (${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.text})`;
+      // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
+      // can race on the same task; only the first insert lands.
+      const res = await tx`INSERT INTO responses (id, run_id, prompt_id, repeat_idx, text)
+        VALUES (${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.text})
+        ON CONFLICT (run_id, prompt_id, repeat_idx) DO NOTHING`;
+      if (res.count === 0) return;
       for (let i = 0; i < input.mentions.length; i++) {
         const m = input.mentions[i];
         await tx`INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)

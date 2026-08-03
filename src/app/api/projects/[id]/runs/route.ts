@@ -3,9 +3,10 @@ import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { store } from "@/lib/store";
 import { mockModeActive } from "@/lib/engine/providers";
-import { runInBackground } from "@/lib/engine/runner";
+import { driveAndChain, runInBackground } from "@/lib/engine/runner";
 
-// Vercel: keep the function alive while the run executes via waitUntil.
+// Vercel: runs execute as a chain of budgeted chunks — each invocation
+// processes what fits under maxDuration, then hands off via /continue.
 export const maxDuration = 300;
 
 const runSchema = z.object({
@@ -37,7 +38,7 @@ export async function POST(
     mock: mockModeActive(),
   });
   if (process.env.VERCEL) {
-    waitUntil(runInBackground(run.id));
+    waitUntil(driveAndChain(run.id, new URL(req.url).origin));
   } else {
     void runInBackground(run.id);
   }
