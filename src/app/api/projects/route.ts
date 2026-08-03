@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createProject, insertPrompts, listProjects, listRuns } from "@/lib/db";
+import { store } from "@/lib/store";
 import { generatePromptBattery } from "@/lib/engine/prompts";
 
 const createSchema = z.object({
@@ -12,11 +12,14 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const projects = listProjects().map((p) => ({
-    ...p,
-    latestRun: listRuns(p.id)[0] ?? null,
-  }));
-  return NextResponse.json({ projects });
+  const projects = await store.listProjects();
+  const withRuns = await Promise.all(
+    projects.map(async (p) => ({
+      ...p,
+      latestRun: (await store.listRuns(p.id))[0] ?? null,
+    }))
+  );
+  return NextResponse.json({ projects: withRuns });
 }
 
 export async function POST(req: Request) {
@@ -30,13 +33,16 @@ export async function POST(req: Request) {
   }
   const { brand, competitors, category } = parsed.data;
   const audience = parsed.data.audience || null;
-  const project = createProject({
+  const project = await store.createProject({
     name: parsed.data.name ?? brand,
     brand,
     competitors,
     category,
     audience,
   });
-  insertPrompts(project.id, generatePromptBattery({ brand, category, audience }));
+  await store.insertPrompts(
+    project.id,
+    generatePromptBattery({ brand, category, audience })
+  );
   return NextResponse.json({ project }, { status: 201 });
 }

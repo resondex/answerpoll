@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
-import { createRun, getProject } from "@/lib/db";
+import { store } from "@/lib/store";
 import { mockModeActive } from "@/lib/engine/providers";
-import { startRun } from "@/lib/engine/runner";
+import { runInBackground } from "@/lib/engine/runner";
+
+// Vercel: keep the function alive while the run executes via waitUntil.
+export const maxDuration = 300;
 
 const runSchema = z.object({
   model: z.string().trim().min(1).default("gpt-5-mini"),
@@ -14,7 +18,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const project = getProject(id);
+  const project = await store.getProject(id);
   if (!project) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
@@ -26,12 +30,16 @@ export async function POST(
       { status: 400 }
     );
   }
-  const run = createRun({
+  const run = await store.createRun({
     projectId: id,
     model: parsed.data.model,
     repeats: parsed.data.repeats,
     mock: mockModeActive(),
   });
-  startRun(run.id);
+  if (process.env.VERCEL) {
+    waitUntil(runInBackground(run.id));
+  } else {
+    void runInBackground(run.id);
+  }
   return NextResponse.json({ run }, { status: 201 });
 }

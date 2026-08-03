@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProject, getRun } from "@/lib/db";
+import { store } from "@/lib/store";
 import { computeRunMetrics } from "@/lib/engine/metrics";
 
 export async function GET(
@@ -7,13 +7,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const run = getRun(id);
+  const run = await store.getRun(id);
   if (!run) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const metrics = computeRunMetrics(id);
-  return NextResponse.json({
-    metrics,
-    project: getProject(run.project_id),
-  });
+  const [metrics, project] = await Promise.all([
+    computeRunMetrics(id),
+    store.getProject(run.project_id),
+  ]);
+  return NextResponse.json({ metrics, project });
 }

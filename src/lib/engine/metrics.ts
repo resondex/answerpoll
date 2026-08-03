@@ -1,10 +1,4 @@
-import {
-  getProject,
-  getRun,
-  listPrompts,
-  listResponses,
-  listMentionsForRun,
-} from "../db";
+import { store } from "../store";
 import type {
   BrandStats,
   Framing,
@@ -25,13 +19,18 @@ function wilson(k: number, n: number): { low: number; high: number } {
   return { low: Math.max(0, center - margin), high: Math.min(1, center + margin) };
 }
 
-export function computeRunMetrics(runId: string): RunMetrics | null {
-  const run = getRun(runId);
+export async function computeRunMetrics(
+  runId: string
+): Promise<RunMetrics | null> {
+  const run = await store.getRun(runId);
   if (!run) return null;
-  const project = getProject(run.project_id)!;
-  const prompts = listPrompts(project.id);
-  const responses = listResponses(runId);
-  const mentions = listMentionsForRun(runId);
+  const [projectMaybe, responses, mentions] = await Promise.all([
+    store.getProject(run.project_id),
+    store.listResponses(runId),
+    store.listMentionsForRun(runId),
+  ]);
+  const project = projectMaybe!;
+  const prompts = await store.listPrompts(project.id);
 
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const brandedPromptIds = new Set(

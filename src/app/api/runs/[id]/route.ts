@@ -1,19 +1,22 @@
 import { NextResponse } from "next/server";
-import { countResponses, getRun, listPrompts } from "@/lib/db";
+import { store } from "@/lib/store";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const run = getRun(id);
+  const run = await store.getRun(id);
   if (!run) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const total = listPrompts(run.project_id).length * run.repeats;
+  const [prompts, completed] = await Promise.all([
+    store.listPrompts(run.project_id),
+    store.countResponses(id),
+  ]);
   return NextResponse.json({
     run,
-    completed: countResponses(id),
-    total,
+    completed,
+    total: prompts.length * run.repeats,
   });
 }

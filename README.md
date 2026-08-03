@@ -44,18 +44,30 @@ A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
 ## Architecture
 
 - **Next.js 16 (App Router)** — UI + API routes in one deployable.
-- **SQLite (better-sqlite3)** at `data/answerpoll.db` — zero-config local store.
-  The data layer is isolated in `src/lib/db.ts` so a move to Supabase Postgres
-  (for hosted multi-tenant SaaS) is a single-file swap.
+- **Dual-driver storage** behind one async interface (`src/lib/store/`):
+  Postgres (`postgres.js`) when `DATABASE_URL` is set — required on Vercel,
+  whose serverless filesystem doesn't persist — and zero-config SQLite at
+  `data/answerpoll.db` otherwise. Schema is created on first use by either
+  driver.
 - **`src/lib/engine/`** — the measurement engine, UI-independent:
   - `prompts.ts` — prompt battery generation
   - `providers.ts` — OpenAI + mock providers behind one interface (add
     Anthropic/Perplexity/Gemini here later)
   - `runner.ts` — prompt × repeat execution with concurrency + retry
   - `metrics.ts` — mention rate, Wilson CIs, average rank, share of voice
-- Runs execute in-process (fire-and-forget, UI polls). Fine for local/dev; a
-  hosted deployment should move `executeRun` to a queue or background worker
-  (Vercel cron + chunked processing, or a small worker on Fly/Railway).
+- Runs execute in-process: fire-and-forget locally, `waitUntil` with
+  `maxDuration = 300` on Vercel. Big real runs (high repeats × slow models)
+  can approach that ceiling — the eventual fix is a queue or chunked
+  processing endpoint.
+
+## Deploying (Vercel)
+
+1. Import `tsolloway/answerpoll` at vercel.com/new (framework auto-detected).
+2. Provision a Postgres database — Supabase (use the pooled/pgbouncer
+   connection string) or Neon via Vercel's storage marketplace.
+3. Set env vars in the Vercel project: `DATABASE_URL`, `OPENAI_API_KEY`.
+4. Deploy, then point the `answerpoll.com` DNS (Cloudflare) at Vercel per
+   Vercel's domain instructions.
 
 ## Roadmap (not yet built)
 

@@ -101,3 +101,47 @@ export interface RunProgress {
   completed: number;
   total: number;
 }
+
+/**
+ * Async storage interface implemented by both drivers (SQLite for local dev,
+ * Postgres when DATABASE_URL is set — serverless filesystems don't persist).
+ */
+export interface Store {
+  createProject(input: {
+    name: string;
+    brand: string;
+    competitors: string[];
+    category: string;
+    audience: string | null;
+  }): Promise<Project>;
+  getProject(id: string): Promise<Project | null>;
+  listProjects(): Promise<Project[]>;
+  insertPrompts(
+    projectId: string,
+    prompts: { text: string; theme: PromptTheme }[]
+  ): Promise<Prompt[]>;
+  listPrompts(projectId: string): Promise<Prompt[]>;
+  createRun(input: {
+    projectId: string;
+    model: string;
+    repeats: number;
+    mock: boolean;
+  }): Promise<Run>;
+  getRun(id: string): Promise<Run | null>;
+  listRuns(projectId: string): Promise<Run[]>;
+  updateRunStatus(
+    id: string,
+    status: RunStatus,
+    error?: string | null
+  ): Promise<void>;
+  insertResponse(input: {
+    runId: string;
+    promptId: string;
+    repeatIdx: number;
+    text: string;
+    mentions: { brand: string; framing: Framing }[];
+  }): Promise<void>;
+  countResponses(runId: string): Promise<number>;
+  listResponses(runId: string): Promise<ResponseRow[]>;
+  listMentionsForRun(runId: string): Promise<MentionRow[]>;
+}

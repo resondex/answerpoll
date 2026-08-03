@@ -1,10 +1,4 @@
-import {
-  getProject,
-  getRun,
-  listPrompts,
-  insertResponse,
-  updateRunStatus,
-} from "../db";
+import { store } from "../store";
 import { getProvider } from "./providers";
 
 const CONCURRENCY = 4;
@@ -17,19 +11,19 @@ interface Task {
 
 /**
  * Execute every prompt × repeat for a run, extracting mentions as responses
- * arrive. Runs in-process; the caller fires it without awaiting so the API
- * route can return immediately and the UI polls for progress.
+ * arrive. The caller decides how to schedule this (fire-and-forget locally,
+ * waitUntil on Vercel); the UI polls for progress either way.
  */
 export async function executeRun(runId: string): Promise<void> {
-  const run = getRun(runId);
+  const run = await store.getRun(runId);
   if (!run) throw new Error(`run ${runId} not found`);
-  const project = getProject(run.project_id);
+  const project = await store.getProject(run.project_id);
   if (!project) throw new Error(`project ${run.project_id} not found`);
-  const prompts = listPrompts(project.id);
+  const prompts = await store.listPrompts(project.id);
   // Target brand first — the mock provider keys appearance odds off position.
   const knownBrands = [project.brand, ...project.competitors];
 
-  updateRunStatus(runId, "running");
+  await store.updateRunStatus(runId, "running");
 
   const tasks: Task[] = [];
   for (const p of prompts) {
@@ -51,7 +45,7 @@ export async function executeRun(runId: string): Promise<void> {
           : task.promptText;
         const text = await provider.complete(promptForModel, run!.model);
         const mentions = await provider.extractMentions(text, knownBrands);
-        insertResponse({
+        await store.insertResponse({
           runId,
           promptId: task.promptId,
           repeatIdx: task.repeatIdx,
@@ -70,16 +64,21 @@ export async function executeRun(runId: string): Promise<void> {
   );
 
   if (failed === tasks.length && tasks.length > 0) {
-    updateRunStatus(runId, "failed", "every request failed — check API key and model");
+    await store.updateRunStatus(
+      runId,
+      "failed",
+      "every request failed — check API key and model"
+    );
   } else {
     const note = failed > 0 ? `${failed}/${tasks.length} requests failed` : null;
-    updateRunStatus(runId, "complete", note);
+    await store.updateRunStatus(runId, "complete", note);
   }
 }
 
-export function startRun(runId: string): void {
-  executeRun(runId).catch((err) => {
+/** Run to completion in the background, recording failures on the run row. */
+export function runInBackground(runId: string): Promise<void> {
+  return executeRun(runId).catch(async (err) => {
     console.error(`answerpoll run ${runId} crashed:`, err);
-    updateRunStatus(runId, "failed", String(err));
+    await store.updateRunStatus(runId, "failed", String(err));
   });
 }
