@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Answerpoll
 
-## Getting Started
+**How AI assistants rank your brand.** Answerpoll asks an LLM the questions your
+buyers actually ask — repeatedly, so the answer is a measurement rather than an
+anecdote — then scores how often your brand and your competitors get mentioned,
+where you rank inside the answer, and how you're framed.
 
-First, run the development server:
+Working name; rename freely.
+
+## How it works
+
+1. **Create a tracker** — brand, category (phrased the way a buyer would), named
+   competitors, optional audience.
+2. **Prompt battery** — ~14 buyer-intent prompts are generated per tracker
+   (discovery / recommendation / comparison / use-case themes, plus two branded
+   probes). Branded prompts are excluded from headline rates, since asking about
+   a brand by name guarantees a mention.
+3. **Run** — every prompt is sent to the chosen OpenAI model N times
+   (default 5). Repeats capture the stochasticity of LLM answers; more repeats
+   mean tighter confidence intervals.
+4. **Extraction** — each answer is passed through a cheap structured-output
+   extraction call that lists every brand mentioned, in order, with framing
+   (recommended / mentioned / negative). Brands the model volunteers on its own
+   are captured too, so emergent competitors surface automatically.
+5. **Dashboard** — mention rate with a Wilson 95% CI, average in-answer
+   position, share of voice, a brand leaderboard, per-prompt breakdown, and
+   sample verbatims.
+
+## Running locally
 
 ```bash
+npm install
+cp .env.example .env.local   # add OPENAI_API_KEY for real runs
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+With no `OPENAI_API_KEY`, the app runs in **mock mode**: a synthetic LLM
+generates plausible ranked answers so the entire pipeline (runs, extraction,
+metrics, dashboard) works with zero API spend. The UI banners mock runs clearly.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
+`gpt-5-mini` + `gpt-4o-mini` that's roughly a dollar or two per run.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Architecture
 
-## Learn More
+- **Next.js 16 (App Router)** — UI + API routes in one deployable.
+- **SQLite (better-sqlite3)** at `data/answerpoll.db` — zero-config local store.
+  The data layer is isolated in `src/lib/db.ts` so a move to Supabase Postgres
+  (for hosted multi-tenant SaaS) is a single-file swap.
+- **`src/lib/engine/`** — the measurement engine, UI-independent:
+  - `prompts.ts` — prompt battery generation
+  - `providers.ts` — OpenAI + mock providers behind one interface (add
+    Anthropic/Perplexity/Gemini here later)
+  - `runner.ts` — prompt × repeat execution with concurrency + retry
+  - `metrics.ts` — mention rate, Wilson CIs, average rank, share of voice
+- Runs execute in-process (fire-and-forget, UI polls). Fine for local/dev; a
+  hosted deployment should move `executeRun` to a queue or background worker
+  (Vercel cron + chunked processing, or a small worker on Fly/Railway).
 
-To learn more about Next.js, take a look at the following resources:
+## Roadmap (not yet built)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- More engines: Anthropic, Perplexity (citations → whose content drives
+  answers), Gemini.
+- Trend view: re-run monthly, chart mention rate over time.
+- Auth + multi-tenancy (Supabase), billing, scheduled runs.
+- Prompt editing / custom prompts per tracker.
