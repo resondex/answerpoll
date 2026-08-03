@@ -14,16 +14,36 @@ interface Detail {
   mockMode: boolean;
 }
 
+interface Progress {
+  completed: number;
+  total: number;
+}
+
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}`);
-    if (res.ok) setDetail(await res.json());
+    if (!res.ok) return;
+    const d: Detail = await res.json();
+    setDetail(d);
+    const active = d.runs.find(
+      (r) => r.status === "pending" || r.status === "running"
+    );
+    if (active) {
+      const pr = await fetch(`/api/runs/${active.id}`);
+      if (pr.ok) {
+        const pd = await pr.json();
+        setProgress({ completed: pd.completed, total: pd.total });
+      }
+    } else {
+      setProgress(null);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -36,7 +56,7 @@ export default function ProjectPage() {
 
   useEffect(() => {
     if (!hasActiveRun) return;
-    const t = setInterval(refresh, 2000);
+    const t = setInterval(refresh, 2500);
     return () => clearInterval(t);
   }, [hasActiveRun, refresh]);
 
@@ -51,7 +71,14 @@ export default function ProjectPage() {
     refresh();
   }
 
-  if (!detail) return <p className="text-sm text-[#898781]">Loading…</p>;
+  if (!detail) {
+    return (
+      <div className="grid gap-4">
+        <div className="card h-24 animate-pulse" />
+        <div className="card h-48 animate-pulse" />
+      </div>
+    );
+  }
   const { project, prompts, runs, mockMode } = detail;
   const totalCalls = prompts.length * repeats;
 
@@ -62,47 +89,49 @@ export default function ProjectPage() {
           <h1 className="text-2xl font-semibold tracking-tight">
             {project.name}
           </h1>
-          <Link href="/" className="text-sm text-[#2a78d6] dark:text-[#3987e5]">
+          <Link
+            href="/"
+            className="text-sm font-medium text-primary hover:opacity-80"
+          >
             ← all trackers
           </Link>
         </div>
-        <p className="text-sm text-[#52514e] dark:text-[#c3c2b7] mt-1">
-          <span className="font-medium">{project.brand}</span> vs.{" "}
-          {project.competitors.length > 0
-            ? project.competitors.join(", ")
-            : "no named competitors"}{" "}
+        <p className="text-sm text-ink-2 mt-1.5">
+          <span className="font-medium text-ink">{project.brand}</span>
+          {project.competitors.length > 0 && (
+            <> vs. {project.competitors.join(", ")}</>
+          )}{" "}
           · {project.category}
           {project.audience ? ` · ${project.audience}` : ""}
         </p>
       </div>
 
       {mockMode && (
-        <div className="rounded-lg border border-[#eda100]/40 bg-[#eda100]/10 px-4 py-3 text-sm">
-          <span className="font-medium">Mock mode.</span> No OPENAI_API_KEY is
-          set, so runs use a synthetic LLM — the full pipeline works, but the
-          numbers are simulated. Add a key to <code>.env.local</code> for real
-          measurements.
+        <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm leading-relaxed">
+          <span className="font-semibold">Mock mode.</span> With no OpenAI key
+          configured, runs use a synthetic model — the full pipeline works and
+          costs nothing, and the numbers are simulated. Add{" "}
+          <code className="text-[13px]">OPENAI_API_KEY</code> for real
+          measurement.
         </div>
       )}
 
-      <section className="rounded-lg border border-black/10 dark:border-white/10 bg-[#fcfcfb] dark:bg-[#1a1a19] p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[#898781] mb-3">
-          New run
-        </h2>
+      <section className="card p-6">
+        <h2 className="section-label mb-4">New run</h2>
         <div className="flex flex-wrap items-end gap-4">
-          <label className="grid gap-1 text-sm font-medium">
+          <label className="grid gap-1.5 text-sm font-medium">
             Model
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              className="rounded-md border border-black/15 dark:border-white/15 bg-white dark:bg-[#0d0d0d] px-3 py-2 text-sm"
+              className="input w-44"
             >
               {MODELS.map((m) => (
                 <option key={m}>{m}</option>
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-sm font-medium">
+          <label className="grid gap-1.5 text-sm font-medium">
             Repeats per prompt
             <input
               type="number"
@@ -110,102 +139,138 @@ export default function ProjectPage() {
               max={20}
               value={repeats}
               onChange={(e) => setRepeats(Number(e.target.value))}
-              className="w-24 rounded-md border border-black/15 dark:border-white/15 bg-white dark:bg-[#0d0d0d] px-3 py-2 text-sm"
+              className="input w-24"
             />
           </label>
           <button
             onClick={launchRun}
             disabled={launching || hasActiveRun}
-            className="rounded-md bg-[#2a78d6] dark:bg-[#3987e5] text-white px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+            className="btn-primary"
           >
             {hasActiveRun ? "Run in progress…" : `Run ${totalCalls} queries`}
           </button>
         </div>
-        <p className="text-xs text-[#898781] mt-2">
-          {prompts.length} prompts × {repeats} repeats. More repeats → tighter
-          confidence intervals on mention rates.
+        <p className="text-[13px] text-ink-3 mt-3">
+          {prompts.length} prompts × {repeats} repeats — more repeats, tighter
+          confidence intervals.
         </p>
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[#898781] mb-3">
-          Runs
-        </h2>
+        <h2 className="section-label mb-3">Runs</h2>
         {runs.length === 0 ? (
-          <p className="text-sm text-[#898781]">No runs yet.</p>
+          <div className="card px-5 py-8 text-center text-sm text-ink-3">
+            Launch your first run to start measuring.
+          </div>
         ) : (
           <ul className="grid gap-2">
-            {runs.map((r) => (
-              <li
-                key={r.id}
-                className="flex items-center justify-between gap-4 rounded-lg border border-black/10 dark:border-white/10 bg-[#fcfcfb] dark:bg-[#1a1a19] px-4 py-3"
-              >
-                <div className="text-sm">
-                  <span className="font-medium">{r.model}</span>
-                  <span className="text-[#898781]">
-                    {" "}
-                    · {r.repeats} repeats · {r.created_at}
-                    {r.mock ? " · mock" : ""}
-                  </span>
-                  {r.error && (
-                    <span className="text-[#d03b3b]"> · {r.error}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={r.status} />
-                  {r.status === "complete" && (
-                    <Link
-                      href={`/projects/${id}/runs/${r.id}`}
-                      className="text-sm font-medium text-[#2a78d6] dark:text-[#3987e5]"
-                    >
-                      Dashboard →
-                    </Link>
-                  )}
-                </div>
-              </li>
-            ))}
+            {runs.map((r) => {
+              const active = r.status === "pending" || r.status === "running";
+              return (
+                <li
+                  key={r.id}
+                  className="card flex items-center justify-between gap-4 px-5 py-3.5"
+                >
+                  <div className="text-sm min-w-0">
+                    <span className="font-semibold">{r.model}</span>
+                    <span className="text-ink-3">
+                      {" "}
+                      · {r.repeats} repeats · {r.created_at}
+                      {r.mock ? " · mock" : ""}
+                    </span>
+                    {r.error && (
+                      <span className="text-danger"> · {r.error}</span>
+                    )}
+                    {active && progress && (
+                      <ProgressBar
+                        completed={progress.completed}
+                        total={progress.total}
+                      />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <StatusBadge status={r.status} />
+                    {r.status === "complete" && (
+                      <Link
+                        href={`/projects/${id}/runs/${r.id}`}
+                        className="text-sm font-semibold text-primary hover:opacity-80"
+                      >
+                        Dashboard →
+                      </Link>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[#898781] mb-3">
-          Prompt battery
-        </h2>
-        <ul className="grid gap-1.5">
+        <h2 className="section-label mb-3">Prompt battery</h2>
+        <div className="card divide-y divide-line">
           {prompts.map((p) => (
-            <li
+            <div
               key={p.id}
-              className="flex items-baseline gap-3 text-sm rounded-md bg-[#fcfcfb] dark:bg-[#1a1a19] border border-black/10 dark:border-white/10 px-3 py-2"
+              className="flex items-baseline gap-4 text-sm px-5 py-2.5"
             >
-              <span className="text-xs uppercase tracking-wide text-[#898781] w-28 shrink-0">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
                 {p.theme.replace("_", " ")}
               </span>
-              <span>{p.text}</span>
-            </li>
+              <span className="text-ink-2">{p.text}</span>
+            </div>
           ))}
-        </ul>
-        <p className="text-xs text-[#898781] mt-2">
-          Branded prompts are excluded from headline mention rates — asking
-          about your brand by name guarantees a mention.
+        </div>
+        <p className="text-[13px] text-ink-3 mt-2.5">
+          Headline rates come from the unbranded prompts — the branded probes
+          are reported separately, since naming the brand guarantees a mention.
         </p>
       </section>
     </div>
   );
 }
 
+function ProgressBar({
+  completed,
+  total,
+}: {
+  completed: number;
+  total: number;
+}) {
+  const pct = total > 0 ? (completed / total) * 100 : 0;
+  return (
+    <div className="flex items-center gap-3 mt-2">
+      <div className="h-1.5 w-44 rounded-full bg-line overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-700"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-xs tabular-nums text-ink-3">
+        {completed}/{total}
+      </span>
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: Run["status"] }) {
-  const styles: Record<Run["status"], string> = {
-    pending: "bg-[#898781]/15 text-[#52514e] dark:text-[#c3c2b7]",
-    running: "bg-[#2a78d6]/15 text-[#2a78d6] dark:text-[#3987e5]",
-    complete: "bg-[#0ca30c]/15 text-[#006300] dark:text-[#0ca30c]",
-    failed: "bg-[#d03b3b]/15 text-[#d03b3b]",
+  if (status === "running" || status === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-soft px-2.5 py-1 text-xs font-semibold text-primary">
+        <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+        {status === "running" ? "running" : "queued"}
+      </span>
+    );
+  }
+  const styles: Record<"complete" | "failed", string> = {
+    complete: "bg-success/12 text-success",
+    failed: "bg-danger/12 text-danger",
   };
   return (
     <span
-      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[status]}`}
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status]}`}
     >
-      {status === "running" ? "running…" : status}
+      {status}
     </span>
   );
 }

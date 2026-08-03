@@ -1,26 +1,127 @@
 @import "tailwindcss";
 
+/* Design tokens — muted, quiet-premium palette on a warm off-white canvas. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: #f6f6f4;
+  --surface: #ffffff;
+  --ink: #1a1d1f;
+  --ink-2: #52565a;
+  --ink-3: #8a8e92;
+  --line: #e5e4df;
+  --primary: #5b7e92;
+  --primary-ink: #ffffff;
+  --primary-soft: #eef2f5;
+  --success: #5c8a6b;
+  --warning: #c2773c;
+  --danger: #ac6258;
+  --neutral-bar: #cfceca;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #131517;
+    --surface: #1b1e21;
+    --ink: #f2f2f0;
+    --ink-2: #b9bcbe;
+    --ink-3: #85898c;
+    --line: #2c3033;
+    --primary: #7fa3b8;
+    --primary-ink: #12181d;
+    --primary-soft: #22303a;
+    --success: #7fae8e;
+    --warning: #d59a68;
+    --danger: #c98a80;
+    --neutral-bar: #4a4e52;
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-primary: var(--primary);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-soft: var(--primary-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-neutral-bar: var(--neutral-bar);
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-instrument-serif);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  font-feature-settings: "cv11";
+}
+
+/* Shared components */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  transition: border-color 120ms ease;
+  outline: none;
+}
+.input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+}
+.input::placeholder {
+  color: var(--ink-3);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background: var(--primary);
+  color: var(--primary-ink);
+  padding: 0.55rem 1.1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: opacity 120ms ease;
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.section-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
 }
