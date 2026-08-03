@@ -6,7 +6,6 @@ export async function GET() {
   const driver = process.env.DATABASE_URL ? "postgres" : "sqlite";
   const env = {
     hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
-    mockForced: process.env.MOCK_LLM === "1",
   };
   try {
     await store.listProjects();

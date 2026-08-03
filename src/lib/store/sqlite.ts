@@ -45,7 +45,6 @@ function createDb(): Database.Database {
       repeats INTEGER NOT NULL,
       status TEXT NOT NULL,
       error TEXT,
-      mock INTEGER NOT NULL DEFAULT 0,
       started_at TEXT,
       completed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -147,10 +146,10 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO runs (id, project_id, model, repeats, status, mock)
-         VALUES (?, ?, ?, ?, 'pending', ?)`
+        `INSERT INTO runs (id, project_id, model, repeats, status)
+         VALUES (?, ?, ?, ?, 'pending')`
       )
-      .run(id, input.projectId, input.model, input.repeats, input.mock ? 1 : 0);
+      .run(id, input.projectId, input.model, input.repeats);
     return (await this.getRun(id))!;
   },
 

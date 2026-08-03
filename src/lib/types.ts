@@ -33,7 +33,6 @@ export interface Run {
   repeats: number;
   status: RunStatus;
   error: string | null;
-  mock: number;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -88,7 +87,6 @@ export interface PromptStats {
 export interface RunMetrics {
   runId: string;
   model: string;
-  mock: boolean;
   totalResponses: number;
   unbrandedResponses: number;
   brands: BrandStats[];
@@ -125,7 +123,6 @@ export interface Store {
     projectId: string;
     model: string;
     repeats: number;
-    mock: boolean;
   }): Promise<Run>;
   getRun(id: string): Promise<Run | null>;
   listRuns(projectId: string): Promise<Run[]>;

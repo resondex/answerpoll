@@ -139,7 +139,6 @@ export async function computeRunMetrics(
   return {
     runId,
     model: run.model,
-    mock: run.mock === 1,
     totalResponses: responses.length,
     unbrandedResponses: unbranded.length,
     brands,

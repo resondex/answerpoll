@@ -30,7 +30,6 @@ export async function driveRunChunk(
   const project = await store.getProject(run.project_id);
   if (!project) throw new Error(`project ${run.project_id} not found`);
   const prompts = await store.listPrompts(project.id);
-  // Target brand first — the mock provider keys appearance odds off position.
   const knownBrands = [project.brand, ...project.competitors];
 
   if (run.status === "pending") await store.updateRunStatus(runId, "running");
@@ -64,10 +63,7 @@ export async function driveRunChunk(
     while (cursor < pending.length && Date.now() < deadline) {
       const task = pending[cursor++];
       try {
-        const promptForModel = run!.mock
-          ? `${task.promptText} [[brands:${knownBrands.join("|")}]]`
-          : task.promptText;
-        const text = await provider.complete(promptForModel, run!.model);
+        const text = await provider.complete(task.promptText, run!.model);
         const mentions = await provider.extractMentions(text, knownBrands);
         await store.insertResponse({
           runId,

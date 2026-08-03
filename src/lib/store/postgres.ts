@@ -58,7 +58,6 @@ function ensureSchema(): Promise<void> {
         repeats INTEGER NOT NULL,
         status TEXT NOT NULL,
         error TEXT,
-        mock INTEGER NOT NULL DEFAULT 0,
         started_at TIMESTAMPTZ,
         completed_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -120,7 +119,6 @@ function rowToRun(r: Record<string, unknown>): Run {
     repeats: r.repeats as number,
     status: r.status as Run["status"],
     error: (r.error as string | null) ?? null,
-    mock: r.mock as number,
     started_at: iso(r.started_at),
     completed_at: iso(r.completed_at),
     created_at: iso(r.created_at)!,
@@ -169,8 +167,8 @@ export const pgStore: Store = {
   async createRun(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO runs (id, project_id, model, repeats, status, mock)
-      VALUES (${id}, ${input.projectId}, ${input.model}, ${input.repeats}, 'pending', ${input.mock ? 1 : 0})`;
+    await sql`INSERT INTO runs (id, project_id, model, repeats, status)
+      VALUES (${id}, ${input.projectId}, ${input.model}, ${input.repeats}, 'pending')`;
     return (await this.getRun(id))!;
   },
 

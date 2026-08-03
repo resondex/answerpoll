@@ -63,9 +63,8 @@ export default function DashboardPage() {
           </Link>
         </div>
         <p className="text-sm text-ink-2 mt-1.5">
-          {metrics.model}
-          {metrics.mock ? " · mock data" : ""} · {metrics.unbrandedResponses}{" "}
-          unbranded answers sampled · {project.category}
+          {metrics.model} · {metrics.unbrandedResponses} unbranded answers
+          sampled · {project.category}
         </p>
       </div>
 

@@ -34,10 +34,7 @@ cp .env.example .env.local   # add OPENAI_API_KEY for real runs
 npm run dev
 ```
 
-With no `OPENAI_API_KEY`, the app runs in **mock mode**: a synthetic LLM
-generates plausible ranked answers so the entire pipeline (runs, extraction,
-metrics, dashboard) works with zero API spend. The UI banners mock runs clearly.
-
+Every run executes real queries — `OPENAI_API_KEY` is required to launch one.
 A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
 `gpt-5-mini` + `gpt-4o-mini` that's roughly a dollar or two per run.
 
@@ -51,7 +48,7 @@ A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
   driver.
 - **`src/lib/engine/`** — the measurement engine, UI-independent:
   - `prompts.ts` — prompt battery generation
-  - `providers.ts` — OpenAI + mock providers behind one interface (add
+  - `providers.ts` — the OpenAI provider behind a provider interface (add
     Anthropic/Perplexity/Gemini here later)
   - `runner.ts` — prompt × repeat execution with concurrency + retry
   - `metrics.ts` — mention rate, Wilson CIs, average rank, share of voice

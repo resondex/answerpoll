@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/store";
-import { mockModeActive } from "@/lib/engine/providers";
 
 export async function GET(
   _req: Request,
@@ -19,6 +18,5 @@ export async function GET(
     project,
     prompts,
     runs,
-    mockMode: mockModeActive(),
   });
 }

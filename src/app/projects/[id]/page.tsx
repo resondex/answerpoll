@@ -11,7 +11,6 @@ interface Detail {
   project: Project;
   prompts: Prompt[];
   runs: Run[];
-  mockMode: boolean;
 }
 
 interface Progress {
@@ -79,7 +78,7 @@ export default function ProjectPage() {
       </div>
     );
   }
-  const { project, prompts, runs, mockMode } = detail;
+  const { project, prompts, runs } = detail;
   const totalCalls = prompts.length * repeats;
 
   return (
@@ -105,16 +104,6 @@ export default function ProjectPage() {
           {project.audience ? ` · ${project.audience}` : ""}
         </p>
       </div>
-
-      {mockMode && (
-        <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm leading-relaxed">
-          <span className="font-semibold">Mock mode.</span> With no OpenAI key
-          configured, runs use a synthetic model — the full pipeline works and
-          costs nothing, and the numbers are simulated. Add{" "}
-          <code className="text-[13px]">OPENAI_API_KEY</code> for real
-          measurement.
-        </div>
-      )}
 
       <section className="card p-6">
         <h2 className="section-label mb-4">New run</h2>
@@ -176,7 +165,6 @@ export default function ProjectPage() {
                     <span className="text-ink-3">
                       {" "}
                       · {r.repeats} repeats · {r.created_at}
-                      {r.mock ? " · mock" : ""}
                     </span>
                     {r.error && (
                       <span className="text-danger"> · {r.error}</span>
