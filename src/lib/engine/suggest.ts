@@ -32,11 +32,15 @@ export async function suggestBrandProfile(
         content:
           "You help set up brand-visibility tracking for AI answer engines. " +
           "Given a brand, identify:\n" +
-          "- category: the competitive category as a plural noun phrase, worded " +
-          "the way a buyer would say it to an AI assistant. Be SPECIFIC — " +
-          "'project management tools for software teams', never a broad word " +
-          "like 'software' or 'companies'.\n" +
-          "- competitors: 3 to 6 direct competitors buyers actually compare it against.\n" +
+          "- category: the competitive category as a short plural noun phrase, " +
+          "worded the way a buyer would actually type it — 'project management " +
+          "tools', 'CRM software', 'assisted living communities'. At most ONE " +
+          "qualifier, and only when the market truly needs it; never stack " +
+          "qualifiers, and never use a lone broad word like 'software' or " +
+          "'companies'.\n" +
+          "- competitors: the 4 to 6 brands buyers most often weigh against it. " +
+          "Lead with the mainstream market leaders in the category, not niche " +
+          "or same-subculture alternatives.\n" +
           "- audience: the primary buyer audience in a short phrase.\n" +
           "If the brand is ambiguous or unknown, pick the most likely commercial " +
           "interpretation and answer anyway.",

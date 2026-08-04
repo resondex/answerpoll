@@ -27,7 +27,8 @@ export default function AppHomePage() {
 
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
-  const [competitors, setCompetitors] = useState("");
+  const [competitors, setCompetitors] = useState<string[]>([]);
+  const [compDraft, setCompDraft] = useState("");
   const [audience, setAudience] = useState("");
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
 
@@ -58,8 +59,26 @@ export default function AppHomePage() {
       return;
     }
     setCategory(data.profile.category);
-    setCompetitors(data.profile.competitors.join(", "));
+    setCompetitors(data.profile.competitors);
+    setCompDraft("");
     setAudience(data.profile.audience);
+    setPrompts(null);
+  }
+
+  function allCompetitors(): string[] {
+    const draft = compDraft.trim().replace(/,+$/, "");
+    const list = draft ? [...competitors, draft] : competitors;
+    return [...new Set(list)];
+  }
+
+  function addCompetitor() {
+    setCompetitors(allCompetitors());
+    setCompDraft("");
+    setPrompts(null);
+  }
+
+  function removeCompetitor(name: string) {
+    setCompetitors(competitors.filter((c) => c !== name));
     setPrompts(null);
   }
 
@@ -73,7 +92,7 @@ export default function AppHomePage() {
         brand,
         category,
         audience: audience || undefined,
-        competitors: splitCompetitors(),
+        competitors: allCompetitors(),
       }),
     });
     const data = await res.json();
@@ -83,13 +102,6 @@ export default function AppHomePage() {
       return;
     }
     setPrompts(data.prompts);
-  }
-
-  function splitCompetitors() {
-    return competitors
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -104,7 +116,7 @@ export default function AppHomePage() {
         brand,
         category,
         audience: audience || undefined,
-        competitors: splitCompetitors(),
+        competitors: allCompetitors(),
         prompts: prompts.filter((p) => p.text.trim().length > 0),
       }),
     });
@@ -177,14 +189,44 @@ export default function AppHomePage() {
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             Competitors
+            {competitors.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {competitors.map((c) => (
+                  <span
+                    key={c}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-primary-soft px-3 py-1 text-[13px] font-medium text-primary"
+                  >
+                    {c}
+                    <button
+                      type="button"
+                      aria-label={`remove ${c}`}
+                      onClick={() => removeCompetitor(c)}
+                      className="text-primary/70 hover:text-danger leading-none"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               className="input w-full"
-              value={competitors}
-              onChange={(e) => {
-                setCompetitors(e.target.value);
-                setPrompts(null);
+              value={compDraft}
+              onChange={(e) => setCompDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === ",") {
+                  e.preventDefault();
+                  addCompetitor();
+                }
               }}
-              placeholder="e.g. Qualtrics, Ipsos, Kantar"
+              onBlur={() => {
+                if (compDraft.trim()) addCompetitor();
+              }}
+              placeholder={
+                competitors.length === 0
+                  ? "e.g. Qualtrics — press Enter after each"
+                  : "add another…"
+              }
             />
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
