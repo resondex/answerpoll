@@ -1,0 +1,24 @@
+{
+  "source": "allenai/WildChat-1M random sample (seed=42), English first user turns; LLM commercial-intent screen + content-writing exclusion",
+  "n_sampled": 2632,
+  "n_commercial": 24,
+  "commercial_share_of_conversations": 0.0091,
+  "style": {
+    "n": 24,
+    "words_p25": 9,
+    "words_median": 12,
+    "words_p75": 20,
+    "words_p90": 41,
+    "words_mean": 23.1,
+    "share_under_10_words": 0.333,
+    "share_under_20_words": 0.75,
+    "share_over_40_words": 0.125,
+    "starts_lowercase": 0.417,
+    "ends_question_mark": 0.167,
+    "no_terminal_punct": 0.792,
+    "first_person": 0.5,
+    "contractions": 0.125,
+    "contains_please": 0.042,
+    "multi_sentence": 0.042
+  }
+}

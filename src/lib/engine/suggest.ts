@@ -136,7 +136,9 @@ const BATTERY_SCHEMA = {
   required: ["prompts"],
 } as const;
 
-const BATTERY_STYLE_VERSION = "v2";
+// v3: quantitative style targets calibrated to real commercial prompts
+// sampled from WildChat-1M — see style_profile.json for the measurement.
+const BATTERY_STYLE_VERSION = "v3";
 
 /**
  * Generate the unbranded battery with the model (falling back to templates),
@@ -163,14 +165,20 @@ export async function generateBatteryAi(input: {
             "ChatGPT. Imagine 12 different people, each in a concrete situation that " +
             "puts them in the market for this category, and write exactly what each " +
             "one would type.\n\n" +
+            "Length calibration — these targets are measured from real commercial " +
+            "prompts in the WildChat corpus of actual ChatGPT conversations; your set " +
+            "of 12 must match them:\n" +
+            "- median length ~12 words; about 4 prompts under 10 words; about 9 " +
+            "under 20 words; at most 2 over 40 words\n" +
+            "- at most ONE prompt with multiple sentences (real context-dumps are " +
+            "rare) — everything else is a single sentence or fragment\n" +
+            "- about 5 prompts start lowercase; most have NO ending punctuation; " +
+            "only ~2 end with a question mark\n" +
+            "- about half use first person; 'please' at most once\n\n" +
             "Style rules — follow every one:\n" +
-            "- First person, everyday words, contractions. Ground prompts in concrete " +
-            "situations with specific details (team size, budget, what's going wrong, " +
-            "who it's for).\n" +
-            "- Vary length and register across the set: a few terse search-style " +
-            "fragments, mostly quick natural questions, and one or two longer " +
-            "context-dumps where someone explains their situation in 2–3 sentences " +
-            "before asking.\n" +
+            "- Everyday words. When a prompt does carry detail, make it concrete " +
+            "(team size, budget, what's going wrong) — but most prompts are short " +
+            "asks without backstory.\n" +
             "- BANNED vocabulary: 'solutions', 'platforms', 'leading', 'top options', " +
             "'best-in-class', 'robust', 'streamline', 'leverage', and any phrasing " +
             "that sounds like a survey question or analyst report. People say 'apps', " +
