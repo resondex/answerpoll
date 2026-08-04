@@ -32,6 +32,7 @@ export default function AppHomePage() {
   const [audience, setAudience] = useState("");
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
 
+  const [editing, setEditing] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +103,7 @@ export default function AppHomePage() {
       return;
     }
     setPrompts(data.prompts);
+    setEditing(false);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -254,75 +256,119 @@ export default function AppHomePage() {
           ) : (
             <div className="grid gap-2">
               <div className="flex items-baseline justify-between">
-                <span className="section-label">
-                  Prompt battery — edit freely
-                </span>
-                <button
-                  type="button"
-                  onClick={generate}
-                  disabled={generating}
-                  className="text-[13px] font-medium text-primary hover:opacity-80"
-                >
-                  {generating ? "Regenerating…" : "Regenerate"}
-                </button>
-              </div>
-              {prompts.map((p, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <select
-                    value={p.theme}
-                    onChange={(e) =>
-                      setPrompts(
-                        prompts.map((q, j) =>
-                          j === i
-                            ? { ...q, theme: e.target.value as PromptTheme }
-                            : q
-                        )
-                      )
-                    }
-                    className="input w-36 shrink-0 text-xs"
-                  >
-                    {THEMES.map((t) => (
-                      <option key={t} value={t}>
-                        {t.replace("_", " ")}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    className="input w-full"
-                    value={p.text}
-                    onChange={(e) =>
-                      setPrompts(
-                        prompts.map((q, j) =>
-                          j === i ? { ...q, text: e.target.value } : q
-                        )
-                      )
-                    }
-                  />
+                <span className="section-label">Prompt battery</span>
+                <span className="flex gap-4">
+                  {!editing && (
+                    <button
+                      type="button"
+                      onClick={() => setEditing(true)}
+                      className="text-[13px] font-medium text-primary hover:opacity-80"
+                    >
+                      Edit
+                    </button>
+                  )}
                   <button
                     type="button"
-                    aria-label="remove prompt"
-                    onClick={() =>
-                      setPrompts(prompts.filter((_, j) => j !== i))
-                    }
-                    className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                    onClick={generate}
+                    disabled={generating}
+                    className="text-[13px] font-medium text-primary hover:opacity-80"
                   >
-                    ×
+                    {generating ? "Regenerating…" : "Regenerate"}
                   </button>
+                </span>
+              </div>
+              {!editing ? (
+                <div className="rounded-lg border border-line divide-y divide-line">
+                  {prompts.map((p, i) => (
+                    <div
+                      key={i}
+                      className="flex items-baseline gap-3 px-3.5 py-2 text-sm"
+                    >
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                        {p.theme.replace("_", " ")}
+                      </span>
+                      <span className="text-ink-2">{p.text}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  setPrompts([...prompts, { text: "", theme: "discovery" }])
-                }
-                className="text-[13px] font-medium text-primary hover:opacity-80 w-fit"
-              >
-                + Add prompt
-              </button>
-              <p className="text-xs text-ink-3">
-                Unbranded prompts should never name a brand — that&apos;s what
-                makes the mention rate a real measurement.
-              </p>
+              ) : (
+                <>
+                  {prompts.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <select
+                        value={p.theme}
+                        onChange={(e) =>
+                          setPrompts(
+                            prompts.map((q, j) =>
+                              j === i
+                                ? { ...q, theme: e.target.value as PromptTheme }
+                                : q
+                            )
+                          )
+                        }
+                        className="input w-36 shrink-0 text-xs"
+                      >
+                        {THEMES.map((t) => (
+                          <option key={t} value={t}>
+                            {t.replace("_", " ")}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="input w-full"
+                        value={p.text}
+                        onChange={(e) =>
+                          setPrompts(
+                            prompts.map((q, j) =>
+                              j === i ? { ...q, text: e.target.value } : q
+                            )
+                          )
+                        }
+                      />
+                      <button
+                        type="button"
+                        aria-label="remove prompt"
+                        onClick={() =>
+                          setPrompts(prompts.filter((_, j) => j !== i))
+                        }
+                        className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-baseline justify-between">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPrompts([
+                          ...prompts,
+                          { text: "", theme: "discovery" },
+                        ])
+                      }
+                      className="text-[13px] font-medium text-primary hover:opacity-80"
+                    >
+                      + Add prompt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrompts(
+                          prompts.filter((p) => p.text.trim().length > 0)
+                        );
+                        setEditing(false);
+                      }}
+                      className="text-[13px] font-medium text-primary hover:opacity-80"
+                    >
+                      Done editing
+                    </button>
+                  </div>
+                  <p className="text-xs text-ink-3">
+                    Unbranded prompts should never name a brand — that&apos;s
+                    what makes the mention rate a real measurement.
+                  </p>
+                </>
+              )}
             </div>
           )}
 
