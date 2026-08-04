@@ -26,6 +26,7 @@ export default function AppHomePage() {
   const [loaded, setLoaded] = useState(false);
 
   const [brand, setBrand] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
   const [category, setCategory] = useState("");
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [compDraft, setCompDraft] = useState("");
@@ -45,6 +46,29 @@ export default function AppHomePage() {
       .finally(() => setLoaded(true));
   }, []);
 
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modalOpen]);
+
+  function start(e: React.FormEvent) {
+    e.preventDefault();
+    if (!brand.trim()) return;
+    setCategory("");
+    setCompetitors([]);
+    setCompDraft("");
+    setAudience("");
+    setPrompts(null);
+    setEditing(false);
+    setError(null);
+    setModalOpen(true);
+    void suggest();
+  }
+
   async function suggest() {
     setSuggesting(true);
     setError(null);
@@ -53,10 +77,12 @@ export default function AppHomePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ brand }),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     setSuggesting(false);
     if (!res.ok) {
-      setError(data.error ?? "suggestion failed");
+      setError(
+        (data.error ?? "estimation failed") + " — fill in the details manually"
+      );
       return;
     }
     setCategory(data.profile.category);
@@ -106,8 +132,7 @@ export default function AppHomePage() {
     setEditing(false);
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function create() {
     if (!prompts) return;
     setSubmitting(true);
     setError(null);
@@ -144,9 +169,8 @@ export default function AppHomePage() {
           your buyers ask and scores who gets named.
         </p>
 
-        <form onSubmit={onSubmit} className="card p-6 grid gap-4 max-w-lg">
+        <form onSubmit={start} className="card p-6 grid gap-4 max-w-lg">
           <div className="section-label">New tracker</div>
-
           <label className="grid gap-1.5 text-sm font-medium">
             Your brand
             <div className="flex gap-2">
@@ -158,232 +182,18 @@ export default function AppHomePage() {
                 required
               />
               <button
-                type="button"
-                onClick={suggest}
-                disabled={!brand.trim() || suggesting}
+                type="submit"
+                disabled={!brand.trim()}
                 className="btn-primary shrink-0"
               >
-                {suggesting ? "Estimating…" : "Suggest details"}
+                Start
               </button>
             </div>
             <span className="text-xs font-normal text-ink-3">
-              We&apos;ll estimate the category, competitors, and audience —
-              adjust anything before generating prompts.
+              We&apos;ll estimate your market and draft the question battery —
+              you review everything before it runs.
             </span>
           </label>
-
-          <label className="grid gap-1.5 text-sm font-medium">
-            Category
-            <input
-              className="input w-full"
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                setPrompts(null);
-              }}
-              placeholder="e.g. market research firms"
-              required
-            />
-            <span className="text-xs font-normal text-ink-3">
-              specific and plural, the way a buyer would say it — broad
-              categories make broad measurements
-            </span>
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Competitors
-            {competitors.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {competitors.map((c) => (
-                  <span
-                    key={c}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary-soft px-3 py-1 text-[13px] font-medium text-primary"
-                  >
-                    {c}
-                    <button
-                      type="button"
-                      aria-label={`remove ${c}`}
-                      onClick={() => removeCompetitor(c)}
-                      className="text-primary/70 hover:text-danger leading-none"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <input
-              className="input w-full"
-              value={compDraft}
-              onChange={(e) => setCompDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === ",") {
-                  e.preventDefault();
-                  addCompetitor();
-                }
-              }}
-              onBlur={() => {
-                if (compDraft.trim()) addCompetitor();
-              }}
-              placeholder={
-                competitors.length === 0
-                  ? "e.g. Qualtrics — press Enter after each"
-                  : "add another…"
-              }
-            />
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Audience <span className="font-normal text-ink-3">(optional)</span>
-            <input
-              className="input w-full"
-              value={audience}
-              onChange={(e) => {
-                setAudience(e.target.value);
-                setPrompts(null);
-              }}
-              placeholder="e.g. mid-market CPG brands"
-            />
-          </label>
-
-          {prompts === null ? (
-            <button
-              type="button"
-              onClick={generate}
-              disabled={!detailsReady || generating}
-              className="btn-primary w-fit"
-            >
-              {generating ? "Writing prompts…" : "Generate prompts"}
-            </button>
-          ) : (
-            <div className="grid gap-2">
-              <div className="flex items-baseline justify-between">
-                <span className="section-label">Prompt battery</span>
-                <span className="flex gap-4">
-                  {!editing && (
-                    <button
-                      type="button"
-                      onClick={() => setEditing(true)}
-                      className="text-[13px] font-medium text-primary hover:opacity-80"
-                    >
-                      Edit
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={generate}
-                    disabled={generating}
-                    className="text-[13px] font-medium text-primary hover:opacity-80"
-                  >
-                    {generating ? "Regenerating…" : "Regenerate"}
-                  </button>
-                </span>
-              </div>
-              {!editing ? (
-                <div className="rounded-lg border border-line divide-y divide-line">
-                  {prompts.map((p, i) => (
-                    <div
-                      key={i}
-                      className="flex items-baseline gap-3 px-3.5 py-2 text-sm"
-                    >
-                      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
-                        {p.theme.replace("_", " ")}
-                      </span>
-                      <span className="text-ink-2">{p.text}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <>
-                  {prompts.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <select
-                        value={p.theme}
-                        onChange={(e) =>
-                          setPrompts(
-                            prompts.map((q, j) =>
-                              j === i
-                                ? { ...q, theme: e.target.value as PromptTheme }
-                                : q
-                            )
-                          )
-                        }
-                        className="input w-36 shrink-0 text-xs"
-                      >
-                        {THEMES.map((t) => (
-                          <option key={t} value={t}>
-                            {t.replace("_", " ")}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className="input w-full"
-                        value={p.text}
-                        onChange={(e) =>
-                          setPrompts(
-                            prompts.map((q, j) =>
-                              j === i ? { ...q, text: e.target.value } : q
-                            )
-                          )
-                        }
-                      />
-                      <button
-                        type="button"
-                        aria-label="remove prompt"
-                        onClick={() =>
-                          setPrompts(prompts.filter((_, j) => j !== i))
-                        }
-                        className="text-ink-3 hover:text-danger text-lg leading-none px-1"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  <div className="flex items-baseline justify-between">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPrompts([
-                          ...prompts,
-                          { text: "", theme: "discovery" },
-                        ])
-                      }
-                      className="text-[13px] font-medium text-primary hover:opacity-80"
-                    >
-                      + Add prompt
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrompts(
-                          prompts.filter((p) => p.text.trim().length > 0)
-                        );
-                        setEditing(false);
-                      }}
-                      className="text-[13px] font-medium text-primary hover:opacity-80"
-                    >
-                      Done editing
-                    </button>
-                  </div>
-                  <p className="text-xs text-ink-3">
-                    Unbranded prompts should never name a brand — that&apos;s
-                    what makes the mention rate a real measurement.
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <button
-            type="submit"
-            disabled={
-              submitting ||
-              prompts === null ||
-              prompts.filter((p) => p.text.trim()).length < 4
-            }
-            className="btn-primary w-fit"
-          >
-            {submitting ? "Creating…" : "Create tracker"}
-          </button>
         </form>
       </section>
 
@@ -419,6 +229,272 @@ export default function AppHomePage() {
           </ul>
         )}
       </section>
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 sm:p-8 overflow-y-auto"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setModalOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="card w-full max-w-xl bg-surface p-6 grid gap-4 my-auto"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-[17px] tracking-tight">
+                Set up tracking for {brand}
+              </h2>
+              <button
+                type="button"
+                aria-label="close"
+                onClick={() => setModalOpen(false)}
+                className="text-ink-3 hover:text-ink text-xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {suggesting ? (
+              <div className="grid gap-3 py-6 text-center">
+                <p className="text-sm font-medium">
+                  Estimating your market
+                  <span className="pulse-dot inline-block ml-1">…</span>
+                </p>
+                <p className="text-[13px] text-ink-3">
+                  category · competitors · audience
+                </p>
+              </div>
+            ) : (
+              <>
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Category
+                  <input
+                    className="input w-full"
+                    value={category}
+                    onChange={(e) => {
+                      setCategory(e.target.value);
+                      setPrompts(null);
+                    }}
+                    placeholder="e.g. market research firms"
+                  />
+                </label>
+
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Competitors
+                  {competitors.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {competitors.map((c) => (
+                        <span
+                          key={c}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-primary-soft px-3 py-1 text-[13px] font-medium text-primary"
+                        >
+                          {c}
+                          <button
+                            type="button"
+                            aria-label={`remove ${c}`}
+                            onClick={() => removeCompetitor(c)}
+                            className="text-primary/70 hover:text-danger leading-none"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    className="input w-full"
+                    value={compDraft}
+                    onChange={(e) => setCompDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        addCompetitor();
+                      }
+                    }}
+                    onBlur={() => {
+                      if (compDraft.trim()) addCompetitor();
+                    }}
+                    placeholder={
+                      competitors.length === 0
+                        ? "e.g. Qualtrics — press Enter after each"
+                        : "add another…"
+                    }
+                  />
+                </label>
+
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Audience{" "}
+                  <span className="font-normal text-ink-3">(optional)</span>
+                  <input
+                    className="input w-full"
+                    value={audience}
+                    onChange={(e) => {
+                      setAudience(e.target.value);
+                      setPrompts(null);
+                    }}
+                    placeholder="e.g. mid-market CPG brands"
+                  />
+                </label>
+
+                {prompts === null ? (
+                  <button
+                    type="button"
+                    onClick={generate}
+                    disabled={!detailsReady || generating}
+                    className="btn-primary w-fit"
+                  >
+                    {generating ? "Writing prompts…" : "Generate prompts"}
+                  </button>
+                ) : (
+                  <div className="grid gap-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="section-label">Prompt battery</span>
+                      <span className="flex gap-4">
+                        {!editing && (
+                          <button
+                            type="button"
+                            onClick={() => setEditing(true)}
+                            className="text-[13px] font-medium text-primary hover:opacity-80"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={generate}
+                          disabled={generating}
+                          className="text-[13px] font-medium text-primary hover:opacity-80"
+                        >
+                          {generating ? "Regenerating…" : "Regenerate"}
+                        </button>
+                      </span>
+                    </div>
+                    {!editing ? (
+                      <div className="rounded-lg border border-line divide-y divide-line max-h-72 overflow-y-auto">
+                        {prompts.map((p, i) => (
+                          <div
+                            key={i}
+                            className="flex items-baseline gap-3 px-3.5 py-2 text-sm"
+                          >
+                            <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                              {p.theme.replace("_", " ")}
+                            </span>
+                            <span className="text-ink-2">{p.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="grid gap-2 max-h-72 overflow-y-auto pr-1">
+                        {prompts.map((p, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <select
+                              value={p.theme}
+                              onChange={(e) =>
+                                setPrompts(
+                                  prompts.map((q, j) =>
+                                    j === i
+                                      ? {
+                                          ...q,
+                                          theme: e.target.value as PromptTheme,
+                                        }
+                                      : q
+                                  )
+                                )
+                              }
+                              className="input w-36 shrink-0 text-xs"
+                            >
+                              {THEMES.map((t) => (
+                                <option key={t} value={t}>
+                                  {t.replace("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              className="input w-full"
+                              value={p.text}
+                              onChange={(e) =>
+                                setPrompts(
+                                  prompts.map((q, j) =>
+                                    j === i ? { ...q, text: e.target.value } : q
+                                  )
+                                )
+                              }
+                            />
+                            <button
+                              type="button"
+                              aria-label="remove prompt"
+                              onClick={() =>
+                                setPrompts(prompts.filter((_, j) => j !== i))
+                              }
+                              className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex items-baseline justify-between">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPrompts([
+                                ...prompts,
+                                { text: "", theme: "discovery" },
+                              ])
+                            }
+                            className="text-[13px] font-medium text-primary hover:opacity-80"
+                          >
+                            + Add prompt
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrompts(
+                                prompts.filter(
+                                  (p) => p.text.trim().length > 0
+                                )
+                              );
+                              setEditing(false);
+                            }}
+                            className="text-[13px] font-medium text-primary hover:opacity-80"
+                          >
+                            Done editing
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {error && <p className="text-sm text-danger">{error}</p>}
+
+                <div className="flex items-center justify-end gap-4 border-t border-line pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(false)}
+                    className="text-sm font-medium text-ink-3 hover:text-ink"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={create}
+                    disabled={
+                      submitting ||
+                      prompts === null ||
+                      prompts.filter((p) => p.text.trim()).length < 4
+                    }
+                    className="btn-primary"
+                  >
+                    {submitting ? "Creating…" : "Create tracker"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
