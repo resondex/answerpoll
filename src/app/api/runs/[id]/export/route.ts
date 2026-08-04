@@ -8,7 +8,11 @@ function csvCell(v: unknown): string {
 }
 
 function toCsv(rows: (string | number | null)[][]): string {
-  return rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
+  // Leading BOM so Excel detects UTF-8 — without it, curly quotes and
+  // em-dashes in LLM answers render as mojibake (â€™ / ‚Äô).
+  return (
+    "\uFEFF" + rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n"
+  );
 }
 
 /**
