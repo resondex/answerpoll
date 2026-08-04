@@ -51,6 +51,11 @@ function ensureSchema(): Promise<void> {
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
       )`;
+      await sql`CREATE TABLE IF NOT EXISTS llm_cache (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
       await sql`CREATE TABLE IF NOT EXISTS prompts (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -163,6 +168,21 @@ export const pgStore: Store = {
     const rows =
       await sql`SELECT plan FROM user_plans WHERE user_id = ${userId}`;
     return (rows[0]?.plan as "free" | "pro" | "enterprise") ?? "free";
+  },
+
+  async cacheGet(key, maxAgeMs) {
+    const sql = await db();
+    const cutoff = new Date(Date.now() - maxAgeMs);
+    const rows =
+      await sql`SELECT value FROM llm_cache WHERE key = ${key} AND created_at > ${cutoff}`;
+    return (rows[0]?.value as string | undefined) ?? null;
+  },
+
+  async cacheSet(key, value) {
+    const sql = await db();
+    await sql`INSERT INTO llm_cache (key, value, created_at)
+      VALUES (${key}, ${value}, now())
+      ON CONFLICT (key) DO UPDATE SET value = ${value}, created_at = now()`;
   },
 
   async updateProjectSchedule(id, schedule) {

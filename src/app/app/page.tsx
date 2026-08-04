@@ -32,6 +32,13 @@ export default function AppHomePage() {
   const [compDraft, setCompDraft] = useState("");
   const [audience, setAudience] = useState("");
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
+  // Snapshot of the details the current battery was generated from — when the
+  // live fields drift from it, we offer regeneration; when they match, we don't.
+  const [servedProfile, setServedProfile] = useState<{
+    category: string;
+    competitors: string[];
+    audience: string;
+  } | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -63,16 +70,17 @@ export default function AppHomePage() {
     setCompDraft("");
     setAudience("");
     setPrompts(null);
+    setServedProfile(null);
     setEditing(false);
     setError(null);
     setModalOpen(true);
-    void suggest();
+    void setup();
   }
 
-  async function suggest() {
+  async function setup() {
     setSuggesting(true);
     setError(null);
-    const res = await fetch("/api/analyze", {
+    const res = await fetch("/api/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ brand }),
@@ -89,8 +97,19 @@ export default function AppHomePage() {
     setCompetitors(data.profile.competitors);
     setCompDraft("");
     setAudience(data.profile.audience);
-    setPrompts(null);
+    setPrompts(data.prompts);
+    setServedProfile({
+      category: data.profile.category,
+      competitors: data.profile.competitors,
+      audience: data.profile.audience,
+    });
   }
+
+  const detailsDirty =
+    servedProfile !== null &&
+    (category.trim() !== servedProfile.category.trim() ||
+      (audience || "").trim() !== servedProfile.audience.trim() ||
+      allCompetitors().join("|") !== servedProfile.competitors.join("|"));
 
   function allCompetitors(): string[] {
     const draft = compDraft.trim().replace(/,+$/, "");
@@ -101,17 +120,16 @@ export default function AppHomePage() {
   function addCompetitor() {
     setCompetitors(allCompetitors());
     setCompDraft("");
-    setPrompts(null);
   }
 
   function removeCompetitor(name: string) {
     setCompetitors(competitors.filter((c) => c !== name));
-    setPrompts(null);
   }
 
   async function generate() {
     setGenerating(true);
     setError(null);
+    const comps = allCompetitors();
     const res = await fetch("/api/prompts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -119,7 +137,8 @@ export default function AppHomePage() {
         brand,
         category,
         audience: audience || undefined,
-        competitors: allCompetitors(),
+        competitors: comps,
+        force: true,
       }),
     });
     const data = await res.json();
@@ -129,6 +148,7 @@ export default function AppHomePage() {
       return;
     }
     setPrompts(data.prompts);
+    setServedProfile({ category, competitors: comps, audience: audience || "" });
     setEditing(false);
   }
 
@@ -240,7 +260,7 @@ export default function AppHomePage() {
           <div
             role="dialog"
             aria-modal="true"
-            className="card w-full max-w-xl bg-surface p-6 grid gap-4 my-auto"
+            className="card w-full max-w-3xl bg-surface p-6 grid gap-4 my-auto"
           >
             <div className="flex items-center justify-between">
               <h2 className="font-semibold text-[17px] tracking-tight">
@@ -259,11 +279,11 @@ export default function AppHomePage() {
             {suggesting ? (
               <div className="grid gap-3 py-6 text-center">
                 <p className="text-sm font-medium">
-                  Estimating your market
+                  Estimating your market and drafting questions
                   <span className="pulse-dot inline-block ml-1">…</span>
                 </p>
                 <p className="text-[13px] text-ink-3">
-                  category · competitors · audience
+                  category · competitors · audience · prompt battery
                 </p>
               </div>
             ) : (
@@ -273,10 +293,7 @@ export default function AppHomePage() {
                   <input
                     className="input w-full"
                     value={category}
-                    onChange={(e) => {
-                      setCategory(e.target.value);
-                      setPrompts(null);
-                    }}
+                    onChange={(e) => setCategory(e.target.value)}
                     placeholder="e.g. market research firms"
                   />
                 </label>
@@ -330,10 +347,7 @@ export default function AppHomePage() {
                   <input
                     className="input w-full"
                     value={audience}
-                    onChange={(e) => {
-                      setAudience(e.target.value);
-                      setPrompts(null);
-                    }}
+                    onChange={(e) => setAudience(e.target.value)}
                     placeholder="e.g. mid-market CPG brands"
                   />
                 </label>
@@ -351,26 +365,32 @@ export default function AppHomePage() {
                   <div className="grid gap-2">
                     <div className="flex items-baseline justify-between">
                       <span className="section-label">Prompt battery</span>
-                      <span className="flex gap-4">
-                        {!editing && (
-                          <button
-                            type="button"
-                            onClick={() => setEditing(true)}
-                            className="text-[13px] font-medium text-primary hover:opacity-80"
-                          >
-                            Edit
-                          </button>
-                        )}
+                      {!editing && (
+                        <button
+                          type="button"
+                          onClick={() => setEditing(true)}
+                          className="text-[13px] font-medium text-primary hover:opacity-80"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    {detailsDirty && (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/8 px-3.5 py-2.5 text-[13px]">
+                        <span>
+                          You changed the details — these prompts were written
+                          for the previous ones.
+                        </span>
                         <button
                           type="button"
                           onClick={generate}
                           disabled={generating}
-                          className="text-[13px] font-medium text-primary hover:opacity-80"
+                          className="btn-primary shrink-0 px-3 py-1.5 text-[13px]"
                         >
-                          {generating ? "Regenerating…" : "Regenerate"}
+                          {generating ? "Regenerating…" : "Regenerate prompts"}
                         </button>
-                      </span>
-                    </div>
+                      </div>
+                    )}
                     {!editing ? (
                       <div className="rounded-lg border border-line divide-y divide-line max-h-72 overflow-y-auto">
                         {prompts.map((p, i) => (
@@ -388,7 +408,7 @@ export default function AppHomePage() {
                     ) : (
                       <div className="grid gap-2 max-h-72 overflow-y-auto pr-1">
                         {prompts.map((p, i) => (
-                          <div key={i} className="flex items-center gap-2">
+                          <div key={i} className="flex items-start gap-2">
                             <select
                               value={p.theme}
                               onChange={(e) =>
@@ -411,8 +431,9 @@ export default function AppHomePage() {
                                 </option>
                               ))}
                             </select>
-                            <input
-                              className="input w-full"
+                            <textarea
+                              className="input w-full resize-none field-sizing-content"
+                              rows={2}
                               value={p.text}
                               onChange={(e) =>
                                 setPrompts(

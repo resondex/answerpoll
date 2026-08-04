@@ -38,6 +38,11 @@ function createDb(): Database.Database {
       user_id TEXT PRIMARY KEY,
       plan TEXT NOT NULL DEFAULT 'free'
     );
+    CREATE TABLE IF NOT EXISTS llm_cache (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id),
@@ -158,6 +163,27 @@ export const sqliteStore: Store = {
       .prepare("SELECT plan FROM user_plans WHERE user_id = ?")
       .get(userId) as { plan: string } | undefined;
     return (row?.plan as "free" | "pro" | "enterprise") ?? "free";
+  },
+
+  async cacheGet(key, maxAgeMs) {
+    const cutoff = new Date(Date.now() - maxAgeMs)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+    const row = getDb()
+      .prepare("SELECT value FROM llm_cache WHERE key = ? AND created_at > ?")
+      .get(key, cutoff) as { value: string } | undefined;
+    return row?.value ?? null;
+  },
+
+  async cacheSet(key, value) {
+    getDb()
+      .prepare(
+        `INSERT INTO llm_cache (key, value, created_at)
+         VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, created_at = datetime('now')`
+      )
+      .run(key, value);
   },
 
   async updateProjectSchedule(id, schedule) {

@@ -1,7 +1,15 @@
+import { createHash } from "crypto";
 import { openaiClient } from "./providers";
+import { store } from "../store";
 import { generatePromptBattery, type PromptSpec } from "./prompts";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
+const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
+
+function cacheKey(prefix: string, parts: (string | null)[]): string {
+  const normalized = parts.map((p) => (p ?? "").trim().toLowerCase()).join("|");
+  return `${prefix}:${createHash("sha256").update(normalized).digest("hex")}`;
+}
 
 export interface BrandProfile {
   category: string;
@@ -19,6 +27,41 @@ const PROFILE_SCHEMA = {
   },
   required: ["category", "competitors", "audience"],
 } as const;
+
+/** Cache-first profile estimation — one live call per brand per ~6 months. */
+export async function getBrandProfile(brand: string): Promise<BrandProfile> {
+  const key = cacheKey("analyze", [brand]);
+  const hit = await store.cacheGet(key, CACHE_TTL_MS);
+  if (hit) return JSON.parse(hit) as BrandProfile;
+  const profile = await suggestBrandProfile(brand);
+  await store.cacheSet(key, JSON.stringify(profile));
+  return profile;
+}
+
+/** Cache-first battery generation; force=true skips the read (still writes). */
+export async function getBattery(
+  input: {
+    brand: string;
+    category: string;
+    competitors: string[];
+    audience: string | null;
+  },
+  force = false
+): Promise<PromptSpec[]> {
+  const key = cacheKey("battery", [
+    input.brand,
+    input.category,
+    [...input.competitors].sort().join(","),
+    input.audience,
+  ]);
+  if (!force) {
+    const hit = await store.cacheGet(key, CACHE_TTL_MS);
+    if (hit) return JSON.parse(hit) as PromptSpec[];
+  }
+  const battery = await generateBatteryAi(input);
+  await store.cacheSet(key, JSON.stringify(battery));
+  return battery;
+}
 
 /** Estimate a brand's competitive category, rivals, and buyer audience. */
 export async function suggestBrandProfile(

@@ -154,6 +154,9 @@ export interface Store {
   listProjects(userId?: string): Promise<Project[]>;
   updateProjectSchedule(id: string, schedule: RunSchedule): Promise<void>;
   getPlan(userId: string): Promise<Plan>;
+  /** Cached value no older than maxAgeMs, else null. */
+  cacheGet(key: string, maxAgeMs: number): Promise<string | null>;
+  cacheSet(key: string, value: string): Promise<void>;
   insertPrompts(
     projectId: string,
     prompts: { text: string; theme: PromptTheme }[]

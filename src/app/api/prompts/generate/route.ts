@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { apiKeyConfigured } from "@/lib/engine/providers";
-import { generateBatteryAi } from "@/lib/engine/suggest";
+import { getBattery } from "@/lib/engine/suggest";
 import { generatePromptBattery } from "@/lib/engine/prompts";
 
 const schema = z.object({
@@ -10,6 +10,8 @@ const schema = z.object({
   category: z.string().trim().min(1),
   competitors: z.array(z.string().trim().min(1)).max(12).default([]),
   audience: z.string().trim().optional(),
+  // Explicit regenerate clicks want fresh variation, not the cached battery.
+  force: z.boolean().default(false),
 });
 
 /** Generate an editable prompt battery for review before tracker creation. */
@@ -26,7 +28,10 @@ export async function POST(req: Request) {
   const { brand, category, competitors } = parsed.data;
   const audience = parsed.data.audience || null;
   const prompts = apiKeyConfigured()
-    ? await generateBatteryAi({ brand, category, competitors, audience })
+    ? await getBattery(
+        { brand, category, competitors, audience },
+        parsed.data.force
+      )
     : generatePromptBattery({ brand, category, audience });
   return NextResponse.json({ prompts });
 }
