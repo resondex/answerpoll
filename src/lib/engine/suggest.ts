@@ -48,7 +48,9 @@ export async function getBattery(
   },
   force = false
 ): Promise<PromptSpec[]> {
+  // Version in the key: prompt-writing changes must bypass old cached batteries.
   const key = cacheKey("battery", [
+    BATTERY_STYLE_VERSION,
     input.brand,
     input.category,
     [...input.competitors].sort().join(","),
@@ -134,10 +136,13 @@ const BATTERY_SCHEMA = {
   required: ["prompts"],
 } as const;
 
+const BATTERY_STYLE_VERSION = "v2";
+
 /**
  * Generate the unbranded battery with the model (falling back to templates),
  * then append the two formulaic branded probes. Unbranded prompts must never
- * name the target or competitors — that's the measurement's blindness.
+ * name the target or competitors — that's the measurement's blindness — and
+ * must read like real typed prompts, not survey questions.
  */
 export async function generateBatteryAi(input: {
   brand: string;
@@ -153,16 +158,42 @@ export async function generateBatteryAi(input: {
         {
           role: "system",
           content:
-            "You write prompt batteries for measuring brand visibility in AI " +
-            "answers. Produce exactly 12 prompts a real buyer would ask an AI " +
-            "assistant when shopping in the given category: 3 with theme " +
-            "'discovery' (best/top/leading questions), 4 'recommendation' " +
-            "(personal advice questions), 3 'comparison' (compare/pros-cons/" +
-            "alternatives), 2 'use_case' (budget, trust, or situation-specific). " +
-            "Rules: natural buyer language; vary the phrasing; mention the " +
-            "audience where it fits; NEVER name any brand — not the target, " +
-            "not the competitors. The competitor list is context for what the " +
-            "category means, nothing more.",
+            "You write prompt batteries for measuring brand visibility in AI answers. " +
+            "Each prompt must read like something a REAL person actually typed into " +
+            "ChatGPT. Imagine 12 different people, each in a concrete situation that " +
+            "puts them in the market for this category, and write exactly what each " +
+            "one would type.\n\n" +
+            "Style rules — follow every one:\n" +
+            "- First person, everyday words, contractions. Ground prompts in concrete " +
+            "situations with specific details (team size, budget, what's going wrong, " +
+            "who it's for).\n" +
+            "- Vary length and register across the set: a few terse search-style " +
+            "fragments, mostly quick natural questions, and one or two longer " +
+            "context-dumps where someone explains their situation in 2–3 sentences " +
+            "before asking.\n" +
+            "- BANNED vocabulary: 'solutions', 'platforms', 'leading', 'top options', " +
+            "'best-in-class', 'robust', 'streamline', 'leverage', and any phrasing " +
+            "that sounds like a survey question or analyst report. People say 'apps', " +
+            "'tools', 'companies', 'places', or the plain category word.\n" +
+            "- Never describe the asker with the audience label. Nobody calls " +
+            "themselves an 'IT leader' or a 'knowledge worker' — they say 'I run IT " +
+            "at a mid-size company' or 'my team of 8'. Use the audience to pick " +
+            "realistic situations, never as words in the prompt.\n" +
+            "- Sentence case or lowercase; punctuation optional on short fragments. " +
+            "Imperfect grammar is fine. No typos.\n" +
+            "- NEVER name any brand — not the target, not the competitors. The " +
+            "competitor list only tells you what market this is.\n\n" +
+            "Register examples from a DIFFERENT category (match this feel, not the topic):\n" +
+            "- 'best project management tool for a small construction company'\n" +
+            "- 'my team keeps missing deadlines, what app should we use to track jobs?'\n" +
+            "- 'whats a good free alternative to the big project management apps'\n" +
+            "- 'We're a 12-person remodeling company and everything lives in text " +
+            "threads right now. I need something the field guys will actually use — " +
+            "what would you recommend and why?'\n\n" +
+            "Produce exactly 12: 3 'discovery' (what's out there / best-of asks), " +
+            "4 'recommendation' (advice for their specific situation), 3 'comparison' " +
+            "(weighing types, tradeoffs, or alternatives), 2 'use_case' (budget, " +
+            "trust, or a situational constraint).",
         },
         {
           role: "user",
