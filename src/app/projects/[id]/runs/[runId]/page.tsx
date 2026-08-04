@@ -69,26 +69,25 @@ export default function DashboardPage() {
           </p>
           <p className="text-[13px] text-ink-3">
             Export:{" "}
-            <a
-              href={`/api/runs/${runId}/export?format=csv&table=brands`}
-              className="font-medium text-primary hover:opacity-80"
-            >
-              brands CSV
-            </a>
-            {" · "}
-            <a
-              href={`/api/runs/${runId}/export?format=csv&table=prompts`}
-              className="font-medium text-primary hover:opacity-80"
-            >
-              prompts CSV
-            </a>
-            {" · "}
-            <a
-              href={`/api/runs/${runId}/export?format=json`}
-              className="font-medium text-primary hover:opacity-80"
-            >
-              JSON
-            </a>
+            {(
+              [
+                ["brands", "format=csv&table=brands"],
+                ["prompts", "format=csv&table=prompts"],
+                ["raw answers", "format=csv&table=responses"],
+                ["raw mentions", "format=csv&table=mentions"],
+                ["JSON", "format=json"],
+              ] as const
+            ).map(([label, qs], i) => (
+              <span key={label}>
+                {i > 0 && " · "}
+                <a
+                  href={`/api/runs/${runId}/export?${qs}`}
+                  className="font-medium text-primary hover:opacity-80"
+                >
+                  {label}
+                </a>
+              </span>
+            ))}
           </p>
         </div>
       </div>

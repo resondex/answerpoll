@@ -13,9 +13,13 @@ function toCsv(rows: (string | number | null)[][]): string {
 
 /**
  * Download a run's results.
- *   ?format=json               — full metrics payload
- *   ?format=csv&table=brands   — brand summary (default table)
- *   ?format=csv&table=prompts  — per-prompt target visibility
+ *   ?format=json                 — complete archive: metrics + every raw
+ *                                  response and its extracted mentions
+ *   ?format=csv&table=brands     — brand summary (default table)
+ *   ?format=csv&table=prompts    — per-prompt target visibility
+ *   ?format=csv&table=responses  — raw data, one row per sampled answer
+ *   ?format=csv&table=mentions   — raw data, long format, one row per
+ *                                  brand mention (tidy — ready for R)
  */
 export async function GET(
   req: Request,
@@ -26,13 +30,31 @@ export async function GET(
   if (!run) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const [metrics, project] = await Promise.all([
+  const [metrics, project, responses, mentions, prompts] = await Promise.all([
     computeRunMetrics(id),
     store.getProject(run.project_id),
+    store.listResponses(id),
+    store.listMentionsForRun(id),
+    store.listPrompts(run.project_id),
   ]);
   if (!metrics || !project) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
+
+  const promptById = new Map(prompts.map((p) => [p.id, p]));
+  const mentionsByResponse = new Map<string, typeof mentions>();
+  for (const m of mentions) {
+    const list = mentionsByResponse.get(m.response_id) ?? [];
+    list.push(m);
+    mentionsByResponse.set(m.response_id, list);
+  }
+  for (const list of mentionsByResponse.values()) {
+    list.sort((a, b) => a.rank - b.rank);
+  }
+  const targetNorm = project.brand.trim().toLowerCase();
+  const competitorNorms = new Set(
+    project.competitors.map((c) => c.trim().toLowerCase())
+  );
 
   const url = new URL(req.url);
   const format = url.searchParams.get("format") ?? "csv";
@@ -41,8 +63,24 @@ export async function GET(
   const slug = project.brand.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
   if (format === "json") {
+    const raw = responses.map((r) => {
+      const p = promptById.get(r.prompt_id);
+      return {
+        response_id: r.id,
+        prompt: p?.text ?? "",
+        theme: p?.theme ?? "",
+        repeat_idx: r.repeat_idx,
+        created_at: r.created_at,
+        text: r.text,
+        mentions: (mentionsByResponse.get(r.id) ?? []).map((m) => ({
+          brand: m.brand,
+          rank: m.rank,
+          framing: m.framing,
+        })),
+      };
+    });
     return new NextResponse(
-      JSON.stringify({ project, run, metrics }, null, 2),
+      JSON.stringify({ project, run, metrics, responses: raw }, null, 2),
       {
         headers: {
           "Content-Type": "application/json",
@@ -64,6 +102,46 @@ export async function GET(
         p.targetRate.toFixed(4),
         p.targetAvgRank?.toFixed(2) ?? null,
       ]),
+    ];
+  } else if (table === "responses") {
+    rows = [
+      ["response_id", "prompt", "theme", "repeat_idx", "created_at", "brands_in_order", "mention_count", "target_mentioned", "text"],
+      ...responses.map((r) => {
+        const p = promptById.get(r.prompt_id);
+        const ms = mentionsByResponse.get(r.id) ?? [];
+        return [
+          r.id,
+          p?.text ?? "",
+          p?.theme ?? "",
+          r.repeat_idx,
+          r.created_at,
+          ms.map((m) => m.brand).join("|"),
+          ms.length,
+          ms.some((m) => m.brand_norm === targetNorm) ? 1 : 0,
+          r.text,
+        ];
+      }),
+    ];
+  } else if (table === "mentions") {
+    rows = [
+      ["response_id", "prompt", "theme", "repeat_idx", "brand", "rank", "framing", "brand_type"],
+      ...responses.flatMap((r) => {
+        const p = promptById.get(r.prompt_id);
+        return (mentionsByResponse.get(r.id) ?? []).map((m) => [
+          r.id,
+          p?.text ?? "",
+          p?.theme ?? "",
+          r.repeat_idx,
+          m.brand,
+          m.rank,
+          m.framing,
+          m.brand_norm === targetNorm
+            ? "target"
+            : competitorNorms.has(m.brand_norm)
+              ? "competitor"
+              : "emerged",
+        ]);
+      }),
     ];
   } else {
     rows = [
