@@ -118,6 +118,17 @@ export interface RunProgress {
   total: number;
 }
 
+export interface SetupDraft {
+  id: string;
+  user_id: string | null;
+  brand: string;
+  category: string;
+  competitors: string[];
+  audience: string | null;
+  prompts: { text: string; theme: PromptTheme }[] | null;
+  updated_at: string;
+}
+
 export interface TrendPoint {
   rate: number;
   ciLow: number;
@@ -157,6 +168,18 @@ export interface Store {
   /** Cached value no older than maxAgeMs, else null. */
   cacheGet(key: string, maxAgeMs: number): Promise<string | null>;
   cacheSet(key: string, value: string): Promise<void>;
+  saveSetupDraft(input: {
+    id: string | null;
+    userId: string | null;
+    brand: string;
+    category: string;
+    competitors: string[];
+    audience: string | null;
+    prompts: { text: string; theme: PromptTheme }[] | null;
+  }): Promise<SetupDraft>;
+  getSetupDraft(id: string): Promise<SetupDraft | null>;
+  listSetupDrafts(userId: string | null): Promise<SetupDraft[]>;
+  deleteSetupDraft(id: string): Promise<void>;
   insertPrompts(
     projectId: string,
     prompts: { text: string; theme: PromptTheme }[]

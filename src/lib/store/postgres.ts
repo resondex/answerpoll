@@ -5,6 +5,7 @@ import type {
   Run,
   ResponseRow,
   MentionRow,
+  SetupDraft,
   Store,
 } from "../types";
 
@@ -55,6 +56,16 @@ function ensureSchema(): Promise<void> {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS setup_drafts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        brand TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT '',
+        competitors TEXT NOT NULL DEFAULT '[]',
+        audience TEXT,
+        prompts TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
       await sql`CREATE TABLE IF NOT EXISTS prompts (
         id TEXT PRIMARY KEY,
@@ -125,6 +136,19 @@ function rowToProject(r: Record<string, unknown>): Project {
   };
 }
 
+function rowToDraft(r: Record<string, unknown>): SetupDraft {
+  return {
+    id: r.id as string,
+    user_id: (r.user_id as string | null) ?? null,
+    brand: r.brand as string,
+    category: (r.category as string) ?? "",
+    competitors: JSON.parse((r.competitors as string) ?? "[]"),
+    audience: (r.audience as string | null) ?? null,
+    prompts: r.prompts ? JSON.parse(r.prompts as string) : null,
+    updated_at: iso(r.updated_at)!,
+  };
+}
+
 function rowToRun(r: Record<string, unknown>): Run {
   return {
     id: r.id as string,
@@ -183,6 +207,40 @@ export const pgStore: Store = {
     await sql`INSERT INTO llm_cache (key, value, created_at)
       VALUES (${key}, ${value}, now())
       ON CONFLICT (key) DO UPDATE SET value = ${value}, created_at = now()`;
+  },
+
+  async saveSetupDraft(input) {
+    const sql = await db();
+    const id = input.id ?? crypto.randomUUID();
+    const competitors = JSON.stringify(input.competitors);
+    const prompts = input.prompts ? JSON.stringify(input.prompts) : null;
+    await sql`INSERT INTO setup_drafts (id, user_id, brand, category, competitors, audience, prompts, updated_at)
+      VALUES (${id}, ${input.userId}, ${input.brand}, ${input.category}, ${competitors}, ${input.audience}, ${prompts}, now())
+      ON CONFLICT (id) DO UPDATE SET
+        brand = ${input.brand}, category = ${input.category},
+        competitors = ${competitors}, audience = ${input.audience},
+        prompts = ${prompts}, updated_at = now()`;
+    return (await this.getSetupDraft(id))!;
+  },
+
+  async getSetupDraft(id) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM setup_drafts WHERE id = ${id}`;
+    return rows.length > 0 ? rowToDraft(rows[0]) : null;
+  },
+
+  async listSetupDrafts(userId) {
+    const sql = await db();
+    const rows =
+      userId === null
+        ? await sql`SELECT * FROM setup_drafts WHERE user_id IS NULL ORDER BY updated_at DESC`
+        : await sql`SELECT * FROM setup_drafts WHERE user_id = ${userId} ORDER BY updated_at DESC`;
+    return rows.map(rowToDraft);
+  },
+
+  async deleteSetupDraft(id) {
+    const sql = await db();
+    await sql`DELETE FROM setup_drafts WHERE id = ${id}`;
   },
 
   async updateProjectSchedule(id, schedule) {

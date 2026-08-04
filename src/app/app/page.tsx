@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Project, PromptTheme, Run } from "@/lib/types";
+import type { Project, PromptTheme, Run, SetupDraft } from "@/lib/types";
 
 type ProjectWithRun = Project & { latestRun: Run | null };
 
@@ -40,6 +40,9 @@ export default function AppHomePage() {
     audience: string;
   } | null>(null);
 
+  const [drafts, setDrafts] = useState<SetupDraft[]>([]);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [editing, setEditing] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -51,7 +54,13 @@ export default function AppHomePage() {
       .then((r) => r.json())
       .then((d) => setProjects(d.projects ?? []))
       .finally(() => setLoaded(true));
+    void refreshDrafts();
   }, []);
+
+  async function refreshDrafts() {
+    const res = await fetch("/api/drafts");
+    if (res.ok) setDrafts((await res.json()).drafts ?? []);
+  }
 
   useEffect(() => {
     if (!modalOpen) return;
@@ -71,10 +80,63 @@ export default function AppHomePage() {
     setAudience("");
     setPrompts(null);
     setServedProfile(null);
+    setDraftId(null);
     setEditing(false);
     setError(null);
     setModalOpen(true);
     void setup();
+  }
+
+  function resumeDraft(d: SetupDraft) {
+    setBrand(d.brand);
+    setCategory(d.category);
+    setCompetitors(d.competitors);
+    setCompDraft("");
+    setAudience(d.audience ?? "");
+    setPrompts(d.prompts);
+    setServedProfile(
+      d.prompts
+        ? {
+            category: d.category,
+            competitors: d.competitors,
+            audience: d.audience ?? "",
+          }
+        : null
+    );
+    setDraftId(d.id);
+    setEditing(false);
+    setError(null);
+    setModalOpen(true);
+  }
+
+  async function saveForLater() {
+    setSavingDraft(true);
+    setError(null);
+    const res = await fetch("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: draftId ?? undefined,
+        brand,
+        category,
+        audience: audience || undefined,
+        competitors: allCompetitors(),
+        prompts,
+      }),
+    });
+    setSavingDraft(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "saving failed");
+      return;
+    }
+    await refreshDrafts();
+    setModalOpen(false);
+  }
+
+  async function deleteDraft(id: string) {
+    await fetch(`/api/drafts/${id}`, { method: "DELETE" });
+    setDrafts(drafts.filter((d) => d.id !== id));
   }
 
   async function setup() {
@@ -174,13 +236,16 @@ export default function AppHomePage() {
       setError(data.error ?? "something went wrong");
       return;
     }
+    if (draftId) {
+      await fetch(`/api/drafts/${draftId}`, { method: "DELETE" });
+    }
     router.push(`/projects/${data.project.id}`);
   }
 
   const detailsReady = brand.trim() && category.trim();
 
   return (
-    <div className="grid gap-12 lg:grid-cols-[7fr_5fr]">
+    <div className="grid gap-10 max-w-2xl">
       <section>
         <h1 className="text-2xl font-semibold tracking-tight mb-2">
           Your trackers
@@ -190,7 +255,7 @@ export default function AppHomePage() {
           your buyers ask and scores who gets named.
         </p>
 
-        <form onSubmit={start} className="card p-6 grid gap-4 max-w-lg">
+        <form onSubmit={start} className="card p-6 grid gap-4">
           <div className="section-label">New tracker</div>
           <label className="grid gap-1.5 text-sm font-medium">
             Your brand
@@ -217,6 +282,46 @@ export default function AppHomePage() {
           </label>
         </form>
       </section>
+
+      {drafts.length > 0 && (
+        <section>
+          <h2 className="section-label mb-3">Saved setups</h2>
+          <ul className="grid gap-2">
+            {drafts.map((d) => (
+              <li
+                key={d.id}
+                className="card flex items-center justify-between gap-4 px-5 py-3.5"
+              >
+                <div className="min-w-0">
+                  <span className="font-semibold text-[15px]">{d.brand}</span>
+                  <span className="text-[13px] text-ink-2">
+                    {" "}
+                    · {d.category || "setup in progress"}
+                    {d.prompts ? ` · ${d.prompts.length} prompts drafted` : ""}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => resumeDraft(d)}
+                    className="text-sm font-semibold text-primary hover:opacity-80"
+                  >
+                    Continue →
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`delete ${d.brand} setup`}
+                    onClick={() => deleteDraft(d.id)}
+                    className="text-ink-3 hover:text-danger text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <h2 className="section-label mb-3">Trackers</h2>
@@ -494,7 +599,16 @@ export default function AppHomePage() {
 
                 {error && <p className="text-sm text-danger">{error}</p>}
 
-                <div className="flex items-center justify-end gap-4 border-t border-line pt-4">
+                <div className="flex items-center gap-4 border-t border-line pt-4">
+                  <button
+                    type="button"
+                    onClick={saveForLater}
+                    disabled={savingDraft || !brand.trim()}
+                    className="text-sm font-medium text-primary hover:opacity-80 disabled:opacity-50"
+                  >
+                    {savingDraft ? "Saving…" : "Save for later"}
+                  </button>
+                  <span className="flex-1" />
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}

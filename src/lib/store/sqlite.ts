@@ -7,6 +7,7 @@ import type {
   Run,
   ResponseRow,
   MentionRow,
+  SetupDraft,
   Store,
 } from "../types";
 
@@ -42,6 +43,16 @@ function createDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS setup_drafts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      brand TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT '',
+      competitors TEXT NOT NULL DEFAULT '[]',
+      audience TEXT,
+      prompts TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
@@ -116,6 +127,19 @@ function parseProject(row: ProjectRaw): Project {
   };
 }
 
+function parseDraft(row: Record<string, string | null>): SetupDraft {
+  return {
+    id: row.id!,
+    user_id: row.user_id ?? null,
+    brand: row.brand!,
+    category: row.category ?? "",
+    competitors: JSON.parse(row.competitors ?? "[]"),
+    audience: row.audience ?? null,
+    prompts: row.prompts ? JSON.parse(row.prompts) : null,
+    updated_at: row.updated_at!,
+  };
+}
+
 export const sqliteStore: Store = {
   async createProject(input) {
     const id = crypto.randomUUID();
@@ -184,6 +208,57 @@ export const sqliteStore: Store = {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, created_at = datetime('now')`
       )
       .run(key, value);
+  },
+
+  async saveSetupDraft(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO setup_drafts (id, user_id, brand, category, competitors, audience, prompts, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+           brand = excluded.brand, category = excluded.category,
+           competitors = excluded.competitors, audience = excluded.audience,
+           prompts = excluded.prompts, updated_at = datetime('now')`
+      )
+      .run(
+        id,
+        input.userId,
+        input.brand,
+        input.category,
+        JSON.stringify(input.competitors),
+        input.audience,
+        input.prompts ? JSON.stringify(input.prompts) : null
+      );
+    return (await this.getSetupDraft(id))!;
+  },
+
+  async getSetupDraft(id) {
+    const row = getDb()
+      .prepare("SELECT * FROM setup_drafts WHERE id = ?")
+      .get(id) as Record<string, string | null> | undefined;
+    return row ? parseDraft(row) : null;
+  },
+
+  async listSetupDrafts(userId) {
+    const rows = (
+      userId === null
+        ? getDb()
+            .prepare(
+              "SELECT * FROM setup_drafts WHERE user_id IS NULL ORDER BY updated_at DESC"
+            )
+            .all()
+        : getDb()
+            .prepare(
+              "SELECT * FROM setup_drafts WHERE user_id = ? ORDER BY updated_at DESC"
+            )
+            .all(userId)
+    ) as Record<string, string | null>[];
+    return rows.map(parseDraft);
+  },
+
+  async deleteSetupDraft(id) {
+    getDb().prepare("DELETE FROM setup_drafts WHERE id = ?").run(id);
   },
 
   async updateProjectSchedule(id, schedule) {
