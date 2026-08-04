@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/store";
+import { requireAuth, requireRun } from "@/lib/auth";
 import { computeRunMetrics } from "@/lib/engine/metrics";
 
 function csvCell(v: unknown): string {
@@ -29,19 +30,19 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
   const { id } = await params;
-  const run = await store.getRun(id);
-  if (!run) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
-  const [metrics, project, responses, mentions, prompts] = await Promise.all([
+  const loaded = await requireRun(id, auth);
+  if (loaded instanceof NextResponse) return loaded;
+  const { run, project } = loaded;
+  const [metrics, responses, mentions, prompts] = await Promise.all([
     computeRunMetrics(id),
-    store.getProject(run.project_id),
     store.listResponses(id),
     store.listMentionsForRun(id),
     store.listPrompts(run.project_id),
   ]);
-  if (!metrics || !project) {
+  if (!metrics) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 

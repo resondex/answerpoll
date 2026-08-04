@@ -132,7 +132,14 @@ export async function driveAndChain(
   try {
     const outcome = await driveRunChunk(runId, VERCEL_CHUNK_BUDGET_MS);
     if (outcome === "continue") {
-      await fetch(`${origin}/api/runs/${runId}/continue`, { method: "POST" });
+      // Server-to-server hop carries no session cookies; the continue route
+      // accepts the cron secret as chain credentials.
+      await fetch(`${origin}/api/runs/${runId}/continue`, {
+        method: "POST",
+        headers: process.env.CRON_SECRET
+          ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+          : undefined,
+      });
     }
   } catch (err) {
     console.error(`answerpoll run ${runId} crashed:`, err);

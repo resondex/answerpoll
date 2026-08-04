@@ -46,6 +46,11 @@ function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS schedule TEXT NOT NULL DEFAULT 'none'`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS user_id TEXT`;
+      await sql`CREATE TABLE IF NOT EXISTS user_plans (
+        user_id TEXT PRIMARY KEY,
+        plan TEXT NOT NULL DEFAULT 'free'
+      )`;
       await sql`CREATE TABLE IF NOT EXISTS prompts (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -110,6 +115,7 @@ function rowToProject(r: Record<string, unknown>): Project {
     category: r.category as string,
     audience: (r.audience as string | null) ?? null,
     schedule: (r.schedule as Project["schedule"]) ?? "none",
+    user_id: (r.user_id as string | null) ?? null,
     created_at: iso(r.created_at)!,
   };
 }
@@ -132,8 +138,8 @@ export const pgStore: Store = {
   async createProject(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience)
-      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience})`;
+    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id)
+      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId})`;
     return (await this.getProject(id))!;
   },
 
@@ -143,10 +149,20 @@ export const pgStore: Store = {
     return rows.length > 0 ? rowToProject(rows[0]) : null;
   },
 
-  async listProjects() {
+  async listProjects(userId) {
     const sql = await db();
-    const rows = await sql`SELECT * FROM projects ORDER BY created_at DESC`;
+    const rows =
+      userId === undefined
+        ? await sql`SELECT * FROM projects ORDER BY created_at DESC`
+        : await sql`SELECT * FROM projects WHERE user_id = ${userId} ORDER BY created_at DESC`;
     return rows.map(rowToProject);
+  },
+
+  async getPlan(userId) {
+    const sql = await db();
+    const rows =
+      await sql`SELECT plan FROM user_plans WHERE user_id = ${userId}`;
+    return (rows[0]?.plan as "free" | "pro" | "enterprise") ?? "free";
   },
 
   async updateProjectSchedule(id, schedule) {

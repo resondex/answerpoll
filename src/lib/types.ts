@@ -11,6 +11,8 @@ export type Framing = "recommended" | "mentioned" | "negative";
 
 export type RunSchedule = "none" | "weekly" | "monthly";
 
+export type Plan = "free" | "pro" | "enterprise";
+
 export interface Project {
   id: string;
   name: string;
@@ -19,6 +21,7 @@ export interface Project {
   category: string;
   audience: string | null;
   schedule: RunSchedule;
+  user_id: string | null;
   created_at: string;
 }
 
@@ -144,10 +147,13 @@ export interface Store {
     competitors: string[];
     category: string;
     audience: string | null;
+    userId: string | null;
   }): Promise<Project>;
   getProject(id: string): Promise<Project | null>;
-  listProjects(): Promise<Project[]>;
+  /** All projects when userId is omitted (cron); the user's own otherwise. */
+  listProjects(userId?: string): Promise<Project[]>;
   updateProjectSchedule(id: string, schedule: RunSchedule): Promise<void>;
+  getPlan(userId: string): Promise<Plan>;
   insertPrompts(
     projectId: string,
     prompts: { text: string; theme: PromptTheme }[]

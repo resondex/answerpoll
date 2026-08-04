@@ -31,7 +31,12 @@ function createDb(): Database.Database {
       category TEXT NOT NULL,
       audience TEXT,
       schedule TEXT NOT NULL DEFAULT 'none',
+      user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS user_plans (
+      user_id TEXT PRIMARY KEY,
+      plan TEXT NOT NULL DEFAULT 'free'
     );
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
@@ -72,7 +77,7 @@ function createDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id);
     CREATE INDEX IF NOT EXISTS idx_mentions_response ON mentions(response_id);
   `);
-  // Databases created before the schedule column existed need the ALTER.
+  // Databases created before these columns existed need the ALTERs.
   const cols = db.prepare("PRAGMA table_info(projects)").all() as {
     name: string;
   }[];
@@ -80,6 +85,9 @@ function createDb(): Database.Database {
     db.exec(
       "ALTER TABLE projects ADD COLUMN schedule TEXT NOT NULL DEFAULT 'none'"
     );
+  }
+  if (!cols.some((c) => c.name === "user_id")) {
+    db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT");
   }
   return db;
 }
@@ -108,8 +116,8 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO projects (id, name, brand, competitors, category, audience)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -117,7 +125,8 @@ export const sqliteStore: Store = {
         input.brand,
         JSON.stringify(input.competitors),
         input.category,
-        input.audience
+        input.audience,
+        input.userId
       );
     return (await this.getProject(id))!;
   },
@@ -129,11 +138,26 @@ export const sqliteStore: Store = {
     return row ? parseProject(row) : null;
   },
 
-  async listProjects() {
-    const rows = getDb()
-      .prepare("SELECT * FROM projects ORDER BY created_at DESC")
-      .all() as ProjectRaw[];
+  async listProjects(userId) {
+    const rows = (
+      userId === undefined
+        ? getDb()
+            .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+            .all()
+        : getDb()
+            .prepare(
+              "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC"
+            )
+            .all(userId)
+    ) as ProjectRaw[];
     return rows.map(parseProject);
+  },
+
+  async getPlan(userId) {
+    const row = getDb()
+      .prepare("SELECT plan FROM user_plans WHERE user_id = ?")
+      .get(userId) as { plan: string } | undefined;
+    return (row?.plan as "free" | "pro" | "enterprise") ?? "free";
   },
 
   async updateProjectSchedule(id, schedule) {

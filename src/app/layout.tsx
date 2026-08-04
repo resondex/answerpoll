@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Instrument_Serif } from "next/font/google";
 import Link from "next/link";
+import { authEnabled, getAuth } from "@/lib/auth";
 import "./globals.css";
 
 const inter = Inter({
@@ -37,7 +38,9 @@ function Mark({ size = 22 }: { size?: number }) {
   );
 }
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const auth = await getAuth();
+  const signedIn = authEnabled() && auth !== null;
   return (
     <html
       lang="en"
@@ -52,9 +55,51 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 Answerpoll
               </span>
             </Link>
-            <span className="hidden sm:block text-[13px] text-ink-3">
-              how AI assistants rank your brand
-            </span>
+            <nav className="flex items-center gap-5 text-sm">
+              {signedIn ? (
+                <>
+                  <Link
+                    href="/app"
+                    className="font-medium text-primary hover:opacity-80"
+                  >
+                    Trackers
+                  </Link>
+                  <span className="hidden sm:block text-[13px] text-ink-3">
+                    {auth.email}
+                  </span>
+                  <form action="/auth/signout" method="post">
+                    <button
+                      type="submit"
+                      className="text-[13px] font-medium text-ink-3 hover:text-ink"
+                    >
+                      Sign out
+                    </button>
+                  </form>
+                </>
+              ) : authEnabled() ? (
+                <>
+                  <Link
+                    href="/#pricing"
+                    className="text-ink-2 hover:text-ink font-medium"
+                  >
+                    Pricing
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="font-medium text-primary hover:opacity-80"
+                  >
+                    Sign in
+                  </Link>
+                </>
+              ) : (
+                <Link
+                  href="/app"
+                  className="font-medium text-primary hover:opacity-80"
+                >
+                  Open app
+                </Link>
+              )}
+            </nav>
           </div>
         </header>
         <main className="mx-auto w-full max-w-5xl px-6 py-10 flex-1">

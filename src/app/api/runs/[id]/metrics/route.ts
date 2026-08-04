@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
-import { store } from "@/lib/store";
+import { requireAuth, requireRun } from "@/lib/auth";
 import { computeRunMetrics } from "@/lib/engine/metrics";
 
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
   const { id } = await params;
-  const run = await store.getRun(id);
-  if (!run) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
-  const [metrics, project] = await Promise.all([
-    computeRunMetrics(id),
-    store.getProject(run.project_id),
-  ]);
-  return NextResponse.json({ metrics, project });
+  const loaded = await requireRun(id, auth);
+  if (loaded instanceof NextResponse) return loaded;
+  const metrics = await computeRunMetrics(id);
+  return NextResponse.json({ metrics, project: loaded.project });
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { store } from "@/lib/store";
+import { requireAuth, requireProject } from "@/lib/auth";
 import { apiKeyConfigured } from "@/lib/engine/providers";
 import { driveAndChain, runInBackground } from "@/lib/engine/runner";
 
@@ -18,6 +19,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
   const { id } = await params;
   if (!apiKeyConfigured()) {
     return NextResponse.json(
@@ -25,10 +28,8 @@ export async function POST(
       { status: 503 }
     );
   }
-  const project = await store.getProject(id);
-  if (!project) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
+  const project = await requireProject(id, auth);
+  if (project instanceof NextResponse) return project;
   const body = await req.json().catch(() => ({}));
   const parsed = runSchema.safeParse(body);
   if (!parsed.success) {

@@ -1,170 +1,208 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Project, Run } from "@/lib/types";
 
-type ProjectWithRun = Project & { latestRun: Run | null };
+const STEPS = [
+  {
+    title: "Ask what buyers ask.",
+    body: "Every tracker gets a battery of buyer-intent prompts for your category — discovery, recommendation, comparison, use case — phrased the way real people phrase them.",
+  },
+  {
+    title: "Sample until it's a statistic.",
+    body: "Each prompt runs repeatedly against the model. Repeats capture the answer-to-answer variation, so every rate arrives with a 95% confidence interval.",
+  },
+  {
+    title: "Score who gets named.",
+    body: "Every answer is parsed for brand mentions — yours, your competitors', and the ones the model volunteers — with position, framing, and share of voice.",
+  },
+];
 
-export default function HomePage() {
-  const router = useRouter();
-  const [projects, setProjects] = useState<ProjectWithRun[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("");
-  const [competitors, setCompetitors] = useState("");
-  const [audience, setAudience] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const FEATURES = [
+  {
+    title: "Brand leaderboard",
+    body: "Mention rate and average position for every brand in the conversation — including competitors you didn't know you had.",
+  },
+  {
+    title: "Trend over time",
+    body: "Re-run weekly or monthly and watch the line move. Confidence bands show whether a shift is real or sampling noise.",
+  },
+  {
+    title: "Topic rollups",
+    body: "Visibility split by question type, so you know whether you're losing discovery questions or comparison questions.",
+  },
+  {
+    title: "Raw data, yours",
+    body: "Every sampled answer and every extracted mention downloads as tidy CSV or JSON. Every number we show is reproducible from data you hold.",
+  },
+];
 
-  useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then((d) => setProjects(d.projects ?? []))
-      .finally(() => setLoaded(true));
-  }, []);
+const TIERS = [
+  {
+    name: "Free",
+    price: "$0",
+    cadence: "forever",
+    cta: { label: "Start free", href: "/login" },
+    highlight: false,
+    features: [
+      "1 brand tracker",
+      "Manual runs on demand",
+      "Full dashboard: leaderboard, topics, positions",
+      "Raw data exports (CSV + JSON)",
+    ],
+  },
+  {
+    name: "Pro",
+    price: "$99",
+    cadence: "per month",
+    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Answerpoll%20Pro" },
+    highlight: true,
+    features: [
+      "5 brand trackers",
+      "Scheduled runs — weekly or monthly, automatic",
+      "Trend history with confidence bands",
+      "Priority support",
+      "Early access to new engines as they ship",
+    ],
+  },
+  {
+    name: "Enterprise",
+    price: "Custom",
+    cadence: "annual",
+    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Answerpoll%20Enterprise" },
+    highlight: false,
+    features: [
+      "Unlimited trackers",
+      "Custom prompt batteries built with you",
+      "Analyst-grade reporting by Resondex",
+      "Methodology consultation",
+    ],
+  },
+];
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        brand,
-        category,
-        audience: audience || undefined,
-        competitors: competitors
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean),
-      }),
-    });
-    const data = await res.json();
-    setSubmitting(false);
-    if (!res.ok) {
-      setError(data.error ?? "something went wrong");
-      return;
-    }
-    router.push(`/projects/${data.project.id}`);
-  }
-
+export default function LandingPage() {
   return (
-    <div className="grid gap-12 lg:grid-cols-[7fr_5fr]">
-      <section>
-        <h1 className="text-[2rem] leading-tight font-semibold tracking-tight mb-3">
-          When buyers ask AI, who gets{" "}
-          <em className="font-serif text-primary">named</em>?
+    <div className="grid gap-20">
+      <section className="text-center max-w-2xl mx-auto pt-8">
+        <h1 className="text-[2.6rem] leading-[1.15] font-semibold tracking-tight mb-4">
+          When buyers ask AI,
+          <br />
+          who gets <em className="font-serif text-primary">named</em>?
         </h1>
-        <p className="text-[15px] text-ink-2 mb-8 leading-relaxed max-w-lg">
-          Answerpoll asks an LLM the questions your buyers ask — sampled
-          repeatedly, so every rate carries a confidence interval — and measures
-          how often you get named, where you rank, and how you&apos;re framed.
+        <p className="text-[17px] text-ink-2 leading-relaxed mb-8">
+          Answerpoll polls the answer engines. It asks an LLM the questions your
+          buyers ask — sampled repeatedly, so every number is a measurement with
+          a confidence interval — and scores how often you get named, where you
+          rank, and how you&apos;re framed.
         </p>
-
-        <form onSubmit={onSubmit} className="card p-6 grid gap-4 max-w-lg">
-          <div className="section-label">New tracker</div>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Your brand
-            <input
-              className="input"
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              placeholder="e.g. Resondex"
-              required
-            />
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Category
-            <input
-              className="input"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              placeholder="e.g. market research firms"
-              required
-            />
-            <span className="text-xs font-normal text-ink-3">
-              plural, phrased the way a buyer would say it
-            </span>
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Competitors
-            <input
-              className="input"
-              value={competitors}
-              onChange={(e) => setCompetitors(e.target.value)}
-              placeholder="e.g. Qualtrics, Ipsos, Kantar"
-            />
-            <span className="text-xs font-normal text-ink-3">
-              comma-separated — brands the model volunteers get tracked too
-            </span>
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Audience <span className="font-normal text-ink-3">(optional)</span>
-            <input
-              className="input"
-              value={audience}
-              onChange={(e) => setAudience(e.target.value)}
-              placeholder="e.g. mid-market CPG brands"
-            />
-          </label>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="btn-primary w-fit"
+        <div className="flex items-center justify-center gap-4">
+          <Link href="/login" className="btn-primary text-[15px] px-6 py-3">
+            Start measuring
+          </Link>
+          <a
+            href="#pricing"
+            className="text-[15px] font-medium text-primary hover:opacity-80"
           >
-            {submitting ? "Creating…" : "Create tracker"}
-          </button>
-        </form>
+            See pricing →
+          </a>
+        </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        {STEPS.map((s, i) => (
+          <div key={s.title} className="card p-6">
+            <div className="section-label mb-2">Step {i + 1}</div>
+            <h2 className="font-semibold text-[17px] mb-2">{s.title}</h2>
+            <p className="text-sm text-ink-2 leading-relaxed">{s.body}</p>
+          </div>
+        ))}
       </section>
 
       <section>
-        <h2 className="section-label mb-3">Trackers</h2>
-        {!loaded ? (
-          <div className="grid gap-2">
-            <div className="card h-[72px] animate-pulse" />
-            <div className="card h-[72px] animate-pulse" />
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="card px-5 py-8 text-center text-sm text-ink-3">
-            Your first tracker will appear here.
-          </div>
-        ) : (
-          <ul className="grid gap-2">
-            {projects.map((p) => (
-              <li key={p.id}>
+        <div className="text-center max-w-xl mx-auto mb-8">
+          <h2 className="text-2xl font-semibold tracking-tight mb-2">
+            Measurement, engineered.
+          </h2>
+          <p className="text-[15px] text-ink-2 leading-relaxed">
+            LLM answers change every time you ask. One query is an anecdote —
+            Answerpoll samples, reports the uncertainty, and hands you the raw
+            data behind every number.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {FEATURES.map((f) => (
+            <div key={f.title} className="card p-6">
+              <h3 className="font-semibold text-[15px] mb-1.5">{f.title}</h3>
+              <p className="text-sm text-ink-2 leading-relaxed">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="pricing">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-semibold tracking-tight mb-2">
+            Pricing
+          </h2>
+          <p className="text-[15px] text-ink-2">
+            Start free with one tracker. Grow into scheduled measurement.
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3 items-start">
+          {TIERS.map((t) => (
+            <div
+              key={t.name}
+              className={`card p-6 ${
+                t.highlight ? "border-primary shadow-[0_0_0_1px_var(--primary)]" : ""
+              }`}
+            >
+              <div className="flex items-baseline justify-between mb-4">
+                <h3 className="font-semibold text-[17px]">{t.name}</h3>
+                {t.highlight && (
+                  <span className="rounded-full bg-primary-soft px-2.5 py-0.5 text-xs font-semibold text-primary">
+                    popular
+                  </span>
+                )}
+              </div>
+              <div className="mb-5">
+                <span className="text-3xl font-semibold tabular-nums">
+                  {t.price}
+                </span>
+                <span className="text-sm text-ink-3"> {t.cadence}</span>
+              </div>
+              <ul className="grid gap-2 mb-6">
+                {t.features.map((f) => (
+                  <li key={f} className="text-sm text-ink-2 flex gap-2">
+                    <span className="text-primary font-semibold">✓</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              {t.cta.href.startsWith("/") ? (
                 <Link
-                  href={`/projects/${p.id}`}
-                  className="card block px-5 py-4 transition-colors hover:border-primary"
+                  href={t.cta.href}
+                  className={t.highlight ? "btn-primary w-full justify-center" : "btn-primary w-full justify-center opacity-90"}
                 >
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="font-semibold text-[15px]">{p.name}</span>
-                    <RunHint run={p.latestRun} />
-                  </div>
-                  <div className="text-[13px] text-ink-2 mt-1">
-                    {p.brand} · {p.category}
-                  </div>
+                  {t.cta.label}
                 </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+              ) : (
+                <a href={t.cta.href} className="btn-primary w-full justify-center">
+                  {t.cta.label}
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="text-center max-w-xl mx-auto pb-8">
+        <h2 className="text-2xl font-semibold tracking-tight mb-3">
+          Your buyers are already asking.
+        </h2>
+        <p className="text-[15px] text-ink-2 mb-6">
+          Find out who the answer engines recommend — and where you stand.
+        </p>
+        <Link href="/login" className="btn-primary text-[15px] px-6 py-3">
+          Start free
+        </Link>
       </section>
     </div>
   );
-}
-
-function RunHint({ run }: { run: Run | null }) {
-  if (!run) return <span className="text-xs text-ink-3">ready to run</span>;
-  const map: Record<Run["status"], { label: string; cls: string }> = {
-    pending: { label: "queued", cls: "text-ink-3" },
-    running: { label: "running", cls: "text-primary" },
-    complete: { label: "measured", cls: "text-success" },
-    failed: { label: "run failed", cls: "text-danger" },
-  };
-  const s = map[run.status];
-  return <span className={`text-xs font-medium ${s.cls}`}>{s.label}</span>;
 }

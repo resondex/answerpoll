@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { store } from "@/lib/store";
+import {
+  getPlanFor,
+  PLAN_TRACKER_LIMITS,
+  requireAuth,
+} from "@/lib/auth";
 import { generatePromptBattery } from "@/lib/engine/prompts";
 
 const createSchema = z.object({
@@ -12,7 +17,9 @@ const createSchema = z.object({
 });
 
 export async function GET() {
-  const projects = await store.listProjects();
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+  const projects = await store.listProjects(auth.userId ?? undefined);
   const withRuns = await Promise.all(
     projects.map(async (p) => ({
       ...p,
@@ -23,6 +30,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
   const body = await req.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
@@ -31,6 +40,20 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
+
+  if (auth.userId !== null) {
+    const plan = await getPlanFor(auth);
+    const existing = await store.listProjects(auth.userId);
+    if (existing.length >= PLAN_TRACKER_LIMITS[plan]) {
+      return NextResponse.json(
+        {
+          error: `The ${plan} plan includes ${PLAN_TRACKER_LIMITS[plan]} tracker${PLAN_TRACKER_LIMITS[plan] === 1 ? "" : "s"} — upgrade for more`,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
   const { brand, competitors, category } = parsed.data;
   const audience = parsed.data.audience || null;
   const project = await store.createProject({
@@ -39,6 +62,7 @@ export async function POST(req: Request) {
     competitors,
     category,
     audience,
+    userId: auth.userId,
   });
   await store.insertPrompts(
     project.id,
