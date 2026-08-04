@@ -87,6 +87,17 @@ export interface PromptStats {
   targetAvgRank: number | null;
 }
 
+export interface ThemeStats {
+  theme: PromptTheme;
+  prompts: number;
+  responses: number;
+  targetMentions: number;
+  targetRate: number;
+  ciLow: number;
+  ciHigh: number;
+  targetAvgRank: number | null;
+}
+
 export interface RunMetrics {
   runId: string;
   model: string;
@@ -94,6 +105,7 @@ export interface RunMetrics {
   unbrandedResponses: number;
   brands: BrandStats[];
   prompts: PromptStats[];
+  themes: ThemeStats[];
   verbatims: { promptText: string; text: string; mentionsTarget: boolean }[];
 }
 

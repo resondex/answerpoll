@@ -62,10 +62,35 @@ export default function DashboardPage() {
             ← back to tracker
           </Link>
         </div>
-        <p className="text-sm text-ink-2 mt-1.5">
-          {metrics.model} · {metrics.unbrandedResponses} unbranded answers
-          sampled · {project.category}
-        </p>
+        <div className="flex items-baseline justify-between gap-4 flex-wrap mt-1.5">
+          <p className="text-sm text-ink-2">
+            {metrics.model} · {metrics.unbrandedResponses} unbranded answers
+            sampled · {project.category}
+          </p>
+          <p className="text-[13px] text-ink-3">
+            Export:{" "}
+            <a
+              href={`/api/runs/${runId}/export?format=csv&table=brands`}
+              className="font-medium text-primary hover:opacity-80"
+            >
+              brands CSV
+            </a>
+            {" · "}
+            <a
+              href={`/api/runs/${runId}/export?format=csv&table=prompts`}
+              className="font-medium text-primary hover:opacity-80"
+            >
+              prompts CSV
+            </a>
+            {" · "}
+            <a
+              href={`/api/runs/${runId}/export?format=json`}
+              className="font-medium text-primary hover:opacity-80"
+            >
+              JSON
+            </a>
+          </p>
+        </div>
       </div>
 
       <section className="grid gap-3 sm:grid-cols-3">
@@ -217,6 +242,47 @@ export default function DashboardPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="card p-6">
+        <h2 className="section-label mb-1">Where you show up — by topic</h2>
+        <p className="text-[13px] text-ink-3 mb-5">
+          Your visibility rolled up by prompt theme — the branded probes are
+          reported on their own row, since naming you guarantees a mention.
+        </p>
+        <div className="grid gap-2.5">
+          {metrics.themes.map((t) => (
+            <div
+              key={t.theme}
+              className="grid grid-cols-[9rem_1fr_11rem] items-center gap-3"
+              title={`${t.prompts} prompts · ${t.targetMentions} of ${t.responses} answers name ${project.brand} (95% CI ${pct(t.ciLow)}–${pct(t.ciHigh)})`}
+            >
+              <span
+                className={`text-sm text-right ${
+                  t.theme === "branded" ? "text-ink-3" : "text-ink-2"
+                }`}
+              >
+                {t.theme.replace("_", " ")}
+              </span>
+              <div className="h-4 relative">
+                <div
+                  className={`absolute inset-y-0 left-0 rounded-r-[4px] ${
+                    t.theme === "branded" ? "bg-neutral-bar" : "bg-primary"
+                  }`}
+                  style={{ width: `${t.targetRate * 100}%` }}
+                />
+              </div>
+              <span className="text-sm tabular-nums text-ink-2 whitespace-nowrap">
+                {pct(t.targetRate)}
+                <span className="text-xs text-ink-3">
+                  {" "}
+                  · CI {pct(t.ciLow)}–{pct(t.ciHigh)} ·{" "}
+                  {t.targetAvgRank ? `#${t.targetAvgRank.toFixed(1)}` : "—"}
+                </span>
+              </span>
+            </div>
+          ))}
         </div>
       </section>
 

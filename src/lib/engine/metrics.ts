@@ -4,8 +4,18 @@ import type {
   Framing,
   MentionRow,
   PromptStats,
+  PromptTheme,
   RunMetrics,
+  ThemeStats,
 } from "../types";
+
+const THEME_ORDER: PromptTheme[] = [
+  "discovery",
+  "recommendation",
+  "comparison",
+  "use_case",
+  "branded",
+];
 
 /** Wilson 95% score interval for a binomial proportion. */
 export function wilson(k: number, n: number): { low: number; high: number } {
@@ -125,6 +135,32 @@ export async function computeRunMetrics(
     };
   });
 
+  // --- topic rollups: target visibility aggregated per prompt theme ---
+  const themes: ThemeStats[] = THEME_ORDER.flatMap((theme) => {
+    const ps = promptStats.filter((p) => p.theme === theme);
+    if (ps.length === 0) return [];
+    const themeResponses = ps.reduce((a, p) => a + p.responses, 0);
+    const hits = ps.reduce((a, p) => a + p.targetMentions, 0);
+    const ci = wilson(hits, themeResponses);
+    // Rank average weighted by how often the target appeared per prompt.
+    const rankSum = ps.reduce(
+      (a, p) => a + (p.targetAvgRank ?? 0) * p.targetMentions,
+      0
+    );
+    return [
+      {
+        theme,
+        prompts: ps.length,
+        responses: themeResponses,
+        targetMentions: hits,
+        targetRate: themeResponses > 0 ? hits / themeResponses : 0,
+        ciLow: ci.low,
+        ciHigh: ci.high,
+        targetAvgRank: hits > 0 ? rankSum / hits : null,
+      },
+    ];
+  });
+
   // --- sample verbatims: prefer responses that mention the target ---
   const withTarget = unbranded.filter((r) => targetByResponse.has(r.id));
   const withoutTarget = unbranded.filter((r) => !targetByResponse.has(r.id));
@@ -143,6 +179,7 @@ export async function computeRunMetrics(
     unbrandedResponses: unbranded.length,
     brands,
     prompts: promptStats,
+    themes,
     verbatims,
   };
 }
