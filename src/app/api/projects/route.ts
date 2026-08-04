@@ -14,6 +14,23 @@ const createSchema = z.object({
   competitors: z.array(z.string().trim().min(1)).max(12).default([]),
   category: z.string().trim().min(1),
   audience: z.string().trim().optional(),
+  // User-reviewed battery from /api/prompts/generate; templates when absent.
+  prompts: z
+    .array(
+      z.object({
+        text: z.string().trim().min(1),
+        theme: z.enum([
+          "discovery",
+          "recommendation",
+          "comparison",
+          "use_case",
+          "branded",
+        ]),
+      })
+    )
+    .min(4)
+    .max(30)
+    .optional(),
 });
 
 export async function GET() {
@@ -66,7 +83,7 @@ export async function POST(req: Request) {
   });
   await store.insertPrompts(
     project.id,
-    generatePromptBattery({ brand, category, audience })
+    parsed.data.prompts ?? generatePromptBattery({ brand, category, audience })
   );
   return NextResponse.json({ project }, { status: 201 });
 }

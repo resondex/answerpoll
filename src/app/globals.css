@@ -68,7 +68,6 @@ body {
 }
 
 .input {
-  width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   background: var(--surface);

@@ -3,18 +3,36 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Project, Run } from "@/lib/types";
+import type { Project, PromptTheme, Run } from "@/lib/types";
 
 type ProjectWithRun = Project & { latestRun: Run | null };
 
-export default function HomePage() {
+interface DraftPrompt {
+  text: string;
+  theme: PromptTheme;
+}
+
+const THEMES: PromptTheme[] = [
+  "discovery",
+  "recommendation",
+  "comparison",
+  "use_case",
+  "branded",
+];
+
+export default function AppHomePage() {
   const router = useRouter();
   const [projects, setProjects] = useState<ProjectWithRun[]>([]);
   const [loaded, setLoaded] = useState(false);
+
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
   const [competitors, setCompetitors] = useState("");
   const [audience, setAudience] = useState("");
+  const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
+
+  const [suggesting, setSuggesting] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,8 +43,58 @@ export default function HomePage() {
       .finally(() => setLoaded(true));
   }, []);
 
+  async function suggest() {
+    setSuggesting(true);
+    setError(null);
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brand }),
+    });
+    const data = await res.json();
+    setSuggesting(false);
+    if (!res.ok) {
+      setError(data.error ?? "suggestion failed");
+      return;
+    }
+    setCategory(data.profile.category);
+    setCompetitors(data.profile.competitors.join(", "));
+    setAudience(data.profile.audience);
+    setPrompts(null);
+  }
+
+  async function generate() {
+    setGenerating(true);
+    setError(null);
+    const res = await fetch("/api/prompts/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brand,
+        category,
+        audience: audience || undefined,
+        competitors: splitCompetitors(),
+      }),
+    });
+    const data = await res.json();
+    setGenerating(false);
+    if (!res.ok) {
+      setError(data.error ?? "prompt generation failed");
+      return;
+    }
+    setPrompts(data.prompts);
+  }
+
+  function splitCompetitors() {
+    return competitors
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!prompts) return;
     setSubmitting(true);
     setError(null);
     const res = await fetch("/api/projects", {
@@ -36,10 +104,8 @@ export default function HomePage() {
         brand,
         category,
         audience: audience || undefined,
-        competitors: competitors
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean),
+        competitors: splitCompetitors(),
+        prompts: prompts.filter((p) => p.text.trim().length > 0),
       }),
     });
     const data = await res.json();
@@ -50,6 +116,8 @@ export default function HomePage() {
     }
     router.push(`/projects/${data.project.id}`);
   }
+
+  const detailsReady = brand.trim() && category.trim();
 
   return (
     <div className="grid gap-12 lg:grid-cols-[7fr_5fr]">
@@ -64,54 +132,166 @@ export default function HomePage() {
 
         <form onSubmit={onSubmit} className="card p-6 grid gap-4 max-w-lg">
           <div className="section-label">New tracker</div>
+
           <label className="grid gap-1.5 text-sm font-medium">
             Your brand
-            <input
-              className="input"
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              placeholder="e.g. Resondex"
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                className="input w-full"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="e.g. Resondex"
+                required
+              />
+              <button
+                type="button"
+                onClick={suggest}
+                disabled={!brand.trim() || suggesting}
+                className="btn-primary shrink-0"
+              >
+                {suggesting ? "Estimating…" : "Suggest details"}
+              </button>
+            </div>
+            <span className="text-xs font-normal text-ink-3">
+              We&apos;ll estimate the category, competitors, and audience —
+              adjust anything before generating prompts.
+            </span>
           </label>
+
           <label className="grid gap-1.5 text-sm font-medium">
             Category
             <input
-              className="input"
+              className="input w-full"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => {
+                setCategory(e.target.value);
+                setPrompts(null);
+              }}
               placeholder="e.g. market research firms"
               required
             />
             <span className="text-xs font-normal text-ink-3">
-              plural, phrased the way a buyer would say it
+              specific and plural, the way a buyer would say it — broad
+              categories make broad measurements
             </span>
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             Competitors
             <input
-              className="input"
+              className="input w-full"
               value={competitors}
-              onChange={(e) => setCompetitors(e.target.value)}
+              onChange={(e) => {
+                setCompetitors(e.target.value);
+                setPrompts(null);
+              }}
               placeholder="e.g. Qualtrics, Ipsos, Kantar"
             />
-            <span className="text-xs font-normal text-ink-3">
-              comma-separated — brands the model volunteers get tracked too
-            </span>
           </label>
           <label className="grid gap-1.5 text-sm font-medium">
             Audience <span className="font-normal text-ink-3">(optional)</span>
             <input
-              className="input"
+              className="input w-full"
               value={audience}
-              onChange={(e) => setAudience(e.target.value)}
+              onChange={(e) => {
+                setAudience(e.target.value);
+                setPrompts(null);
+              }}
               placeholder="e.g. mid-market CPG brands"
             />
           </label>
+
+          {prompts === null ? (
+            <button
+              type="button"
+              onClick={generate}
+              disabled={!detailsReady || generating}
+              className="btn-primary w-fit"
+            >
+              {generating ? "Writing prompts…" : "Generate prompts"}
+            </button>
+          ) : (
+            <div className="grid gap-2">
+              <div className="flex items-baseline justify-between">
+                <span className="section-label">
+                  Prompt battery — edit freely
+                </span>
+                <button
+                  type="button"
+                  onClick={generate}
+                  disabled={generating}
+                  className="text-[13px] font-medium text-primary hover:opacity-80"
+                >
+                  {generating ? "Regenerating…" : "Regenerate"}
+                </button>
+              </div>
+              {prompts.map((p, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <select
+                    value={p.theme}
+                    onChange={(e) =>
+                      setPrompts(
+                        prompts.map((q, j) =>
+                          j === i
+                            ? { ...q, theme: e.target.value as PromptTheme }
+                            : q
+                        )
+                      )
+                    }
+                    className="input w-36 shrink-0 text-xs"
+                  >
+                    {THEMES.map((t) => (
+                      <option key={t} value={t}>
+                        {t.replace("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input w-full"
+                    value={p.text}
+                    onChange={(e) =>
+                      setPrompts(
+                        prompts.map((q, j) =>
+                          j === i ? { ...q, text: e.target.value } : q
+                        )
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    aria-label="remove prompt"
+                    onClick={() =>
+                      setPrompts(prompts.filter((_, j) => j !== i))
+                    }
+                    className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() =>
+                  setPrompts([...prompts, { text: "", theme: "discovery" }])
+                }
+                className="text-[13px] font-medium text-primary hover:opacity-80 w-fit"
+              >
+                + Add prompt
+              </button>
+              <p className="text-xs text-ink-3">
+                Unbranded prompts should never name a brand — that&apos;s what
+                makes the mention rate a real measurement.
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-sm text-danger">{error}</p>}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={
+              submitting ||
+              prompts === null ||
+              prompts.filter((p) => p.text.trim()).length < 4
+            }
             className="btn-primary w-fit"
           >
             {submitting ? "Creating…" : "Create tracker"}

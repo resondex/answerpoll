@@ -20,10 +20,11 @@ export function getProvider(): CompletionProvider {
 }
 
 let _client: OpenAI | null = null;
-function client(): OpenAI {
+export function openaiClient(): OpenAI {
   if (!_client) _client = new OpenAI();
   return _client;
 }
+const client = openaiClient;
 
 const EXTRACT_MODEL = process.env.EXTRACT_MODEL ?? "gpt-4o-mini";
 
