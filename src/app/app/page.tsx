@@ -105,11 +105,12 @@ export default function AppHomePage() {
     });
   }
 
+  // Committed pills only — text sitting in the add-another box isn't a change.
   const detailsDirty =
     servedProfile !== null &&
     (category.trim() !== servedProfile.category.trim() ||
       (audience || "").trim() !== servedProfile.audience.trim() ||
-      allCompetitors().join("|") !== servedProfile.competitors.join("|"));
+      competitors.join("|") !== servedProfile.competitors.join("|"));
 
   function allCompetitors(): string[] {
     const draft = compDraft.trim().replace(/,+$/, "");
@@ -277,10 +278,13 @@ export default function AppHomePage() {
             </div>
 
             {suggesting ? (
-              <div className="grid gap-3 py-6 text-center">
+              <div className="grid gap-4 py-8 text-center justify-items-center">
+                <span
+                  aria-hidden="true"
+                  className="h-7 w-7 rounded-full border-[3px] border-line border-t-primary animate-spin"
+                />
                 <p className="text-sm font-medium">
-                  Estimating your market and drafting questions
-                  <span className="pulse-dot inline-block ml-1">…</span>
+                  Estimating your market and drafting questions…
                 </p>
                 <p className="text-[13px] text-ink-3">
                   category · competitors · audience · prompt battery
