@@ -23,7 +23,21 @@ Scaled calibration (v4, n=1,006):
    use_case 6.1% — the generator's 7/3/1/1 battery quota comes from these.
 5. `judge_pairs.mjs` — forced-choice realism test (one real + one generated,
    judge must pick the fake; 50% = indistinguishable). v4 across 5
-   categories, 50 pairs: judge caught the fake 28% ± 12pp — at/below chance.
+   categories, 50 pairs: judge caught the fake 28% ± 12pp — significantly
+   BELOW chance. Honest reading: the sets are separable, with inverted
+   labels — generated prompts are systematically judged more polished/human
+   than real traffic, which is full of typos and non-native grammar.
+6. Messiness experiment (`run_messiness_experiment.mjs`,
+   `analyze_messiness.py`) — does that residual polish gap bias the
+   measurement? Paired batteries, identical semantics: clean vs messified
+   (typos, grammar slips, casing errors). 12 prompts x 10 repeats x 2
+   conditions = 240 answers, full completion+extraction pipeline. Result:
+   no significant mention-rate difference for any top-10 brand (largest gap
+   7pp, all p > 0.29 before correction), identical brands-per-answer
+   (10.1 vs 10.2). Surface messiness does not change brand visibility
+   measurements, so the battery's polish is a disclosed non-issue rather
+   than a bias. (Power: ~18pp detectable at 80%, n=120/condition;
+   single sector — team messaging apps.)
 
 Caveats: keyword-conditioned harvest (calibrates the style/theme mix of
 commercial prompts, not their incidence); search index flagged partial by
