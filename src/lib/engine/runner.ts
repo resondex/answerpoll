@@ -92,13 +92,22 @@ export async function driveRunChunk(
   const remaining = pending.length - inserted;
   if (remaining === 0) {
     await store.updateRunStatus(runId, "complete", null);
-    // Feed unmatched brand names into the dictionary review queue.
+    // Feed unmatched brand names into the dictionary review queue — from
+    // mentions AND top picks (a crowned pick can be phrased a way no
+    // mention was).
     try {
-      const mentions = await store.listMentionsForRun(runId);
-      await store.queueDictionaryCandidates(
-        project.id,
-        [...new Set(mentions.map((m) => m.brand))]
-      );
+      const [runMentions, runResponses] = await Promise.all([
+        store.listMentionsForRun(runId),
+        store.listResponses(runId),
+      ]);
+      await store.queueDictionaryCandidates(project.id, [
+        ...new Set([
+          ...runMentions.map((m) => m.brand),
+          ...runResponses
+            .map((r) => r.top_pick_brand)
+            .filter((b): b is string => Boolean(b)),
+        ]),
+      ]);
     } catch (err) {
       console.error("dictionary queue failed:", err);
     }
