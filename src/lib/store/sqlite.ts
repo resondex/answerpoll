@@ -71,7 +71,11 @@ function createDb(): Database.Database {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id),
       text TEXT NOT NULL,
-      theme TEXT NOT NULL
+      theme TEXT NOT NULL,
+      flagged INTEGER NOT NULL DEFAULT 0,
+      flag_reason TEXT,
+      suggested_alternatives TEXT NOT NULL DEFAULT '[]',
+      retired INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
@@ -141,6 +145,19 @@ function createDb(): Database.Database {
   }[];
   if (dictCols.length > 0 && !dictCols.some((c) => c.name === "display_name")) {
     db.exec("ALTER TABLE dictionary_entries ADD COLUMN display_name TEXT");
+  }
+  const promptCols = db.prepare("PRAGMA table_info(prompts)").all() as {
+    name: string;
+  }[];
+  if (!promptCols.some((c) => c.name === "flagged")) {
+    for (const ddl of [
+      "ALTER TABLE prompts ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE prompts ADD COLUMN flag_reason TEXT",
+      "ALTER TABLE prompts ADD COLUMN suggested_alternatives TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE prompts ADD COLUMN retired INTEGER NOT NULL DEFAULT 0",
+    ]) {
+      db.exec(ddl);
+    }
   }
   const respCols = db.prepare("PRAGMA table_info(responses)").all() as {
     name: string;
@@ -424,9 +441,32 @@ export const sqliteStore: Store = {
   },
 
   async listPrompts(projectId) {
-    return getDb()
+    const rows = getDb()
       .prepare("SELECT * FROM prompts WHERE project_id = ? ORDER BY rowid")
-      .all(projectId) as Prompt[];
+      .all(projectId) as (Omit<Prompt, "suggested_alternatives"> & {
+      suggested_alternatives: string;
+    })[];
+    return rows.map((r) => ({
+      ...r,
+      suggested_alternatives: JSON.parse(r.suggested_alternatives ?? "[]"),
+    }));
+  },
+
+  async setPromptFlag(promptId, flag) {
+    getDb()
+      .prepare(
+        "UPDATE prompts SET flagged = ?, flag_reason = ?, suggested_alternatives = ? WHERE id = ?"
+      )
+      .run(
+        flag ? 1 : 0,
+        flag?.reason ?? null,
+        JSON.stringify(flag?.alternatives ?? []),
+        promptId
+      );
+  },
+
+  async retirePrompt(promptId) {
+    getDb().prepare("UPDATE prompts SET retired = 1 WHERE id = ?").run(promptId);
   },
 
   async createRun(input) {

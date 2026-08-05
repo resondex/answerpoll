@@ -1,5 +1,6 @@
 import { store } from "../store";
 import { getProvider } from "./providers";
+import { analyzePromptHealth } from "./prompt_health";
 
 const CONCURRENCY = 4;
 
@@ -29,7 +30,9 @@ export async function driveRunChunk(
   if (run.status === "complete" || run.status === "failed") return run.status;
   const project = await store.getProject(run.project_id);
   if (!project) throw new Error(`project ${run.project_id} not found`);
-  const prompts = await store.listPrompts(project.id);
+  const prompts = (await store.listPrompts(project.id)).filter(
+    (p) => !p.retired
+  );
   const knownBrands = [project.brand, ...project.competitors];
   const extractionCtx = {
     targetBrand: project.brand,
@@ -110,6 +113,16 @@ export async function driveRunChunk(
       ]);
     } catch (err) {
       console.error("dictionary queue failed:", err);
+    }
+    // First completed run: health-check the battery before the study is
+    // trusted for scheduled measurement.
+    try {
+      const allRuns = await store.listRuns(project.id);
+      if (allRuns.filter((r) => r.status === "complete").length === 1) {
+        await analyzePromptHealth(project.id, runId);
+      }
+    } catch (err) {
+      console.error("prompt health check failed:", err);
     }
     return "complete";
   }

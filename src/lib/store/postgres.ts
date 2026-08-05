@@ -98,6 +98,10 @@ function ensureSchema(): Promise<void> {
         theme TEXT NOT NULL,
         seq SERIAL
       )`;
+      await sql`ALTER TABLE prompts ADD COLUMN IF NOT EXISTS flagged INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE prompts ADD COLUMN IF NOT EXISTS flag_reason TEXT`;
+      await sql`ALTER TABLE prompts ADD COLUMN IF NOT EXISTS suggested_alternatives TEXT NOT NULL DEFAULT '[]'`;
+      await sql`ALTER TABLE prompts ADD COLUMN IF NOT EXISTS retired INTEGER NOT NULL DEFAULT 0`;
       await sql`CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -349,8 +353,32 @@ export const pgStore: Store = {
   async listPrompts(projectId) {
     const sql = await db();
     const rows =
-      await sql`SELECT id, project_id, text, theme FROM prompts WHERE project_id = ${projectId} ORDER BY seq`;
-    return rows.map((r) => ({ ...r }) as unknown as Prompt);
+      await sql`SELECT id, project_id, text, theme, flagged, flag_reason, suggested_alternatives, retired
+        FROM prompts WHERE project_id = ${projectId} ORDER BY seq`;
+    return rows.map(
+      (r) =>
+        ({
+          ...r,
+          flagged: (r.flagged as number) ?? 0,
+          retired: (r.retired as number) ?? 0,
+          suggested_alternatives: JSON.parse(
+            (r.suggested_alternatives as string) ?? "[]"
+          ),
+        }) as unknown as Prompt
+    );
+  },
+
+  async setPromptFlag(promptId, flag) {
+    const sql = await db();
+    await sql`UPDATE prompts SET flagged = ${flag ? 1 : 0},
+      flag_reason = ${flag?.reason ?? null},
+      suggested_alternatives = ${JSON.stringify(flag?.alternatives ?? [])}
+      WHERE id = ${promptId}`;
+  },
+
+  async retirePrompt(promptId) {
+    const sql = await db();
+    await sql`UPDATE prompts SET retired = 1 WHERE id = ${promptId}`;
   },
 
   async createRun(input) {

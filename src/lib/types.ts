@@ -33,6 +33,12 @@ export interface Prompt {
   project_id: string;
   text: string;
   theme: PromptTheme;
+  /** Set by the post-first-run health check when a prompt looks defective. */
+  flagged: number;
+  flag_reason: string | null;
+  suggested_alternatives: string[];
+  /** Retired prompts keep their history but are excluded from future runs. */
+  retired: number;
 }
 
 export interface Run {
@@ -294,6 +300,11 @@ export interface Store {
     prompts: { text: string; theme: PromptTheme }[]
   ): Promise<Prompt[]>;
   listPrompts(projectId: string): Promise<Prompt[]>;
+  setPromptFlag(
+    promptId: string,
+    flag: { reason: string; alternatives: string[] } | null
+  ): Promise<void>;
+  retirePrompt(promptId: string): Promise<void>;
   createRun(input: {
     projectId: string;
     model: string;

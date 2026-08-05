@@ -472,18 +472,63 @@ export default function ProjectPage() {
 
       <section>
         <h2 className="section-label mb-3">Prompt battery</h2>
+        {prompts.some((p) => p.flagged === 1 && p.retired === 0) && (
+          <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm mb-3">
+            <span className="font-semibold">Health check:</span> the first run
+            flagged{" "}
+            {prompts.filter((p) => p.flagged === 1 && p.retired === 0).length}{" "}
+            prompt(s) whose answers drifted off-category. Review below before
+            scheduling automatic runs.
+          </div>
+        )}
         <div className="card divide-y divide-line">
-          {prompts.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-baseline gap-4 text-sm px-5 py-2.5"
-            >
-              <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
-                {p.theme.replace("_", " ")}
-              </span>
-              <span className="text-ink-2">{p.text}</span>
-            </div>
-          ))}
+          {prompts
+            .filter((p) => p.retired === 0)
+            .map((p) => (
+              <div key={p.id} className="px-5 py-2.5">
+                <div className="flex items-baseline gap-4 text-sm">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                    {p.theme.replace("_", " ")}
+                  </span>
+                  <span className="text-ink-2">{p.text}</span>
+                  {p.flagged === 1 && (
+                    <span className="ml-auto shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
+                      flagged
+                    </span>
+                  )}
+                </div>
+                {p.flagged === 1 && (
+                  <div className="mt-2 ml-32 border-l-2 border-warning/40 pl-3 grid gap-1.5">
+                    {p.flag_reason && (
+                      <p className="text-[13px] text-ink-3">{p.flag_reason}</p>
+                    )}
+                    {p.suggested_alternatives.map((alt, i) => (
+                      <div key={i} className="flex items-baseline gap-2 text-[13px]">
+                        <span className="text-ink-2 flex-1">“{alt}”</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await fetch(`/api/projects/${id}/prompts`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                action: "replace",
+                                promptId: p.id,
+                                text: alt,
+                              }),
+                            });
+                            refresh();
+                          }}
+                          className="shrink-0 font-medium text-primary hover:opacity-80"
+                        >
+                          Refield with this →
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
         </div>
         <p className="text-[13px] text-ink-3 mt-2.5">
           Headline rates come from the unbranded prompts — the branded probes

@@ -197,6 +197,117 @@ export async function seedDictionary(
   }
 }
 
+const LINT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          anchored: { type: "boolean" },
+          inferred_category: { type: "string" },
+        },
+        required: ["anchored", "inferred_category"],
+      },
+    },
+  },
+  required: ["results"],
+} as const;
+
+const REPAIR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    rewritten: { type: "array", items: { type: "string" } },
+  },
+  required: ["rewritten"],
+} as const;
+
+/**
+ * Anchoring lint: each prompt is read cold by a classifier that infers what
+ * category it's about. Prompts whose inferred category doesn't match get one
+ * repair round (rewrite preserving intent, length, register — adding the
+ * category anchor); unrepairable ones survive as-is and are caught later by
+ * the post-first-run health check.
+ */
+async function lintAndRepairAnchoring(
+  prompts: PromptSpec[],
+  category: string
+): Promise<PromptSpec[]> {
+  try {
+    const lintRes = await openaiClient().chat.completions.create({
+      model: SUGGEST_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "For each prompt, imagine an AI assistant reading ONLY that prompt " +
+            "with no other context. Report what product/service category the " +
+            "assistant would understand the prompt to be about " +
+            "(inferred_category), and whether that clearly matches the study " +
+            `category "${category}" (anchored). A prompt about 'a tool' or ` +
+            "'our tooling' with no category signal is NOT anchored. Return one " +
+            "result per prompt, in order.",
+        },
+        { role: "user", content: JSON.stringify(prompts.map((p) => p.text)) },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "lint", strict: true, schema: LINT_SCHEMA },
+      },
+    });
+    const results = (
+      JSON.parse(lintRes.choices[0]?.message?.content ?? '{"results":[]}') as {
+        results: { anchored: boolean; inferred_category: string }[];
+      }
+    ).results;
+    const bad = prompts
+      .map((p, i) => ({ p, i, r: results[i] }))
+      .filter((x) => x.r && !x.r.anchored);
+    if (bad.length === 0) return prompts;
+    console.log(
+      `anchoring lint: repairing ${bad.length} prompt(s):`,
+      bad.map((b) => b.p.text)
+    );
+    const repairRes = await openaiClient().chat.completions.create({
+      model: SUGGEST_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Rewrite each prompt so it is unambiguously about " +
+            `"${category}" when read with zero context — work the category ` +
+            "(or an unmistakable everyday synonym) into the prompt. PRESERVE " +
+            "the intent, the specific details, the length, and the casual " +
+            "register. Never add brand names. Return the rewrites in order.",
+        },
+        { role: "user", content: JSON.stringify(bad.map((b) => b.p.text)) },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "repair", strict: true, schema: REPAIR_SCHEMA },
+      },
+    });
+    const rewritten = (
+      JSON.parse(
+        repairRes.choices[0]?.message?.content ?? '{"rewritten":[]}'
+      ) as { rewritten: string[] }
+    ).rewritten;
+    const out = [...prompts];
+    bad.forEach((b, j) => {
+      const text = rewritten[j]?.trim();
+      if (text) out[b.i] = { ...b.p, text };
+    });
+    return out;
+  } catch (err) {
+    console.error("anchoring lint failed, battery unmodified:", err);
+    return prompts;
+  }
+}
+
 /** Estimate a brand's competitive category, rivals, and buyer audience. */
 export async function suggestBrandProfile(
   brand: string
@@ -268,9 +379,9 @@ const BATTERY_SCHEMA = {
   required: ["prompts"],
 } as const;
 
-// v4: style targets + theme quotas calibrated to n=1,006 verified commercial
-// prompts harvested from WildChat-4.8M — see style_profile.json.
-const BATTERY_STYLE_VERSION = "v4";
+// v5: v4 corpus calibration + category-anchoring rule with lint-and-repair
+// (every prompt must read as being about the category with zero context).
+const BATTERY_STYLE_VERSION = "v5";
 
 /**
  * Generate the unbranded battery with the model (falling back to templates),
@@ -322,7 +433,13 @@ export async function generateBatteryAi(input: {
             "- Sentence case or lowercase; punctuation optional on short fragments. " +
             "Imperfect grammar is fine. No typos.\n" +
             "- NEVER name any brand — not the target, not the competitors. The " +
-            "competitor list only tells you what market this is.\n\n" +
+            "competitor list only tells you what market this is.\n" +
+            "- CATEGORY ANCHOR (hard rule): each prompt is read cold, with no " +
+            "conversation context. Every prompt must unambiguously be about the " +
+            "given category on its face — a reader seeing only the prompt must " +
+            "know what kind of product is being asked about. Never write 'a " +
+            "tool', 'something', or 'our tooling' without the category (or an " +
+            "unmistakable synonym of it) in the prompt.\n\n" +
             "Register examples from a DIFFERENT category (match this feel, not the topic):\n" +
             "- 'best project management tool for a small construction company'\n" +
             "- 'my team keeps missing deadlines, what app should we use to track jobs?'\n" +
@@ -370,6 +487,8 @@ export async function generateBatteryAi(input: {
       category: input.category,
       audience: input.audience,
     }).filter((p) => p.theme !== "branded");
+  } else {
+    unbranded = await lintAndRepairAnchoring(unbranded, input.category);
   }
   return [
     ...unbranded,
