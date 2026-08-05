@@ -3,7 +3,7 @@ import Link from "next/link";
 const STEPS = [
   {
     title: "Ask what buyers ask.",
-    body: "Every tracker gets a battery of buyer-intent prompts for your category — discovery, recommendation, comparison, use case — phrased the way real people phrase them.",
+    body: "Questions calibrated to real buyer conversations - weighted to what's actually asked, validated in the open. You review every prompt before it runs.",
   },
   {
     title: "Sample until it's a statistic.",
