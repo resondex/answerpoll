@@ -68,6 +68,10 @@ A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
 
 ## Roadmap (not yet built)
 
+- Precision-targeted sampling: a run mode that keeps adding repeats until the
+  target brand's CI half-width hits a chosen precision (floor/cap on repeats;
+  chunked runner extends naturally by bumping run.repeats between chunks).
+  Makes the "sample until it's a statistic" line literally true.
 - More engines: Anthropic, Perplexity (citations → whose content drives
   answers), Gemini.
 - Auth + multi-tenancy (Supabase), billing.
