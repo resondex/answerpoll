@@ -1,24 +1,35 @@
 {
-  "source": "allenai/WildChat-1M random sample (seed=42), English first user turns; LLM commercial-intent screen + content-writing exclusion",
-  "n_sampled": 2632,
-  "n_commercial": 24,
-  "commercial_share_of_conversations": 0.0091,
+  "source": "allenai/WildChat-4.8M full-text-search harvest (39 commercial query phrases), English first user turns, per-prompt LLM screen (gpt-4o-mini) incl. content-writing exclusion",
+  "caveat": "keyword-conditioned harvest (not a random sample); style/theme distributions are conditional on commercial intent",
+  "n_candidates": 17033,
+  "n_commercial": 1006,
+  "precision_of_harvest": 0.059,
+  "median_words_bootstrap_95ci": [
+    15,
+    19
+  ],
+  "theme_shares_empirical": {
+    "discovery": 0.588,
+    "recommendation": 0.273,
+    "comparison": 0.078,
+    "use_case": 0.061
+  },
   "style": {
-    "n": 24,
+    "n": 1006,
     "words_p25": 9,
-    "words_median": 12,
-    "words_p75": 20,
-    "words_p90": 41,
-    "words_mean": 23.1,
-    "share_under_10_words": 0.333,
-    "share_under_20_words": 0.75,
-    "share_over_40_words": 0.125,
-    "starts_lowercase": 0.417,
-    "ends_question_mark": 0.167,
-    "no_terminal_punct": 0.792,
-    "first_person": 0.5,
-    "contractions": 0.125,
-    "contains_please": 0.042,
-    "multi_sentence": 0.042
+    "words_median": 17,
+    "words_p75": 51,
+    "words_p90": 137,
+    "words_mean": 50.2,
+    "share_under_10_words": 0.262,
+    "share_under_20_words": 0.546,
+    "share_over_40_words": 0.29,
+    "starts_lowercase": 0.415,
+    "ends_question_mark": 0.156,
+    "no_terminal_punct": 0.651,
+    "first_person": 0.452,
+    "contractions": 0.139,
+    "contains_please": 0.083,
+    "multi_sentence": 0.245
   }
 }

@@ -136,9 +136,9 @@ const BATTERY_SCHEMA = {
   required: ["prompts"],
 } as const;
 
-// v3: quantitative style targets calibrated to real commercial prompts
-// sampled from WildChat-1M — see style_profile.json for the measurement.
-const BATTERY_STYLE_VERSION = "v3";
+// v4: style targets + theme quotas calibrated to n=1,006 verified commercial
+// prompts harvested from WildChat-4.8M — see style_profile.json.
+const BATTERY_STYLE_VERSION = "v4";
 
 /**
  * Generate the unbranded battery with the model (falling back to templates),
@@ -165,15 +165,15 @@ export async function generateBatteryAi(input: {
             "ChatGPT. Imagine 12 different people, each in a concrete situation that " +
             "puts them in the market for this category, and write exactly what each " +
             "one would type.\n\n" +
-            "Length calibration — these targets are measured from real commercial " +
-            "prompts in the WildChat corpus of actual ChatGPT conversations; your set " +
-            "of 12 must match them:\n" +
-            "- median length ~12 words; about 4 prompts under 10 words; about 9 " +
-            "under 20 words; at most 2 over 40 words\n" +
-            "- at most ONE prompt with multiple sentences (real context-dumps are " +
-            "rare) — everything else is a single sentence or fragment\n" +
-            "- about 5 prompts start lowercase; most have NO ending punctuation; " +
-            "only ~2 end with a question mark\n" +
+            "Length calibration — these targets are measured from 1,006 verified " +
+            "commercial prompts in the WildChat corpus of real ChatGPT " +
+            "conversations; your set of 12 must match them:\n" +
+            "- median length ~17 words; about 3 prompts under 10 words; about 7 " +
+            "under 20 words; 3 or 4 over 40 words\n" +
+            "- up to 3 prompts with multiple sentences (real buyers do dump " +
+            "context sometimes) — the rest are a single sentence or fragment\n" +
+            "- about 5 prompts start lowercase; roughly 8 have NO ending " +
+            "punctuation; only ~2 end with a question mark\n" +
             "- about half use first person; 'please' at most once\n\n" +
             "Style rules — follow every one:\n" +
             "- Everyday words. When a prompt does carry detail, make it concrete " +
@@ -198,10 +198,13 @@ export async function generateBatteryAi(input: {
             "- 'We're a 12-person remodeling company and everything lives in text " +
             "threads right now. I need something the field guys will actually use — " +
             "what would you recommend and why?'\n\n" +
-            "Produce exactly 12: 3 'discovery' (what's out there / best-of asks), " +
-            "4 'recommendation' (advice for their specific situation), 3 'comparison' " +
-            "(weighing types, tradeoffs, or alternatives), 2 'use_case' (budget, " +
-            "trust, or a situational constraint).",
+            "Produce exactly 12, with theme counts matching the measured " +
+            "distribution of real commercial asks (59% discovery / 27% " +
+            "recommendation / 8% comparison / 6% use_case): 7 'discovery' " +
+            "(what's out there / best-of asks), 3 'recommendation' (advice for " +
+            "their specific situation), 1 'comparison' (weighing types, tradeoffs, " +
+            "or alternatives), 1 'use_case' (budget, trust, or a situational " +
+            "constraint).",
         },
         {
           role: "user",
