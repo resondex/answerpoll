@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import TrendChart from "./trend_chart";
 import type {
+  DictionaryEntry,
   Project,
   ProjectTrend,
   Prompt,
@@ -30,6 +31,8 @@ export default function ProjectPage() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [trend, setTrend] = useState<ProjectTrend | null>(null);
+  const [dict, setDict] = useState<DictionaryEntry[]>([]);
+  const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({});
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
@@ -55,7 +58,26 @@ export default function ProjectPage() {
       const tr = await fetch(`/api/projects/${id}/trend`);
       if (tr.ok) setTrend((await tr.json()).trend);
     }
+    const dr = await fetch(`/api/projects/${id}/dictionary`);
+    if (dr.ok) setDict((await dr.json()).entries ?? []);
   }, [id]);
+
+  async function dictAction(
+    entryId: string,
+    action: "approve" | "reject" | "merge"
+  ) {
+    await fetch(`/api/projects/${id}/dictionary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entryId,
+        action,
+        mergeIntoId: action === "merge" ? mergeTargets[entryId] : undefined,
+      }),
+    });
+    const dr = await fetch(`/api/projects/${id}/dictionary`);
+    if (dr.ok) setDict((await dr.json()).entries ?? []);
+  }
 
   async function setSchedule(schedule: RunSchedule) {
     setDetail((d) =>
@@ -259,6 +281,77 @@ export default function ProjectPage() {
           </ul>
         )}
       </section>
+
+      {dict.some((e) => e.status === "pending") && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">Brand dictionary — review queue</h2>
+          <p className="text-[13px] text-ink-3 mb-4">
+            New names the answers surfaced. Approve as a distinct brand, merge
+            as an alias of a known one, or reject. Decisions apply
+            retroactively to every run - metrics recompute from the dictionary.
+          </p>
+          <div className="grid gap-2">
+            {dict
+              .filter((e) => e.status === "pending")
+              .slice(0, 15)
+              .map((e) => (
+                <div
+                  key={e.id}
+                  className="flex flex-wrap items-center gap-2 text-sm border-b border-line/60 pb-2"
+                >
+                  <span className="font-medium min-w-40">{e.canonical}</span>
+                  <span className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => dictAction(e.id, "approve")}
+                    className="text-[13px] font-medium text-success hover:opacity-80"
+                  >
+                    Approve as brand
+                  </button>
+                  <select
+                    className="input w-40 text-xs"
+                    value={mergeTargets[e.id] ?? ""}
+                    onChange={(ev) =>
+                      setMergeTargets({
+                        ...mergeTargets,
+                        [e.id]: ev.target.value,
+                      })
+                    }
+                  >
+                    <option value="">merge into…</option>
+                    {dict
+                      .filter((x) => x.status === "active")
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.canonical}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => dictAction(e.id, "merge")}
+                    disabled={!mergeTargets[e.id]}
+                    className="text-[13px] font-medium text-primary hover:opacity-80 disabled:opacity-40"
+                  >
+                    Merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dictAction(e.id, "reject")}
+                    className="text-[13px] font-medium text-ink-3 hover:text-danger"
+                  >
+                    Reject
+                  </button>
+                </div>
+              ))}
+          </div>
+          <p className="text-xs text-ink-3 mt-3">
+            {dict.filter((e) => e.status === "pending").length} pending ·{" "}
+            {dict.filter((e) => e.status === "active").length} active brands ·
+            dictionary v{project.dictionary_version}
+          </p>
+        </section>
+      )}
 
       <section>
         <h2 className="section-label mb-3">Prompt battery</h2>

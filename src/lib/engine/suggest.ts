@@ -65,6 +65,138 @@ export async function getBattery(
   return battery;
 }
 
+const TAXONOMY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: { codes: { type: "array", items: { type: "string" } } },
+  required: ["codes"],
+} as const;
+
+/**
+ * Closed reason-code taxonomy for a category — the arguments assistants use
+ * to justify recommendations. Generated once per category (cache-first) and
+ * frozen on the project at creation.
+ */
+export async function getReasonTaxonomy(input: {
+  category: string;
+  competitors: string[];
+}): Promise<string[]> {
+  const key = cacheKey("taxonomy", [
+    input.category,
+    [...input.competitors].sort().join(","),
+  ]);
+  const hit = await store.cacheGet(key, CACHE_TTL_MS);
+  if (hit) return JSON.parse(hit) as string[];
+  const res = await openaiClient().chat.completions.create({
+    model: SUGGEST_MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Produce a closed taxonomy of 18 to 22 reason codes: the arguments " +
+          "an AI assistant uses to justify or compare recommendations in the " +
+          "given category (the credit-card equivalents are 'annual fee', " +
+          "'lounge access', 'cash back'). Rules: short lowercase noun phrases " +
+          "(1-3 words), mutually distinct, spanning price/cost, quality, " +
+          "features, ease of use, trust/reputation, fit-for-situation, and any " +
+          "category-specific dimensions. No brand names.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          category: input.category,
+          competitor_context: input.competitors,
+        }),
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "taxonomy", strict: true, schema: TAXONOMY_SCHEMA },
+    },
+  });
+  const codes = [
+    ...new Set(
+      (JSON.parse(res.choices[0]?.message?.content ?? '{"codes":[]}')
+        .codes as string[])
+        .map((c) => c.trim().toLowerCase())
+        .filter(Boolean)
+    ),
+  ].slice(0, 24);
+  await store.cacheSet(key, JSON.stringify(codes));
+  return codes;
+}
+
+const ALIAS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    entries: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          canonical: { type: "string" },
+          aliases: { type: "array", items: { type: "string" } },
+        },
+        required: ["canonical", "aliases"],
+      },
+    },
+  },
+  required: ["entries"],
+} as const;
+
+/** Seed the project dictionary: known aliases for target + competitors. */
+export async function seedDictionary(
+  projectId: string,
+  brands: string[]
+): Promise<void> {
+  let entries: { canonical: string; aliases: string[] }[] = brands.map(
+    (b) => ({ canonical: b, aliases: [] })
+  );
+  try {
+    const key = cacheKey("aliases", [[...brands].sort().join(",")]);
+    const hit = await store.cacheGet(key, CACHE_TTL_MS);
+    if (hit) {
+      entries = JSON.parse(hit);
+    } else {
+      const res = await openaiClient().chat.completions.create({
+        model: SUGGEST_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "For each brand, list the alternate names, abbreviations, and " +
+              "spellings an AI answer might use for the SAME brand (e.g. " +
+              "'American Express' → ['amex', 'americanexpress']). Lowercase " +
+              "aliases. Only genuinely equivalent names — never other brands.",
+          },
+          { role: "user", content: JSON.stringify(brands) },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "aliases", strict: true, schema: ALIAS_SCHEMA },
+        },
+      });
+      entries = JSON.parse(
+        res.choices[0]?.message?.content ?? '{"entries":[]}'
+      ).entries;
+      await store.cacheSet(key, JSON.stringify(entries));
+    }
+  } catch (err) {
+    console.error("alias seeding fell back to bare entries:", err);
+  }
+  for (const e of entries) {
+    await store.upsertDictionaryEntry({
+      id: null,
+      projectId,
+      canonical: e.canonical,
+      aliases: e.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean),
+      status: "active",
+    });
+  }
+}
+
 /** Estimate a brand's competitive category, rivals, and buyer audience. */
 export async function suggestBrandProfile(
   brand: string

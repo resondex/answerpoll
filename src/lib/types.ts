@@ -22,6 +22,9 @@ export interface Project {
   audience: string | null;
   schedule: RunSchedule;
   user_id: string | null;
+  /** Closed reason-code taxonomy, generated at setup and frozen. */
+  reason_taxonomy: string[];
+  dictionary_version: number;
   created_at: string;
 }
 
@@ -44,12 +47,35 @@ export interface Run {
   created_at: string;
 }
 
+export type AnswerOutcome = "pick" | "no_pick" | "clarification";
+
 export interface ResponseRow {
   id: string;
   run_id: string;
   prompt_id: string;
   repeat_idx: number;
   text: string;
+  /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
+  top_pick_brand: string | null;
+  outcome: AnswerOutcome | null;
+  reason_codes: string | null; // pipe-joined, from the project taxonomy
+  clarification_requested: number | null;
+  gives_recommendation: number | null;
+  includes_prices: number | null;
+  includes_specs: number | null;
+  total_recommendations: number | null;
+  focus_quote: string | null;
+  focus_interpretation: string | null;
+  created_at: string;
+}
+
+export interface DictionaryEntry {
+  id: string;
+  project_id: string;
+  canonical: string;
+  aliases: string[]; // normalized lowercase
+  status: "active" | "pending" | "rejected";
+  version: number;
   created_at: string;
 }
 
@@ -65,6 +91,21 @@ export interface MentionRow {
 export interface ExtractedMention {
   brand: string;
   framing: Framing;
+}
+
+/** Full per-answer coding returned by the extraction model. */
+export interface ExtractionResult {
+  mentions: ExtractedMention[];
+  top_pick_brand: string | null;
+  outcome: AnswerOutcome;
+  reasons: string[];
+  clarification_requested: boolean;
+  gives_recommendation: boolean;
+  includes_prices: boolean;
+  includes_specs: boolean;
+  total_recommendations: number;
+  focus_quote: string | null;
+  focus_interpretation: string | null;
 }
 
 export interface BrandStats {
@@ -101,6 +142,8 @@ export interface ThemeStats {
   targetAvgRank: number | null;
 }
 
+export type PromptBadge = "win" | "contested" | "absent";
+
 export interface RunMetrics {
   runId: string;
   model: string;
@@ -110,6 +153,56 @@ export interface RunMetrics {
   prompts: PromptStats[];
   themes: ThemeStats[];
   verbatims: { promptText: string; text: string; mentionsTarget: boolean }[];
+  /** Whether this run carries the full coding layer (top pick, reasons…). */
+  coded: boolean;
+  firstPick: {
+    rate: number;
+    ciLow: number;
+    ciHigh: number;
+    count: number;
+    of: number;
+  } | null;
+  outcomes: { pick: number; no_pick: number; clarification: number } | null;
+  /** Target position distribution among answers where it appears. */
+  positionDist: { r1: number; r2: number; r3: number; r4plus: number } | null;
+  /** Who wins instead: first-pick leaderboard over decided unbranded answers. */
+  topPicks:
+    | {
+        brand: string;
+        isTarget: boolean;
+        isCompetitor: boolean;
+        picks: number;
+        shareOfDecided: number;
+      }[]
+    | null;
+  reasonLift:
+    | {
+        code: string;
+        n: number;
+        shareAll: number;
+        shareWins: number;
+        shareAbsent: number;
+        lift: number;
+      }[]
+    | null;
+  promptGrid:
+    | {
+        promptId: string;
+        text: string;
+        theme: PromptTheme;
+        answers: number;
+        decided: number;
+        modalPick: string | null;
+        modalShare: number | null;
+        targetNamed: number;
+        targetPicks: number;
+        badge: PromptBadge;
+      }[]
+    | null;
+  negatives:
+    | { promptText: string; quote: string | null; interpretation: string | null }[]
+    | null;
+  dictionaryVersion: number;
 }
 
 export interface RunProgress {
@@ -159,7 +252,19 @@ export interface Store {
     category: string;
     audience: string | null;
     userId: string | null;
+    reasonTaxonomy: string[];
   }): Promise<Project>;
+  getDictionary(projectId: string): Promise<DictionaryEntry[]>;
+  upsertDictionaryEntry(input: {
+    id: string | null;
+    projectId: string;
+    canonical: string;
+    aliases: string[];
+    status: DictionaryEntry["status"];
+  }): Promise<DictionaryEntry>;
+  /** Queue unmatched raw names as pending entries (skip known names). */
+  queueDictionaryCandidates(projectId: string, names: string[]): Promise<void>;
+  bumpDictionaryVersion(projectId: string): Promise<number>;
   getProject(id: string): Promise<Project | null>;
   /** All projects when userId is omitted (cron); the user's own otherwise. */
   listProjects(userId?: string): Promise<Project[]>;
@@ -203,6 +308,7 @@ export interface Store {
     repeatIdx: number;
     text: string;
     mentions: { brand: string; framing: Framing }[];
+    coding: Omit<ExtractionResult, "mentions"> | null;
   }): Promise<void>;
   countResponses(runId: string): Promise<number>;
   listResponses(runId: string): Promise<ResponseRow[]>;

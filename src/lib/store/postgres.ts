@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import type {
+  DictionaryEntry,
   Project,
   Prompt,
   Run,
@@ -48,6 +49,27 @@ function ensureSchema(): Promise<void> {
       )`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS schedule TEXT NOT NULL DEFAULT 'none'`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS user_id TEXT`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS reason_taxonomy TEXT NOT NULL DEFAULT '[]'`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS dictionary_version INTEGER NOT NULL DEFAULT 1`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS top_pick_brand TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS outcome TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS reason_codes TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS clarification_requested INTEGER`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS gives_recommendation INTEGER`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS includes_prices INTEGER`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS includes_specs INTEGER`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS total_recommendations INTEGER`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS focus_quote TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS focus_interpretation TEXT`;
+      await sql`CREATE TABLE IF NOT EXISTS dictionary_entries (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        canonical TEXT NOT NULL,
+        aliases TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active',
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
       await sql`CREATE TABLE IF NOT EXISTS user_plans (
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
@@ -132,6 +154,20 @@ function rowToProject(r: Record<string, unknown>): Project {
     audience: (r.audience as string | null) ?? null,
     schedule: (r.schedule as Project["schedule"]) ?? "none",
     user_id: (r.user_id as string | null) ?? null,
+    reason_taxonomy: JSON.parse((r.reason_taxonomy as string) ?? "[]"),
+    dictionary_version: (r.dictionary_version as number) ?? 1,
+    created_at: iso(r.created_at)!,
+  };
+}
+
+function rowToDictEntry(r: Record<string, unknown>): DictionaryEntry {
+  return {
+    id: r.id as string,
+    project_id: r.project_id as string,
+    canonical: r.canonical as string,
+    aliases: JSON.parse((r.aliases as string) ?? "[]"),
+    status: r.status as DictionaryEntry["status"],
+    version: (r.version as number) ?? 1,
     created_at: iso(r.created_at)!,
   };
 }
@@ -167,9 +203,54 @@ export const pgStore: Store = {
   async createProject(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id)
-      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId})`;
+    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy)
+      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId}, ${JSON.stringify(input.reasonTaxonomy)})`;
     return (await this.getProject(id))!;
+  },
+
+  async getDictionary(projectId) {
+    const sql = await db();
+    const rows =
+      await sql`SELECT * FROM dictionary_entries WHERE project_id = ${projectId} ORDER BY canonical`;
+    return rows.map(rowToDictEntry);
+  },
+
+  async upsertDictionaryEntry(input) {
+    const sql = await db();
+    const id = input.id ?? crypto.randomUUID();
+    const aliases = JSON.stringify(input.aliases);
+    await sql`INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
+      VALUES (${id}, ${input.projectId}, ${input.canonical}, ${aliases}, ${input.status})
+      ON CONFLICT (id) DO UPDATE SET
+        canonical = ${input.canonical}, aliases = ${aliases},
+        status = ${input.status}, version = dictionary_entries.version + 1`;
+    const rows = await sql`SELECT * FROM dictionary_entries WHERE id = ${id}`;
+    return rowToDictEntry(rows[0]);
+  },
+
+  async queueDictionaryCandidates(projectId, names) {
+    const sql = await db();
+    const existing = new Set<string>();
+    for (const e of await this.getDictionary(projectId)) {
+      existing.add(e.canonical.trim().toLowerCase());
+      for (const a of e.aliases) existing.add(a);
+    }
+    for (const raw of names) {
+      const norm = raw.trim().toLowerCase();
+      if (!norm || existing.has(norm)) continue;
+      existing.add(norm);
+      await sql`INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
+        VALUES (${crypto.randomUUID()}, ${projectId}, ${raw.trim()}, '[]', 'pending')`;
+    }
+  },
+
+  async bumpDictionaryVersion(projectId) {
+    const sql = await db();
+    const rows = await sql`UPDATE projects
+      SET dictionary_version = dictionary_version + 1
+      WHERE id = ${projectId}
+      RETURNING dictionary_version`;
+    return rows[0].dictionary_version as number;
   },
 
   async getProject(id) {
@@ -301,11 +382,26 @@ export const pgStore: Store = {
   async insertResponse(input) {
     const sql = await db();
     const responseId = crypto.randomUUID();
+    const c = input.coding;
     await sql.begin(async (tx) => {
       // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
-      const res = await tx`INSERT INTO responses (id, run_id, prompt_id, repeat_idx, text)
-        VALUES (${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.text})
+      const res = await tx`INSERT INTO responses (
+          id, run_id, prompt_id, repeat_idx, text,
+          top_pick_brand, outcome, reason_codes, clarification_requested,
+          gives_recommendation, includes_prices, includes_specs,
+          total_recommendations, focus_quote, focus_interpretation
+        ) VALUES (
+          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.text},
+          ${c?.top_pick_brand ?? null}, ${c?.outcome ?? null},
+          ${c ? c.reasons.join("|") : null},
+          ${c ? (c.clarification_requested ? 1 : 0) : null},
+          ${c ? (c.gives_recommendation ? 1 : 0) : null},
+          ${c ? (c.includes_prices ? 1 : 0) : null},
+          ${c ? (c.includes_specs ? 1 : 0) : null},
+          ${c?.total_recommendations ?? null},
+          ${c?.focus_quote ?? null}, ${c?.focus_interpretation ?? null}
+        )
         ON CONFLICT (run_id, prompt_id, repeat_idx) DO NOTHING`;
       if (res.count === 0) return;
       for (let i = 0; i < input.mentions.length; i++) {
@@ -335,6 +431,16 @@ export const pgStore: Store = {
           prompt_id: r.prompt_id,
           repeat_idx: r.repeat_idx,
           text: r.text,
+          top_pick_brand: r.top_pick_brand ?? null,
+          outcome: r.outcome ?? null,
+          reason_codes: r.reason_codes ?? null,
+          clarification_requested: r.clarification_requested ?? null,
+          gives_recommendation: r.gives_recommendation ?? null,
+          includes_prices: r.includes_prices ?? null,
+          includes_specs: r.includes_specs ?? null,
+          total_recommendations: r.total_recommendations ?? null,
+          focus_quote: r.focus_quote ?? null,
+          focus_interpretation: r.focus_interpretation ?? null,
           created_at: iso(r.created_at)!,
         }) as ResponseRow
     );

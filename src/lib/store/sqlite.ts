@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import type {
+  DictionaryEntry,
   Project,
   Prompt,
   Run,
@@ -33,6 +34,17 @@ function createDb(): Database.Database {
       audience TEXT,
       schedule TEXT NOT NULL DEFAULT 'none',
       user_id TEXT,
+      reason_taxonomy TEXT NOT NULL DEFAULT '[]',
+      dictionary_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS dictionary_entries (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      canonical TEXT NOT NULL,
+      aliases TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active',
+      version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS user_plans (
@@ -77,6 +89,16 @@ function createDb(): Database.Database {
       prompt_id TEXT NOT NULL REFERENCES prompts(id),
       repeat_idx INTEGER NOT NULL,
       text TEXT NOT NULL,
+      top_pick_brand TEXT,
+      outcome TEXT,
+      reason_codes TEXT,
+      clarification_requested INTEGER,
+      gives_recommendation INTEGER,
+      includes_prices INTEGER,
+      includes_specs INTEGER,
+      total_recommendations INTEGER,
+      focus_quote TEXT,
+      focus_interpretation TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS mentions (
@@ -105,6 +127,33 @@ function createDb(): Database.Database {
   if (!cols.some((c) => c.name === "user_id")) {
     db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT");
   }
+  if (!cols.some((c) => c.name === "reason_taxonomy")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN reason_taxonomy TEXT NOT NULL DEFAULT '[]'"
+    );
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN dictionary_version INTEGER NOT NULL DEFAULT 1"
+    );
+  }
+  const respCols = db.prepare("PRAGMA table_info(responses)").all() as {
+    name: string;
+  }[];
+  if (!respCols.some((c) => c.name === "top_pick_brand")) {
+    for (const ddl of [
+      "ALTER TABLE responses ADD COLUMN top_pick_brand TEXT",
+      "ALTER TABLE responses ADD COLUMN outcome TEXT",
+      "ALTER TABLE responses ADD COLUMN reason_codes TEXT",
+      "ALTER TABLE responses ADD COLUMN clarification_requested INTEGER",
+      "ALTER TABLE responses ADD COLUMN gives_recommendation INTEGER",
+      "ALTER TABLE responses ADD COLUMN includes_prices INTEGER",
+      "ALTER TABLE responses ADD COLUMN includes_specs INTEGER",
+      "ALTER TABLE responses ADD COLUMN total_recommendations INTEGER",
+      "ALTER TABLE responses ADD COLUMN focus_quote TEXT",
+      "ALTER TABLE responses ADD COLUMN focus_interpretation TEXT",
+    ]) {
+      db.exec(ddl);
+    }
+  }
   return db;
 }
 
@@ -124,6 +173,23 @@ function parseProject(row: ProjectRaw): Project {
     ...row,
     competitors: JSON.parse(row.competitors),
     schedule: row.schedule ?? "none",
+    reason_taxonomy: JSON.parse(
+      (row as unknown as { reason_taxonomy?: string }).reason_taxonomy ?? "[]"
+    ),
+    dictionary_version:
+      (row as unknown as { dictionary_version?: number }).dictionary_version ?? 1,
+  };
+}
+
+function parseDictEntry(row: Record<string, unknown>): DictionaryEntry {
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    canonical: row.canonical as string,
+    aliases: JSON.parse((row.aliases as string) ?? "[]"),
+    status: row.status as DictionaryEntry["status"],
+    version: (row.version as number) ?? 1,
+    created_at: row.created_at as string,
   };
 }
 
@@ -145,8 +211,8 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -155,9 +221,74 @@ export const sqliteStore: Store = {
         JSON.stringify(input.competitors),
         input.category,
         input.audience,
-        input.userId
+        input.userId,
+        JSON.stringify(input.reasonTaxonomy)
       );
     return (await this.getProject(id))!;
+  },
+
+  async getDictionary(projectId) {
+    return (
+      getDb()
+        .prepare(
+          "SELECT * FROM dictionary_entries WHERE project_id = ? ORDER BY canonical"
+        )
+        .all(projectId) as Record<string, unknown>[]
+    ).map(parseDictEntry);
+  },
+
+  async upsertDictionaryEntry(input) {
+    const id = input.id ?? crypto.randomUUID();
+    getDb()
+      .prepare(
+        `INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           canonical = excluded.canonical, aliases = excluded.aliases,
+           status = excluded.status, version = dictionary_entries.version + 1`
+      )
+      .run(
+        id,
+        input.projectId,
+        input.canonical,
+        JSON.stringify(input.aliases),
+        input.status
+      );
+    const row = getDb()
+      .prepare("SELECT * FROM dictionary_entries WHERE id = ?")
+      .get(id) as Record<string, unknown>;
+    return parseDictEntry(row);
+  },
+
+  async queueDictionaryCandidates(projectId, names) {
+    const db = getDb();
+    const existing = new Set<string>();
+    for (const e of await this.getDictionary(projectId)) {
+      existing.add(e.canonical.trim().toLowerCase());
+      for (const a of e.aliases) existing.add(a);
+    }
+    const stmt = db.prepare(
+      `INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
+       VALUES (?, ?, ?, '[]', 'pending')`
+    );
+    for (const raw of names) {
+      const norm = raw.trim().toLowerCase();
+      if (!norm || existing.has(norm)) continue;
+      existing.add(norm);
+      stmt.run(crypto.randomUUID(), projectId, raw.trim());
+    }
+  },
+
+  async bumpDictionaryVersion(projectId) {
+    getDb()
+      .prepare(
+        "UPDATE projects SET dictionary_version = dictionary_version + 1 WHERE id = ?"
+      )
+      .run(projectId);
+    const row = getDb()
+      .prepare("SELECT dictionary_version FROM projects WHERE id = ?")
+      .get(projectId) as { dictionary_version: number };
+    return row.dictionary_version;
   },
 
   async getProject(id) {
@@ -331,20 +462,35 @@ export const sqliteStore: Store = {
   async insertResponse(input) {
     const db = getDb();
     const responseId = crypto.randomUUID();
+    const c = input.coding;
     const insertAll = db.transaction(() => {
       // OR IGNORE + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
       const info = db
         .prepare(
-          `INSERT OR IGNORE INTO responses (id, run_id, prompt_id, repeat_idx, text)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO responses (
+             id, run_id, prompt_id, repeat_idx, text,
+             top_pick_brand, outcome, reason_codes, clarification_requested,
+             gives_recommendation, includes_prices, includes_specs,
+             total_recommendations, focus_quote, focus_interpretation
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           responseId,
           input.runId,
           input.promptId,
           input.repeatIdx,
-          input.text
+          input.text,
+          c?.top_pick_brand ?? null,
+          c?.outcome ?? null,
+          c ? c.reasons.join("|") : null,
+          c ? (c.clarification_requested ? 1 : 0) : null,
+          c ? (c.gives_recommendation ? 1 : 0) : null,
+          c ? (c.includes_prices ? 1 : 0) : null,
+          c ? (c.includes_specs ? 1 : 0) : null,
+          c?.total_recommendations ?? null,
+          c?.focus_quote ?? null,
+          c?.focus_interpretation ?? null
         );
       if (info.changes === 0) return;
       const stmt = db.prepare(

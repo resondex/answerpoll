@@ -1,14 +1,20 @@
 import OpenAI from "openai";
-import type { ExtractedMention } from "../types";
+import type { ExtractedMention, ExtractionResult } from "../types";
+
+export interface ExtractionContext {
+  targetBrand: string;
+  knownBrands: string[];
+  reasonCodes: string[];
+}
 
 export interface CompletionProvider {
   /** Answer a buyer-intent prompt the way a consumer assistant would. */
   complete(prompt: string, model: string): Promise<string>;
-  /** Extract every brand/company mentioned in a response, in order of appearance. */
-  extractMentions(
+  /** Full per-answer coding: mentions, top pick, outcome, reasons, focus quote. */
+  extractCoding(
     responseText: string,
-    knownBrands: string[]
-  ): Promise<ExtractedMention[]>;
+    ctx: ExtractionContext
+  ): Promise<ExtractionResult>;
 }
 
 export function apiKeyConfigured(): boolean {
@@ -28,28 +34,55 @@ const client = openaiClient;
 
 const EXTRACT_MODEL = process.env.EXTRACT_MODEL ?? "gpt-4o-mini";
 
-const EXTRACT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    mentions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          brand: { type: "string" },
-          framing: {
-            type: "string",
-            enum: ["recommended", "mentioned", "negative"],
+function extractSchema(reasonCodes: string[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mentions: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            brand: { type: "string" },
+            framing: {
+              type: "string",
+              enum: ["recommended", "mentioned", "negative"],
+            },
           },
+          required: ["brand", "framing"],
         },
-        required: ["brand", "framing"],
       },
+      top_pick_brand: { type: ["string", "null"] },
+      outcome: { type: "string", enum: ["pick", "no_pick", "clarification"] },
+      reasons:
+        reasonCodes.length > 0
+          ? { type: "array", items: { type: "string", enum: reasonCodes } }
+          : { type: "array", items: { type: "string" } },
+      clarification_requested: { type: "boolean" },
+      gives_recommendation: { type: "boolean" },
+      includes_prices: { type: "boolean" },
+      includes_specs: { type: "boolean" },
+      total_recommendations: { type: "integer" },
+      focus_quote: { type: ["string", "null"] },
+      focus_interpretation: { type: ["string", "null"] },
     },
-  },
-  required: ["mentions"],
-} as const;
+    required: [
+      "mentions",
+      "top_pick_brand",
+      "outcome",
+      "reasons",
+      "clarification_requested",
+      "gives_recommendation",
+      "includes_prices",
+      "includes_specs",
+      "total_recommendations",
+      "focus_quote",
+      "focus_interpretation",
+    ],
+  } as const;
+}
 
 async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
   let lastErr: unknown;
@@ -75,7 +108,7 @@ const openaiProvider: CompletionProvider = {
     });
   },
 
-  async extractMentions(responseText, knownBrands) {
+  async extractCoding(responseText, ctx) {
     return withRetry(async () => {
       const res = await client().chat.completions.create({
         model: EXTRACT_MODEL,
@@ -83,27 +116,50 @@ const openaiProvider: CompletionProvider = {
           {
             role: "system",
             content:
-              "You extract brand mentions from an AI assistant's answer. " +
-              "List every company, brand, product, or provider name mentioned, " +
-              "in order of first appearance. For each, classify the framing: " +
-              "'recommended' if the answer endorses or ranks it favorably, " +
-              "'negative' if it is criticized or advised against, otherwise 'mentioned'. " +
-              `Names to watch for (extract others too): ${knownBrands.join(", ")}.`,
+              "You code an AI assistant's answer for a brand-visibility study. " +
+              `The focus brand is "${ctx.targetBrand}". Return:\n` +
+              "- mentions: every company, brand, product, or provider named, in " +
+              "order of first appearance. framing: 'recommended' if endorsed or " +
+              "ranked favorably, 'negative' if criticized or advised against, " +
+              "else 'mentioned'.\n" +
+              "- top_pick_brand: the ONE brand the answer explicitly crowns as " +
+              "its choice ('my pick', 'best overall', the one it would get). " +
+              "This is about endorsement, not order — it may differ from the " +
+              "first brand mentioned. null if the answer commits to none.\n" +
+              "- outcome: 'pick' when a top pick exists; 'clarification' when " +
+              "the answer mainly asks a question instead of answering; " +
+              "'no_pick' when it explains options without committing.\n" +
+              "- reasons: which of the allowed argument codes the answer uses " +
+              "to justify or compare options. Only codes from the list.\n" +
+              "- clarification_requested: does it ask the user anything?\n" +
+              "- gives_recommendation: does it recommend at least one option?\n" +
+              "- includes_prices: any price, fee, or cost figure quoted?\n" +
+              "- includes_specs: any concrete spec/feature figures quoted?\n" +
+              "- total_recommendations: how many distinct options it recommends.\n" +
+              `- focus_quote: a verbatim sentence (max 200 chars) about ` +
+              `"${ctx.targetBrand}" from the answer; null if the brand is absent.\n` +
+              `- focus_interpretation: one plain sentence on how the answer ` +
+              `positions "${ctx.targetBrand}"; null if absent.\n` +
+              `Known brands (extract others too): ${ctx.knownBrands.join(", ")}.`,
           },
           { role: "user", content: responseText },
         ],
         response_format: {
           type: "json_schema",
           json_schema: {
-            name: "brand_mentions",
+            name: "answer_coding",
             strict: true,
-            schema: EXTRACT_SCHEMA,
+            schema: extractSchema(ctx.reasonCodes),
           },
         },
       });
-      const raw = res.choices[0]?.message?.content ?? '{"mentions":[]}';
-      const parsed = JSON.parse(raw) as { mentions: ExtractedMention[] };
-      return dedupeMentions(parsed.mentions);
+      const raw = res.choices[0]?.message?.content ?? "{}";
+      const parsed = JSON.parse(raw) as ExtractionResult;
+      return {
+        ...parsed,
+        mentions: dedupeMentions(parsed.mentions ?? []),
+        reasons: [...new Set(parsed.reasons ?? [])],
+      };
     });
   },
 };

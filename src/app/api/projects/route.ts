@@ -7,6 +7,8 @@ import {
   requireAuth,
 } from "@/lib/auth";
 import { generatePromptBattery } from "@/lib/engine/prompts";
+import { getReasonTaxonomy, seedDictionary } from "@/lib/engine/suggest";
+import { apiKeyConfigured } from "@/lib/engine/providers";
 
 const createSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -73,6 +75,14 @@ export async function POST(req: Request) {
 
   const { brand, competitors, category } = parsed.data;
   const audience = parsed.data.audience || null;
+  let reasonTaxonomy: string[] = [];
+  if (apiKeyConfigured()) {
+    try {
+      reasonTaxonomy = await getReasonTaxonomy({ category, competitors });
+    } catch (err) {
+      console.error("taxonomy generation failed:", err);
+    }
+  }
   const project = await store.createProject({
     name: parsed.data.name ?? brand,
     brand,
@@ -80,10 +90,12 @@ export async function POST(req: Request) {
     category,
     audience,
     userId: auth.userId,
+    reasonTaxonomy,
   });
   await store.insertPrompts(
     project.id,
     parsed.data.prompts ?? generatePromptBattery({ brand, category, audience })
   );
+  await seedDictionary(project.id, [brand, ...competitors]);
   return NextResponse.json({ project }, { status: 201 });
 }

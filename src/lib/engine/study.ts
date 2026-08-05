@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { store } from "../store";
-import { computeRunMetrics, wilson } from "./metrics";
+import { buildCanonicalizer, computeRunMetrics, wilson } from "./metrics";
 import { computeProjectTrend } from "./trend";
 import { apiKeyConfigured, openaiClient } from "./providers";
 import type { MentionRow, Project, ResponseRow, Run } from "../types";
@@ -38,14 +38,17 @@ export async function buildStudyBundle(
   if (complete.length === 0) return null;
   const run = complete[0];
 
-  const [metrics, prompts, responses, mentions, trend] = await Promise.all([
-    computeRunMetrics(run.id),
-    store.listPrompts(project.id),
-    store.listResponses(run.id),
-    store.listMentionsForRun(run.id),
-    computeProjectTrend(project.id),
-  ]);
+  const [metrics, prompts, responses, mentions, trend, dictionary] =
+    await Promise.all([
+      computeRunMetrics(run.id),
+      store.listPrompts(project.id),
+      store.listResponses(run.id),
+      store.listMentionsForRun(run.id),
+      computeProjectTrend(project.id),
+      store.getDictionary(project.id),
+    ]);
   if (!metrics) return null;
+  const canon = buildCanonicalizer(dictionary);
 
   const promptById = new Map(prompts.map((p, i) => [p.id, { ...p, idx: i }]));
   const mentionsByResponse = new Map<string, MentionRow[]>();
@@ -96,6 +99,22 @@ export async function buildStudyBundle(
     ["Brands surfaced", metrics.brands.length, "",
       "Distinct brands the model named, including unprompted competitors"],
   ];
+  if (metrics.coded && metrics.firstPick) {
+    scorecardRows.splice(2, 0, [
+      "First pick",
+      pct(metrics.firstPick.rate),
+      `${pct(metrics.firstPick.ciLow)}-${pct(metrics.firstPick.ciHigh)}`,
+      `An answer crowns ${project.brand} as THE recommendation (${metrics.firstPick.count} of ${metrics.firstPick.of}) - being mentioned is representation, being picked is the win`,
+    ]);
+    if (metrics.outcomes) {
+      scorecardRows.push([
+        "Answer outcomes",
+        `${metrics.outcomes.pick} pick / ${metrics.outcomes.no_pick} no pick / ${metrics.outcomes.clarification} clarification`,
+        "",
+        "Whether answers committed to a recommendation, explained without one, or asked a question",
+      ]);
+    }
+  }
   root.file("02_scorecard/scorecard.csv", toCsv(scorecardRows));
 
   const gridRows: (string | number | null)[][] = [
@@ -138,6 +157,44 @@ export async function buildStudyBundle(
       t.ciLow.toFixed(4), t.ciHigh.toFixed(4), t.targetAvgRank?.toFixed(2) ?? null,
     ]),
   ]));
+  if (metrics.coded) {
+    if (metrics.topPicks) {
+      root.file("03_analysis/top_picks.csv", toCsv([
+        ["brand", "type", "first_picks", "share_of_decided"],
+        ...metrics.topPicks.map((t) => [
+          t.brand,
+          t.isTarget ? "target" : t.isCompetitor ? "competitor" : "emerged",
+          t.picks,
+          t.shareOfDecided.toFixed(4),
+        ]),
+      ]));
+    }
+    if (metrics.reasonLift) {
+      root.file("03_analysis/reason_lift.csv", toCsv([
+        ["reason_code", "answers_using", "share_all", "share_in_target_wins", "share_when_target_absent", "lift_points"],
+        ...metrics.reasonLift.map((r) => [
+          r.code, r.n, r.shareAll.toFixed(4), r.shareWins.toFixed(4),
+          r.shareAbsent.toFixed(4), (r.lift * 100).toFixed(1),
+        ]),
+      ]));
+    }
+    if (metrics.promptGrid) {
+      root.file("02_scorecard/prompt_grid_badges.csv", toCsv([
+        ["prompt", "theme", "answers", "decided", "consensus_pick", "consensus_share", "target_named", "target_picks", "badge"],
+        ...metrics.promptGrid.map((g) => [
+          g.text, g.theme, g.answers, g.decided, g.modalPick,
+          g.modalShare?.toFixed(2) ?? null, g.targetNamed, g.targetPicks, g.badge,
+        ]),
+      ]));
+    }
+    if (metrics.negatives && metrics.negatives.length > 0) {
+      root.file("03_analysis/negatives.csv", toCsv([
+        ["prompt", "verbatim_quote", "interpretation"],
+        ...metrics.negatives.map((n) => [n.promptText, n.quote, n.interpretation]),
+      ]));
+    }
+  }
+
   if (trend && trend.runs.length >= 2) {
     const trendRows: (string | number | null)[][] = [["run_date", "model", "answers", "brand", "mention_rate", "ci_low", "ci_high", "share_of_voice"]];
     trend.series.forEach((s) => {
@@ -156,6 +213,10 @@ export async function buildStudyBundle(
     "response_id", "run_id", "run_date", "model", "prompt_code", "theme", "prompt_text",
     "repeat_idx", "word_count", "target_present", "target_first_named", "target_position",
     "first_brand", "n_brands", "brands_in_order", "recommended_brands", "negative_brands",
+    "top_pick_brand", "top_pick_canonical", "outcome", "reason_codes",
+    "clarification_requested", "gives_recommendation", "includes_prices",
+    "includes_specs", "total_recommendations", "focus_quote", "focus_interpretation",
+    "dictionary_version",
   ]];
   for (const r of responses) {
     const p = promptById.get(r.prompt_id)!;
@@ -168,18 +229,30 @@ export async function buildStudyBundle(
       ms[0]?.brand ?? null, ms.length, ms.map((m) => m.brand).join("|"),
       ms.filter((m) => m.framing === "recommended").map((m) => m.brand).join("|"),
       ms.filter((m) => m.framing === "negative").map((m) => m.brand).join("|"),
+      r.top_pick_brand, r.top_pick_brand ? canon.canonical(r.top_pick_brand) : null,
+      r.outcome, r.reason_codes,
+      r.clarification_requested, r.gives_recommendation, r.includes_prices,
+      r.includes_specs, r.total_recommendations, r.focus_quote,
+      r.focus_interpretation, metrics.dictionaryVersion,
     ]);
   }
   root.file("04_master_dataset/responses.csv", toCsv(masterRows));
   root.file("04_master_dataset/mentions.csv", toCsv([
-    ["response_id", "prompt_code", "theme", "repeat_idx", "brand", "brand_type", "position", "framing"],
+    ["response_id", "prompt_code", "theme", "repeat_idx", "brand_raw", "brand_canonical", "brand_type", "position", "framing"],
     ...responses.flatMap((r) => {
       const p = promptById.get(r.prompt_id)!;
       return (mentionsByResponse.get(r.id) ?? []).map((m) => [
-        r.id, promptCode(p.idx), p.theme, r.repeat_idx, m.brand, brandType(m.brand_norm), m.rank, m.framing,
+        r.id, promptCode(p.idx), p.theme, r.repeat_idx, m.brand,
+        canon.canonical(m.brand), brandType(canon.norm(m.brand)), m.rank, m.framing,
       ]);
     }),
   ]));
+  if (dictionary.length > 0) {
+    root.file("04_master_dataset/dictionary.csv", toCsv([
+      ["canonical", "aliases", "status", "entry_version"],
+      ...dictionary.map((d) => [d.canonical, d.aliases.join("|"), d.status, d.version]),
+    ]));
+  }
 
   // ---------- 05: response library ----------
   for (const p of prompts) {
@@ -260,6 +333,18 @@ async function executiveSummary(
       target: fmtBrand(metrics.brands.find((b) => b.isTarget)!),
       first_named: `${pct(extra.fnRate)} (CI ${pct(extra.fnCi.low)}-${pct(extra.fnCi.high)}) — first brand in the answer ${extra.firstNamed} of ${extra.unbranded} times`,
       top_brands: metrics.brands.slice(0, 8).map(fmtBrand),
+      first_pick: metrics.firstPick
+        ? `${pct(metrics.firstPick.rate)} (CI ${pct(metrics.firstPick.ciLow)}-${pct(metrics.firstPick.ciHigh)}) — an answer crowns ${project.brand} as THE pick ${metrics.firstPick.count} of ${metrics.firstPick.of} times`
+        : "not coded in this run",
+      who_wins_instead: metrics.topPicks
+        ? metrics.topPicks.slice(0, 6).map((t) => `${t.brand}: ${t.picks} picks (${pct(t.shareOfDecided)})`)
+        : null,
+      arguments_lift: metrics.reasonLift
+        ? {
+            carrying_wins: metrics.reasonLift.slice(0, 4).map((r) => `${r.code} (+${(r.lift * 100).toFixed(0)} pts)`),
+            keeping_out: metrics.reasonLift.slice(-3).map((r) => `${r.code} (${(r.lift * 100).toFixed(0)} pts)`),
+          }
+        : null,
       themes: metrics.themes.map((t) => ({
         theme: t.theme,
         prompts: t.prompts,

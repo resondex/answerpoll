@@ -31,6 +31,11 @@ export async function driveRunChunk(
   if (!project) throw new Error(`project ${run.project_id} not found`);
   const prompts = await store.listPrompts(project.id);
   const knownBrands = [project.brand, ...project.competitors];
+  const extractionCtx = {
+    targetBrand: project.brand,
+    knownBrands,
+    reasonCodes: project.reason_taxonomy,
+  };
 
   if (run.status === "pending") await store.updateRunStatus(runId, "running");
 
@@ -64,13 +69,14 @@ export async function driveRunChunk(
       const task = pending[cursor++];
       try {
         const text = await provider.complete(task.promptText, run!.model);
-        const mentions = await provider.extractMentions(text, knownBrands);
+        const coding = await provider.extractCoding(text, extractionCtx);
         await store.insertResponse({
           runId,
           promptId: task.promptId,
           repeatIdx: task.repeatIdx,
           text,
-          mentions,
+          mentions: coding.mentions,
+          coding,
         });
         inserted++;
       } catch (err) {
@@ -86,6 +92,16 @@ export async function driveRunChunk(
   const remaining = pending.length - inserted;
   if (remaining === 0) {
     await store.updateRunStatus(runId, "complete", null);
+    // Feed unmatched brand names into the dictionary review queue.
+    try {
+      const mentions = await store.listMentionsForRun(runId);
+      await store.queueDictionaryCandidates(
+        project.id,
+        [...new Set(mentions.map((m) => m.brand))]
+      );
+    } catch (err) {
+      console.error("dictionary queue failed:", err);
+    }
     return "complete";
   }
   if (inserted > 0) return "continue";

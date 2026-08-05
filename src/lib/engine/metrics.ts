@@ -1,10 +1,13 @@
 import { store } from "../store";
 import type {
   BrandStats,
+  DictionaryEntry,
   Framing,
   MentionRow,
+  PromptBadge,
   PromptStats,
   PromptTheme,
+  ResponseRow,
   RunMetrics,
   ThemeStats,
 } from "../types";
@@ -29,6 +32,29 @@ export function wilson(k: number, n: number): { low: number; high: number } {
   return { low: Math.max(0, center - margin), high: Math.min(1, center + margin) };
 }
 
+/**
+ * Read-time canonicalizer built from the project dictionary: raw extracted
+ * names collapse onto canonical brands (aliases merged), so dictionary edits
+ * retroactively clean every run without re-coding.
+ */
+export function buildCanonicalizer(entries: DictionaryEntry[]) {
+  const aliasMap = new Map<string, string>(); // normalized alias -> canonical
+  for (const e of entries) {
+    if (e.status !== "active") continue;
+    aliasMap.set(e.canonical.trim().toLowerCase(), e.canonical);
+    for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), e.canonical);
+  }
+  return {
+    canonical(raw: string): string {
+      return aliasMap.get(raw.trim().toLowerCase()) ?? raw.trim();
+    },
+    norm(raw: string): string {
+      const c = aliasMap.get(raw.trim().toLowerCase());
+      return (c ?? raw).trim().toLowerCase();
+    },
+  };
+}
+
 export async function computeRunMetrics(
   runId: string
 ): Promise<RunMetrics | null> {
@@ -40,7 +66,11 @@ export async function computeRunMetrics(
     store.listMentionsForRun(runId),
   ]);
   const project = projectMaybe!;
-  const prompts = await store.listPrompts(project.id);
+  const [prompts, dictionary] = await Promise.all([
+    store.listPrompts(project.id),
+    store.getDictionary(project.id),
+  ]);
+  const canon = buildCanonicalizer(dictionary);
 
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const brandedPromptIds = new Set(
@@ -51,18 +81,20 @@ export async function computeRunMetrics(
   const unbranded = responses.filter((r) => !brandedPromptIds.has(r.prompt_id));
   const unbrandedIds = new Set(unbranded.map((r) => r.id));
 
-  const targetNorm = project.brand.trim().toLowerCase();
-  const competitorNorms = new Set(
-    project.competitors.map((c) => c.trim().toLowerCase())
-  );
+  const targetNorm = canon.norm(project.brand);
+  const competitorNorms = new Set(project.competitors.map((c) => canon.norm(c)));
 
-  // --- per-brand stats over unbranded responses ---
+  // --- per-brand stats over unbranded responses (canonicalized) ---
   const byBrand = new Map<string, { display: string; rows: MentionRow[] }>();
+  const mentionNorm = new Map<string, string>(); // mention id -> canonical norm
   for (const m of mentions) {
+    const norm = canon.norm(m.brand);
+    mentionNorm.set(m.id, norm);
     if (!unbrandedIds.has(m.response_id)) continue;
-    const entry = byBrand.get(m.brand_norm) ?? { display: m.brand, rows: [] };
+    const entry =
+      byBrand.get(norm) ?? { display: canon.canonical(m.brand), rows: [] };
     entry.rows.push(m);
-    byBrand.set(m.brand_norm, entry);
+    byBrand.set(norm, entry);
   }
   const totalMentions = [...byBrand.values()].reduce(
     (acc, e) => acc + e.rows.length,
@@ -70,7 +102,15 @@ export async function computeRunMetrics(
   );
 
   const brands: BrandStats[] = [...byBrand.entries()].map(([norm, entry]) => {
-    const k = entry.rows.length;
+    // Aliases may merge several mentions of one brand within an answer;
+    // count distinct answers, and take the best (lowest) rank per answer.
+    const perResponse = new Map<string, MentionRow>();
+    for (const row of entry.rows) {
+      const prev = perResponse.get(row.response_id);
+      if (!prev || row.rank < prev.rank) perResponse.set(row.response_id, row);
+    }
+    const rows = [...perResponse.values()];
+    const k = rows.length;
     const n = unbranded.length;
     const ci = wilson(k, n);
     const framing: Record<Framing, number> = {
@@ -78,7 +118,7 @@ export async function computeRunMetrics(
       mentioned: 0,
       negative: 0,
     };
-    for (const row of entry.rows) framing[row.framing as Framing]++;
+    for (const row of rows) framing[row.framing as Framing]++;
     return {
       brand: norm === targetNorm ? project.brand : entry.display,
       isTarget: norm === targetNorm,
@@ -87,9 +127,8 @@ export async function computeRunMetrics(
       mentionRate: n > 0 ? k / n : 0,
       ciLow: ci.low,
       ciHigh: ci.high,
-      avgRank:
-        k > 0 ? entry.rows.reduce((acc, r) => acc + r.rank, 0) / k : null,
-      shareOfVoice: totalMentions > 0 ? k / totalMentions : 0,
+      avgRank: k > 0 ? rows.reduce((acc, r) => acc + r.rank, 0) / k : null,
+      shareOfVoice: totalMentions > 0 ? entry.rows.length / totalMentions : 0,
       framing,
     };
   });
@@ -115,7 +154,10 @@ export async function computeRunMetrics(
   // --- per-prompt stats for the target brand ---
   const targetByResponse = new Map<string, MentionRow>();
   for (const m of mentions) {
-    if (m.brand_norm === targetNorm) targetByResponse.set(m.response_id, m);
+    if (mentionNorm.get(m.id) === targetNorm) {
+      const prev = targetByResponse.get(m.response_id);
+      if (!prev || m.rank < prev.rank) targetByResponse.set(m.response_id, m);
+    }
   }
   const promptStats: PromptStats[] = prompts.map((p) => {
     const rows = responses.filter((r) => r.prompt_id === p.id);
@@ -142,7 +184,6 @@ export async function computeRunMetrics(
     const themeResponses = ps.reduce((a, p) => a + p.responses, 0);
     const hits = ps.reduce((a, p) => a + p.targetMentions, 0);
     const ci = wilson(hits, themeResponses);
-    // Rank average weighted by how often the target appeared per prompt.
     const rankSum = ps.reduce(
       (a, p) => a + (p.targetAvgRank ?? 0) * p.targetMentions,
       0
@@ -172,6 +213,178 @@ export async function computeRunMetrics(
     })
   );
 
+  // ------------------------------------------------------------------
+  // Coded layer — present only for runs extracted with the full schema.
+  // ------------------------------------------------------------------
+  const codedRows = unbranded.filter((r) => r.outcome !== null);
+  const coded = codedRows.length > 0;
+
+  let firstPick: RunMetrics["firstPick"] = null;
+  let outcomes: RunMetrics["outcomes"] = null;
+  let topPicks: RunMetrics["topPicks"] = null;
+  let reasonLift: RunMetrics["reasonLift"] = null;
+  let promptGrid: RunMetrics["promptGrid"] = null;
+  let negatives: RunMetrics["negatives"] = null;
+  let positionDist: RunMetrics["positionDist"] = null;
+
+  if (coded) {
+    const isTargetPick = (r: ResponseRow) =>
+      r.top_pick_brand !== null && canon.norm(r.top_pick_brand) === targetNorm;
+
+    outcomes = {
+      pick: codedRows.filter((r) => r.outcome === "pick").length,
+      no_pick: codedRows.filter((r) => r.outcome === "no_pick").length,
+      clarification: codedRows.filter((r) => r.outcome === "clarification")
+        .length,
+    };
+
+    const wins = codedRows.filter(isTargetPick);
+    const fpCi = wilson(wins.length, codedRows.length);
+    firstPick = {
+      rate: codedRows.length > 0 ? wins.length / codedRows.length : 0,
+      ciLow: fpCi.low,
+      ciHigh: fpCi.high,
+      count: wins.length,
+      of: codedRows.length,
+    };
+
+    // Who wins instead — over decided answers.
+    const decided = codedRows.filter(
+      (r) => r.outcome === "pick" && r.top_pick_brand
+    );
+    const pickCounts = new Map<string, { display: string; n: number }>();
+    for (const r of decided) {
+      const norm = canon.norm(r.top_pick_brand!);
+      const e =
+        pickCounts.get(norm) ?? {
+          display: canon.canonical(r.top_pick_brand!),
+          n: 0,
+        };
+      e.n++;
+      pickCounts.set(norm, e);
+    }
+    topPicks = [...pickCounts.entries()]
+      .map(([norm, e]) => ({
+        brand: norm === targetNorm ? project.brand : e.display,
+        isTarget: norm === targetNorm,
+        isCompetitor: competitorNorms.has(norm),
+        picks: e.n,
+        shareOfDecided: decided.length > 0 ? e.n / decided.length : 0,
+      }))
+      .sort((a, b) => b.picks - a.picks);
+
+    // Reason-code lift — argument share in wins vs overall vs target-absent.
+    if (project.reason_taxonomy.length > 0) {
+      const reasonsOf = (r: ResponseRow) =>
+        new Set((r.reason_codes ?? "").split("|").filter(Boolean));
+      const absent = codedRows.filter((r) => !targetByResponse.has(r.id));
+      reasonLift = project.reason_taxonomy
+        .map((code) => {
+          const inAll = codedRows.filter((r) => reasonsOf(r).has(code)).length;
+          const inWins = wins.filter((r) => reasonsOf(r).has(code)).length;
+          const inAbsent = absent.filter((r) => reasonsOf(r).has(code)).length;
+          const shareAll = codedRows.length > 0 ? inAll / codedRows.length : 0;
+          const shareWins = wins.length > 0 ? inWins / wins.length : 0;
+          const shareAbsent = absent.length > 0 ? inAbsent / absent.length : 0;
+          return {
+            code,
+            n: inAll,
+            shareAll,
+            shareWins,
+            shareAbsent,
+            lift: shareWins - shareAll,
+          };
+        })
+        .filter((r) => r.n > 0)
+        .sort((a, b) => b.lift - a.lift);
+    }
+
+    // Prompt grid: modal pick per prompt + stability + badge.
+    promptGrid = prompts
+      .filter((p) => p.theme !== "branded")
+      .map((p) => {
+        const rows = codedRows.filter((r) => r.prompt_id === p.id);
+        const decidedRows = rows.filter(
+          (r) => r.outcome === "pick" && r.top_pick_brand
+        );
+        const counts = new Map<string, { display: string; n: number }>();
+        for (const r of decidedRows) {
+          const norm = canon.norm(r.top_pick_brand!);
+          const e =
+            counts.get(norm) ?? {
+              display: canon.canonical(r.top_pick_brand!),
+              n: 0,
+            };
+          e.n++;
+          counts.set(norm, e);
+        }
+        let modalNorm: string | null = null;
+        let modalN = 0;
+        let tie = false;
+        for (const [norm, e] of counts) {
+          if (e.n > modalN) {
+            modalNorm = norm;
+            modalN = e.n;
+            tie = false;
+          } else if (e.n === modalN) tie = true;
+        }
+        const named = rows.filter((r) => targetByResponse.has(r.id)).length;
+        const targetPicks = rows.filter(isTargetPick).length;
+        const badge: PromptBadge =
+          named === 0
+            ? "absent"
+            : !tie &&
+                modalNorm === targetNorm &&
+                decidedRows.length > 0 &&
+                modalN / decidedRows.length >= 0.5
+              ? "win"
+              : "contested";
+        return {
+          promptId: p.id,
+          text: p.text,
+          theme: p.theme,
+          answers: rows.length,
+          decided: decidedRows.length,
+          modalPick:
+            modalNorm && !tie
+              ? modalNorm === targetNorm
+                ? project.brand
+                : counts.get(modalNorm)!.display
+              : null,
+          modalShare:
+            modalNorm && !tie && decidedRows.length > 0
+              ? modalN / decidedRows.length
+              : null,
+          targetNamed: named,
+          targetPicks,
+          badge,
+        };
+      });
+
+    // Negatives: answers framing the target negatively, with the quote.
+    negatives = responses
+      .filter((r) => {
+        const tm = targetByResponse.get(r.id);
+        return tm?.framing === "negative";
+      })
+      .map((r) => ({
+        promptText: promptById.get(r.prompt_id)?.text ?? "",
+        quote: r.focus_quote,
+        interpretation: r.focus_interpretation,
+      }));
+
+    // Position distribution among answers where the target appears.
+    const ranks = [...targetByResponse.entries()]
+      .filter(([id]) => unbrandedIds.has(id))
+      .map(([, m]) => m.rank);
+    positionDist = {
+      r1: ranks.filter((r) => r === 1).length,
+      r2: ranks.filter((r) => r === 2).length,
+      r3: ranks.filter((r) => r === 3).length,
+      r4plus: ranks.filter((r) => r >= 4).length,
+    };
+  }
+
   return {
     runId,
     model: run.model,
@@ -181,5 +394,14 @@ export async function computeRunMetrics(
     prompts: promptStats,
     themes,
     verbatims,
+    coded,
+    firstPick,
+    outcomes,
+    positionDist,
+    topPicks,
+    reasonLift,
+    promptGrid,
+    negatives,
+    dictionaryVersion: project.dictionary_version,
   };
 }
