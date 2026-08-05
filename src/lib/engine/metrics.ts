@@ -42,11 +42,19 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
   // display_name is a renameable label that never affects matching, so
   // scheduled runs stay comparable across renames.
   const aliasMap = new Map<string, { canonical: string; display: string }>();
+  const rejectedSet = new Set<string>();
   for (const e of entries) {
-    if (e.status !== "active") continue;
-    const value = { canonical: e.canonical, display: e.display_name ?? e.canonical };
-    aliasMap.set(e.canonical.trim().toLowerCase(), value);
-    for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), value);
+    if (e.status === "active") {
+      const value = {
+        canonical: e.canonical,
+        display: e.display_name ?? e.canonical,
+      };
+      aliasMap.set(e.canonical.trim().toLowerCase(), value);
+      for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), value);
+    } else if (e.status === "rejected") {
+      rejectedSet.add(e.canonical.trim().toLowerCase());
+      for (const a of e.aliases) rejectedSet.add(a.trim().toLowerCase());
+    }
   }
   return {
     /** User-facing label for a raw extracted name. */
@@ -57,6 +65,16 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
     norm(raw: string): string {
       const hit = aliasMap.get(raw.trim().toLowerCase());
       return (hit?.canonical ?? raw).trim().toLowerCase();
+    },
+    /**
+     * Rejected = reviewed and ruled out of the category. Suppressed from
+     * displayed metrics and analysis tables; the raw and master data keep
+     * everything. An active mapping always wins (merged names live on as
+     * aliases of their target, not as rejections).
+     */
+    isRejected(raw: string): boolean {
+      const key = raw.trim().toLowerCase();
+      return !aliasMap.has(key) && rejectedSet.has(key);
     },
   };
 }
@@ -97,6 +115,7 @@ export async function computeRunMetrics(
     const norm = canon.norm(m.brand);
     mentionNorm.set(m.id, norm);
     if (!unbrandedIds.has(m.response_id)) continue;
+    if (canon.isRejected(m.brand)) continue; // reviewed out of the category
     const entry =
       byBrand.get(norm) ?? { display: canon.canonical(m.brand), rows: [] };
     entry.rows.push(m);
@@ -260,6 +279,7 @@ export async function computeRunMetrics(
     );
     const pickCounts = new Map<string, { display: string; n: number }>();
     for (const r of decided) {
+      if (canon.isRejected(r.top_pick_brand!)) continue;
       const norm = canon.norm(r.top_pick_brand!);
       const e =
         pickCounts.get(norm) ?? {
@@ -315,6 +335,7 @@ export async function computeRunMetrics(
         );
         const counts = new Map<string, { display: string; n: number }>();
         for (const r of decidedRows) {
+          if (canon.isRejected(r.top_pick_brand!)) continue;
           const norm = canon.norm(r.top_pick_brand!);
           const e =
             counts.get(norm) ?? {
