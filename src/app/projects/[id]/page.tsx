@@ -118,14 +118,25 @@ export default function ProjectPage() {
             ← all trackers
           </Link>
         </div>
-        <p className="text-sm text-ink-2 mt-1.5">
-          <span className="font-medium text-ink">{project.brand}</span>
-          {project.competitors.length > 0 && (
-            <> vs. {project.competitors.join(", ")}</>
-          )}{" "}
-          · {project.category}
-          {project.audience ? ` · ${project.audience}` : ""}
-        </p>
+        <div className="flex items-baseline justify-between gap-4 flex-wrap mt-1.5">
+          <p className="text-sm text-ink-2">
+            <span className="font-medium text-ink">{project.brand}</span>
+            {project.competitors.length > 0 && (
+              <> vs. {project.competitors.join(", ")}</>
+            )}{" "}
+            · {project.category}
+            {project.audience ? ` · ${project.audience}` : ""}
+          </p>
+          {runs.some((r) => r.status === "complete") && (
+            <a
+              href={`/api/projects/${id}/study`}
+              className="text-sm font-semibold text-primary hover:opacity-80"
+              title="Complete deliverable: executive summary, scorecard, analysis tables, coded dataset, response library, methodology"
+            >
+              Download study (.zip) ↓
+            </a>
+          )}
+        </div>
       </div>
 
       <section className="card p-6">
