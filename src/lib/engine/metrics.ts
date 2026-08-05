@@ -38,19 +38,25 @@ export function wilson(k: number, n: number): { low: number; high: number } {
  * retroactively clean every run without re-coding.
  */
 export function buildCanonicalizer(entries: DictionaryEntry[]) {
-  const aliasMap = new Map<string, string>(); // normalized alias -> canonical
+  // Match strings (canonical + aliases) are fossilized and drive identity;
+  // display_name is a renameable label that never affects matching, so
+  // scheduled runs stay comparable across renames.
+  const aliasMap = new Map<string, { canonical: string; display: string }>();
   for (const e of entries) {
     if (e.status !== "active") continue;
-    aliasMap.set(e.canonical.trim().toLowerCase(), e.canonical);
-    for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), e.canonical);
+    const value = { canonical: e.canonical, display: e.display_name ?? e.canonical };
+    aliasMap.set(e.canonical.trim().toLowerCase(), value);
+    for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), value);
   }
   return {
+    /** User-facing label for a raw extracted name. */
     canonical(raw: string): string {
-      return aliasMap.get(raw.trim().toLowerCase()) ?? raw.trim();
+      return aliasMap.get(raw.trim().toLowerCase())?.display ?? raw.trim();
     },
+    /** Stable identity key — from the fossilized canonical, never the label. */
     norm(raw: string): string {
-      const c = aliasMap.get(raw.trim().toLowerCase());
-      return (c ?? raw).trim().toLowerCase();
+      const hit = aliasMap.get(raw.trim().toLowerCase());
+      return (hit?.canonical ?? raw).trim().toLowerCase();
     },
   };
 }

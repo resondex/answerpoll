@@ -66,10 +66,12 @@ function ensureSchema(): Promise<void> {
         project_id TEXT NOT NULL REFERENCES projects(id),
         canonical TEXT NOT NULL,
         aliases TEXT NOT NULL DEFAULT '[]',
+        display_name TEXT,
         status TEXT NOT NULL DEFAULT 'active',
         version INTEGER NOT NULL DEFAULT 1,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
+      await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS display_name TEXT`;
       await sql`CREATE TABLE IF NOT EXISTS user_plans (
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
@@ -166,6 +168,7 @@ function rowToDictEntry(r: Record<string, unknown>): DictionaryEntry {
     project_id: r.project_id as string,
     canonical: r.canonical as string,
     aliases: JSON.parse((r.aliases as string) ?? "[]"),
+    display_name: (r.display_name as string | null) ?? null,
     status: r.status as DictionaryEntry["status"],
     version: (r.version as number) ?? 1,
     created_at: iso(r.created_at)!,
@@ -219,11 +222,14 @@ export const pgStore: Store = {
     const sql = await db();
     const id = input.id ?? crypto.randomUUID();
     const aliases = JSON.stringify(input.aliases);
-    await sql`INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
-      VALUES (${id}, ${input.projectId}, ${input.canonical}, ${aliases}, ${input.status})
+    const display = input.displayName ?? null;
+    await sql`INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status, display_name)
+      VALUES (${id}, ${input.projectId}, ${input.canonical}, ${aliases}, ${input.status}, ${display})
       ON CONFLICT (id) DO UPDATE SET
         canonical = ${input.canonical}, aliases = ${aliases},
-        status = ${input.status}, version = dictionary_entries.version + 1`;
+        status = ${input.status},
+        display_name = COALESCE(${display}, dictionary_entries.display_name),
+        version = dictionary_entries.version + 1`;
     const rows = await sql`SELECT * FROM dictionary_entries WHERE id = ${id}`;
     return rowToDictEntry(rows[0]);
   },

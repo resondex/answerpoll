@@ -72,8 +72,11 @@ export interface ResponseRow {
 export interface DictionaryEntry {
   id: string;
   project_id: string;
+  /** Fossilized match string — never destroyed, keeps runs comparable. */
   canonical: string;
-  aliases: string[]; // normalized lowercase
+  aliases: string[]; // normalized lowercase — also fossilized match strings
+  /** User-facing label; renameable at any time without touching matching. */
+  display_name: string | null;
   status: "active" | "pending" | "rejected";
   version: number;
   created_at: string;
@@ -261,6 +264,7 @@ export interface Store {
     canonical: string;
     aliases: string[];
     status: DictionaryEntry["status"];
+    displayName?: string | null;
   }): Promise<DictionaryEntry>;
   /** Queue unmatched raw names as pending entries (skip known names). */
   queueDictionaryCandidates(projectId: string, names: string[]): Promise<void>;

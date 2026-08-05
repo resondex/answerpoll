@@ -33,6 +33,19 @@ export default function ProjectPage() {
   const [trend, setTrend] = useState<ProjectTrend | null>(null);
   const [dict, setDict] = useState<DictionaryEntry[]>([]);
   const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({});
+  const [suggestions, setSuggestions] = useState<
+    | {
+        entryId: string;
+        name: string;
+        action: "merge" | "approve" | "ignore";
+        mergeIntoId: string | null;
+        mergeIntoName: string | null;
+        rationale: string;
+      }[]
+    | null
+  >(null);
+  const [suggesting2, setSuggesting2] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
@@ -61,6 +74,38 @@ export default function ProjectPage() {
     const dr = await fetch(`/api/projects/${id}/dictionary`);
     if (dr.ok) setDict((await dr.json()).entries ?? []);
   }, [id]);
+
+  async function suggestDispositions() {
+    setSuggesting2(true);
+    const res = await fetch(`/api/projects/${id}/dictionary/suggest`, {
+      method: "POST",
+    });
+    setSuggesting2(false);
+    if (res.ok) setSuggestions((await res.json()).suggestions);
+  }
+
+  async function applySuggestions() {
+    if (!suggestions) return;
+    setApplying(true);
+    const actions = suggestions
+      .filter((s) => s.action !== "ignore" || true)
+      .map((s) =>
+        s.action === "merge" && s.mergeIntoId
+          ? { entryId: s.entryId, action: "merge", mergeIntoId: s.mergeIntoId }
+          : s.action === "approve"
+            ? { entryId: s.entryId, action: "approve" }
+            : { entryId: s.entryId, action: "reject" }
+      );
+    await fetch(`/api/projects/${id}/dictionary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actions }),
+    });
+    setApplying(false);
+    setSuggestions(null);
+    const dr = await fetch(`/api/projects/${id}/dictionary`);
+    if (dr.ok) setDict((await dr.json()).entries ?? []);
+  }
 
   async function dictAction(
     entryId: string,
@@ -284,12 +329,84 @@ export default function ProjectPage() {
 
       {dict.some((e) => e.status === "pending") && (
         <section className="card p-6">
-          <h2 className="section-label mb-1">Brand dictionary — review queue</h2>
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="section-label mb-1">
+              Brand dictionary — review queue
+            </h2>
+            <button
+              type="button"
+              onClick={suggestDispositions}
+              disabled={suggesting2}
+              className="text-[13px] font-medium text-primary hover:opacity-80"
+            >
+              {suggesting2 ? "Reviewing…" : "Suggest dispositions"}
+            </button>
+          </div>
           <p className="text-[13px] text-ink-3 mb-4">
             New names the answers surfaced. Approve as a distinct brand, merge
             as an alias of a known one, or reject. Decisions apply
-            retroactively to every run - metrics recompute from the dictionary.
+            retroactively to every run - the raw extracted names are never
+            changed, so everything is reversible.
           </p>
+          {suggestions && (
+            <div className="mb-5 rounded-lg border border-primary/30 bg-primary-soft/40 p-4">
+              <div className="flex items-baseline justify-between mb-2">
+                <span className="text-sm font-semibold">
+                  Proposed dispositions ({suggestions.length})
+                </span>
+                <span className="flex gap-4">
+                  <button
+                    type="button"
+                    onClick={applySuggestions}
+                    disabled={applying}
+                    className="btn-primary px-3 py-1.5 text-[13px]"
+                  >
+                    {applying ? "Applying…" : "Apply all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSuggestions(null)}
+                    className="text-[13px] text-ink-3 hover:text-ink"
+                  >
+                    Discard
+                  </button>
+                </span>
+              </div>
+              <div className="grid gap-1 max-h-72 overflow-y-auto text-[13px]">
+                {suggestions.map((s, i) => (
+                  <div key={s.entryId} className="flex items-center gap-2">
+                    <span className="font-medium w-44 truncate">{s.name}</span>
+                    <select
+                      className="input w-28 text-xs"
+                      value={s.action}
+                      onChange={(e) =>
+                        setSuggestions(
+                          suggestions.map((x, j) =>
+                            j === i
+                              ? {
+                                  ...x,
+                                  action: e.target.value as typeof x.action,
+                                }
+                              : x
+                          )
+                        )
+                      }
+                    >
+                      <option value="merge">merge</option>
+                      <option value="approve">approve</option>
+                      <option value="ignore">ignore</option>
+                    </select>
+                    <span className="text-ink-3 truncate flex-1">
+                      {s.action === "merge" && s.mergeIntoName
+                        ? `→ ${s.mergeIntoName} · `
+                        : ""}
+                      {s.rationale}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid gap-2">
             {dict
               .filter((e) => e.status === "pending")

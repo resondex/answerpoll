@@ -43,6 +43,7 @@ function createDb(): Database.Database {
       project_id TEXT NOT NULL REFERENCES projects(id),
       canonical TEXT NOT NULL,
       aliases TEXT NOT NULL DEFAULT '[]',
+      display_name TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -135,6 +136,12 @@ function createDb(): Database.Database {
       "ALTER TABLE projects ADD COLUMN dictionary_version INTEGER NOT NULL DEFAULT 1"
     );
   }
+  const dictCols = db.prepare("PRAGMA table_info(dictionary_entries)").all() as {
+    name: string;
+  }[];
+  if (dictCols.length > 0 && !dictCols.some((c) => c.name === "display_name")) {
+    db.exec("ALTER TABLE dictionary_entries ADD COLUMN display_name TEXT");
+  }
   const respCols = db.prepare("PRAGMA table_info(responses)").all() as {
     name: string;
   }[];
@@ -187,6 +194,7 @@ function parseDictEntry(row: Record<string, unknown>): DictionaryEntry {
     project_id: row.project_id as string,
     canonical: row.canonical as string,
     aliases: JSON.parse((row.aliases as string) ?? "[]"),
+    display_name: (row.display_name as string | null) ?? null,
     status: row.status as DictionaryEntry["status"],
     version: (row.version as number) ?? 1,
     created_at: row.created_at as string,
@@ -241,18 +249,21 @@ export const sqliteStore: Store = {
     const id = input.id ?? crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status, display_name)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            canonical = excluded.canonical, aliases = excluded.aliases,
-           status = excluded.status, version = dictionary_entries.version + 1`
+           status = excluded.status,
+           display_name = COALESCE(excluded.display_name, dictionary_entries.display_name),
+           version = dictionary_entries.version + 1`
       )
       .run(
         id,
         input.projectId,
         input.canonical,
         JSON.stringify(input.aliases),
-        input.status
+        input.status,
+        input.displayName ?? null
       );
     const row = getDb()
       .prepare("SELECT * FROM dictionary_entries WHERE id = ?")
