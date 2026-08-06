@@ -23,6 +23,20 @@ export async function GET(
   });
 }
 
+/** Delete a tracker and everything under it. Irreversible. */
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireAuth();
+  if (auth instanceof NextResponse) return auth;
+  const { id } = await params;
+  const project = await requireProject(id, auth);
+  if (project instanceof NextResponse) return project;
+  await store.deleteProject(id);
+  return NextResponse.json({ ok: true });
+}
+
 const patchSchema = z.object({
   schedule: z.enum(["none", "weekly", "monthly"]),
 });

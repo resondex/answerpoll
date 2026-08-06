@@ -194,15 +194,33 @@ export default function ProjectPage() {
             · {project.category}
             {project.audience ? ` · ${project.audience}` : ""}
           </p>
-          {runs.some((r) => r.status === "complete") && (
-            <a
-              href={`/api/projects/${id}/study`}
-              className="text-sm font-semibold text-primary hover:opacity-80"
-              title="Complete deliverable: executive summary, scorecard, analysis tables, coded dataset, response library, methodology"
+          <span className="flex items-center gap-4">
+            {runs.some((r) => r.status === "complete") && (
+              <a
+                href={`/api/projects/${id}/study`}
+                className="text-sm font-semibold text-primary hover:opacity-80"
+                title="Complete deliverable: executive summary, scorecard, analysis tables, coded dataset, response library, methodology"
+              >
+                Download study (.zip) ↓
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={async () => {
+                if (
+                  !confirm(
+                    `Delete the "${project.name}" tracker and all its runs? This cannot be undone.`
+                  )
+                )
+                  return;
+                await fetch(`/api/projects/${id}`, { method: "DELETE" });
+                window.location.href = "/app";
+              }}
+              className="text-[13px] font-medium text-ink-3 hover:text-danger"
             >
-              Download study (.zip) ↓
-            </a>
-          )}
+              Delete tracker
+            </button>
+          </span>
         </div>
       </div>
 

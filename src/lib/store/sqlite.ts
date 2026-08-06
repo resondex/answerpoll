@@ -574,6 +574,27 @@ export const sqliteStore: Store = {
     del();
   },
 
+  async deleteProject(projectId) {
+    const db = getDb();
+    const del = db.transaction(() => {
+      db.prepare(
+        `DELETE FROM mentions WHERE response_id IN (
+           SELECT r.id FROM responses r JOIN runs ru ON ru.id = r.run_id
+           WHERE ru.project_id = ?)`
+      ).run(projectId);
+      db.prepare(
+        "DELETE FROM responses WHERE run_id IN (SELECT id FROM runs WHERE project_id = ?)"
+      ).run(projectId);
+      db.prepare("DELETE FROM runs WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM prompts WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM dictionary_entries WHERE project_id = ?").run(
+        projectId
+      );
+      db.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+    });
+    del();
+  },
+
   async countResponses(runId) {
     const row = getDb()
       .prepare("SELECT COUNT(*) AS n FROM responses WHERE run_id = ?")
