@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import TrendChart from "./trend_chart";
 import RunResults from "./run_results";
+import IdentifyTab from "./identify_tab";
 import type {
   DictionaryEntry,
   Project,
@@ -44,25 +45,11 @@ function ProjectDashboard() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [trend, setTrend] = useState<ProjectTrend | null>(null);
   const [dict, setDict] = useState<DictionaryEntry[]>([]);
-  const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({});
-  const [suggestions, setSuggestions] = useState<
-    | {
-        entryId: string;
-        name: string;
-        action: "merge" | "approve" | "ignore";
-        mergeIntoId: string | null;
-        mergeIntoName: string | null;
-        rationale: string;
-      }[]
-    | null
-  >(null);
-  const [suggesting2, setSuggesting2] = useState(false);
-  const [applying, setApplying] = useState(false);
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
   const [openModal, setOpenModal] = useState<OpenModal>(null);
-  const [dictTab, setDictTab] = useState<"merge" | "analyze">("merge");
+  const [dictTab, setDictTab] = useState<"identify" | "analyze">("identify");
   // Example answers revealed per prompt in the prompt-health view.
   const [examples, setExamples] = useState<
     Record<string, string[] | "loading">
@@ -107,47 +94,11 @@ function ProjectDashboard() {
     setDictVersion((v) => v + 1);
   }
 
-  async function suggestDispositions() {
-    setSuggesting2(true);
-    const res = await fetch(`/api/projects/${id}/dictionary/suggest`, {
-      method: "POST",
-    });
-    setSuggesting2(false);
-    if (res.ok) setSuggestions((await res.json()).suggestions);
-  }
-
-  async function applySuggestions() {
-    if (!suggestions) return;
-    setApplying(true);
-    const actions = suggestions.map((s) =>
-      s.action === "merge" && s.mergeIntoId
-        ? { entryId: s.entryId, action: "merge", mergeIntoId: s.mergeIntoId }
-        : s.action === "approve"
-          ? { entryId: s.entryId, action: "approve" }
-          : { entryId: s.entryId, action: "reject" }
-    );
+  async function dictAction(entryId: string, action: "approve" | "reject") {
     await fetch(`/api/projects/${id}/dictionary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actions }),
-    });
-    setApplying(false);
-    setSuggestions(null);
-    await refreshDict();
-  }
-
-  async function dictAction(
-    entryId: string,
-    action: "approve" | "reject" | "merge"
-  ) {
-    await fetch(`/api/projects/${id}/dictionary`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        entryId,
-        action,
-        mergeIntoId: action === "merge" ? mergeTargets[entryId] : undefined,
-      }),
+      body: JSON.stringify({ entryId, action }),
     });
     await refreshDict();
   }
@@ -289,7 +240,7 @@ function ProjectDashboard() {
           label="Brand dictionary"
           bubble={pendingDict > 0 ? pendingDict : null}
           onClick={() => {
-            setDictTab("merge");
+            setDictTab("identify");
             setOpenModal("dictionary");
           }}
         />
@@ -515,7 +466,10 @@ function ProjectDashboard() {
           <div className="mb-4 flex gap-1 border-b border-line">
             {(
               [
-                ["merge", `Merge${pendingDict > 0 ? ` (${pendingDict})` : ""}`],
+                [
+                  "identify",
+                  `Identify${pendingDict > 0 ? ` (${pendingDict})` : ""}`,
+                ],
                 ["analyze", "Analyze"],
               ] as const
             ).map(([tab, label]) => (
@@ -533,148 +487,8 @@ function ProjectDashboard() {
               </button>
             ))}
           </div>
-          {dictTab === "merge" && (
-            <>
-              <p className="text-[13px] text-ink-3 mb-4 -mt-1">
-                New names the answers surfaced. Approve as a distinct brand,
-                merge as an alias of a known one, or reject. Decisions apply
-                retroactively to every run — the raw extracted names are never
-                changed, so everything is reversible.
-              </p>
-              {pendingDict > 0 && (
-                <div className="mb-4">
-                  <button
-                    type="button"
-                    onClick={suggestDispositions}
-                    disabled={suggesting2}
-                    className="btn-primary px-3 py-1.5 text-[13px]"
-                  >
-                    {suggesting2
-                      ? "Reviewing…"
-                      : `Suggest dispositions for all ${pendingDict}`}
-                  </button>
-                </div>
-              )}
-          {suggestions && (
-            <div className="mb-5 rounded-lg border border-primary/30 bg-primary-soft/40 p-4">
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-sm font-semibold">
-                  Proposed dispositions ({suggestions.length})
-                </span>
-                <span className="flex gap-4">
-                  <button
-                    type="button"
-                    onClick={applySuggestions}
-                    disabled={applying}
-                    className="btn-primary px-3 py-1.5 text-[13px]"
-                  >
-                    {applying ? "Applying…" : "Apply all"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSuggestions(null)}
-                    className="text-[13px] text-ink-3 hover:text-ink"
-                  >
-                    Discard
-                  </button>
-                </span>
-              </div>
-              <div className="grid gap-1 max-h-72 overflow-y-auto text-[13px]">
-                {suggestions.map((s, i) => (
-                  <div key={s.entryId} className="flex items-center gap-2">
-                    <span className="font-medium w-44 truncate">{s.name}</span>
-                    <select
-                      className="input w-28 text-xs"
-                      value={s.action}
-                      onChange={(e) =>
-                        setSuggestions(
-                          suggestions.map((x, j) =>
-                            j === i
-                              ? {
-                                  ...x,
-                                  action: e.target.value as typeof x.action,
-                                }
-                              : x
-                          )
-                        )
-                      }
-                    >
-                      <option value="merge">merge</option>
-                      <option value="approve">approve</option>
-                      <option value="ignore">ignore</option>
-                    </select>
-                    <span className="text-ink-3 truncate flex-1">
-                      {s.action === "merge" && s.mergeIntoName
-                        ? `→ ${s.mergeIntoName} · `
-                        : ""}
-                      {s.rationale}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {pendingDict > 0 ? (
-            <div className="grid gap-2">
-              {dict
-                .filter((e) => e.status === "pending")
-                .map((e) => (
-                  <div
-                    key={e.id}
-                    className="flex flex-wrap items-center gap-2 text-sm border-b border-line/60 pb-2"
-                  >
-                    <span className="font-medium min-w-40">{e.canonical}</span>
-                    <span className="flex-1" />
-                    <button
-                      type="button"
-                      onClick={() => dictAction(e.id, "approve")}
-                      className="text-[13px] font-medium text-success hover:opacity-80"
-                    >
-                      Approve as brand
-                    </button>
-                    <select
-                      className="input w-40 text-xs"
-                      value={mergeTargets[e.id] ?? ""}
-                      onChange={(ev) =>
-                        setMergeTargets({
-                          ...mergeTargets,
-                          [e.id]: ev.target.value,
-                        })
-                      }
-                    >
-                      <option value="">merge into…</option>
-                      {dict
-                        .filter((x) => x.status === "active")
-                        .map((x) => (
-                          <option key={x.id} value={x.id}>
-                            {x.canonical}
-                          </option>
-                        ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => dictAction(e.id, "merge")}
-                      disabled={!mergeTargets[e.id]}
-                      className="text-[13px] font-medium text-primary hover:opacity-80 disabled:opacity-40"
-                    >
-                      Merge
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => dictAction(e.id, "reject")}
-                      className="text-[13px] font-medium text-ink-3 hover:text-danger"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                ))}
-            </div>
-          ) : (
-            <p className="text-sm text-ink-3 py-2">
-              No names waiting for review — new ones queue here after each run.
-            </p>
-          )}
-            </>
+          {dictTab === "identify" && (
+            <IdentifyTab projectId={id} dict={dict} onApplied={refreshDict} />
           )}
           {dictTab === "analyze" && (
             <>

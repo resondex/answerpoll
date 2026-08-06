@@ -20,24 +20,11 @@ export async function GET(
 }
 
 const actionSchema = z.object({
-  entryId: z.string().min(1).optional(),
-  action: z.enum([
-    "approve",
-    "reject",
-    "merge",
-    "merge_other",
-    "rename",
-    "unalias",
-    "move_alias",
-    "confirm",
-  ]),
+  entryId: z.string().min(1),
+  action: z.enum(["approve", "reject", "merge", "rename", "unalias"]),
   mergeIntoId: z.string().min(1).optional(),
   displayName: z.string().trim().min(1).max(80).optional(),
   alias: z.string().trim().min(1).optional(),
-  /** move_alias: where the alias goes — an active entry, Other, or Ignore. */
-  to: z.enum(["entry", "other", "ignore"]).optional(),
-  /** confirm: names the user has signed off on in the Identify view. */
-  names: z.array(z.string().trim().min(1)).max(500).optional(),
 });
 
 const batchSchema = z.object({
@@ -46,101 +33,10 @@ const batchSchema = z.object({
 
 type Action = z.infer<typeof actionSchema>;
 
-/** The catch-all analyzable grouping. Its label is fixed — never renamed. */
-const OTHER_CANONICAL = "Other";
-
-async function ensureOtherEntry(projectId: string) {
-  const entries = await store.getDictionary(projectId);
-  const other = entries.find(
-    (e) => e.canonical === OTHER_CANONICAL && e.status !== "pending"
-  );
-  if (other) {
-    if (other.status !== "active") {
-      await store.upsertDictionaryEntry({
-        id: other.id,
-        projectId,
-        canonical: other.canonical,
-        aliases: other.aliases,
-        status: "active",
-      });
-    }
-    return other;
-  }
-  return store.upsertDictionaryEntry({
-    id: null,
-    projectId,
-    canonical: OTHER_CANONICAL,
-    aliases: [],
-    status: "active",
-  });
-}
-
 async function applyAction(projectId: string, a: Action): Promise<string | null> {
-  if (a.action === "confirm") {
-    if (!a.names || a.names.length === 0) return "confirm needs names";
-    await store.confirmDictionaryNames(projectId, a.names);
-    return null;
-  }
-
   const entries = await store.getDictionary(projectId);
   const entry = entries.find((e) => e.id === a.entryId);
   if (!entry) return `entry not found: ${a.entryId}`;
-
-  if (a.action === "merge_other") {
-    const other = await ensureOtherEntry(projectId);
-    if (other.id === entry.id) return null;
-    return applyAction(projectId, {
-      entryId: entry.id,
-      action: "merge",
-      mergeIntoId: other.id,
-    });
-  }
-
-  if (a.action === "move_alias") {
-    // Atomic re-file of one alias: detach from its entry, land it wherever
-    // the user dropped it. The fossilized string itself is never destroyed.
-    if (!a.alias) return "move_alias needs alias";
-    const norm = a.alias.trim().toLowerCase();
-    if (!entry.aliases.includes(norm)) return `alias not on entry: ${a.alias}`;
-    await store.upsertDictionaryEntry({
-      id: entry.id,
-      projectId,
-      canonical: entry.canonical,
-      aliases: entry.aliases.filter((x) => x !== norm),
-      status: entry.status,
-    });
-    if (a.to === "entry" || a.to === undefined) {
-      const into = entries.find((e) => e.id === a.mergeIntoId);
-      if (!into || into.status !== "active")
-        return `move_alias target must be active: ${a.mergeIntoId}`;
-      await store.upsertDictionaryEntry({
-        id: into.id,
-        projectId,
-        canonical: into.canonical,
-        aliases: [...new Set([...into.aliases, norm])],
-        status: "active",
-      });
-    } else if (a.to === "other") {
-      const other = await ensureOtherEntry(projectId);
-      await store.upsertDictionaryEntry({
-        id: other.id,
-        projectId,
-        canonical: other.canonical,
-        aliases: [...new Set([...other.aliases, norm])],
-        status: "active",
-      });
-    } else {
-      // to === "ignore": the name becomes its own rejected entry.
-      await store.upsertDictionaryEntry({
-        id: null,
-        projectId,
-        canonical: a.alias.trim(),
-        aliases: [],
-        status: "rejected",
-      });
-    }
-    return null;
-  }
 
   if (a.action === "approve") {
     await store.upsertDictionaryEntry({

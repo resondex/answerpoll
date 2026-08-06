@@ -45,6 +45,7 @@ function createDb(): Database.Database {
       aliases TEXT NOT NULL DEFAULT '[]',
       display_name TEXT,
       status TEXT NOT NULL DEFAULT 'active',
+      confirmed_aliases TEXT NOT NULL DEFAULT '[]',
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -146,6 +147,14 @@ function createDb(): Database.Database {
   if (dictCols.length > 0 && !dictCols.some((c) => c.name === "display_name")) {
     db.exec("ALTER TABLE dictionary_entries ADD COLUMN display_name TEXT");
   }
+  if (
+    dictCols.length > 0 &&
+    !dictCols.some((c) => c.name === "confirmed_aliases")
+  ) {
+    db.exec(
+      "ALTER TABLE dictionary_entries ADD COLUMN confirmed_aliases TEXT NOT NULL DEFAULT '[]'"
+    );
+  }
   const promptCols = db.prepare("PRAGMA table_info(prompts)").all() as {
     name: string;
   }[];
@@ -213,6 +222,7 @@ function parseDictEntry(row: Record<string, unknown>): DictionaryEntry {
     aliases: JSON.parse((row.aliases as string) ?? "[]"),
     display_name: (row.display_name as string | null) ?? null,
     status: row.status as DictionaryEntry["status"],
+    confirmed: JSON.parse((row.confirmed_aliases as string) ?? "[]"),
     version: (row.version as number) ?? 1,
     created_at: row.created_at as string,
   };
@@ -260,6 +270,30 @@ export const sqliteStore: Store = {
         )
         .all(projectId) as Record<string, unknown>[]
     ).map(parseDictEntry);
+  },
+
+  async confirmDictionaryNames(projectId, names) {
+    const db = getDb();
+    const norms = new Set(names.map((n) => n.trim().toLowerCase()));
+    const rows = db
+      .prepare("SELECT * FROM dictionary_entries WHERE project_id = ?")
+      .all(projectId) as Record<string, unknown>[];
+    const update = db.prepare(
+      "UPDATE dictionary_entries SET confirmed_aliases = ? WHERE id = ?"
+    );
+    const apply = db.transaction(() => {
+      for (const row of rows) {
+        const e = parseDictEntry(row);
+        const owned = [e.canonical.trim().toLowerCase(), ...e.aliases];
+        const add = owned.filter((n) => norms.has(n));
+        if (add.length === 0) continue;
+        const next = [...new Set([...e.confirmed, ...add])];
+        if (next.length !== e.confirmed.length) {
+          update.run(JSON.stringify(next), e.id);
+        }
+      }
+    });
+    apply();
   },
 
   async insertDictionaryEntries(projectId, entries) {

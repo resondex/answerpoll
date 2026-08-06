@@ -72,6 +72,7 @@ function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS display_name TEXT`;
+      await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS confirmed_aliases TEXT NOT NULL DEFAULT '[]'`;
       await sql`CREATE TABLE IF NOT EXISTS user_plans (
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
@@ -174,6 +175,7 @@ function rowToDictEntry(r: Record<string, unknown>): DictionaryEntry {
     aliases: JSON.parse((r.aliases as string) ?? "[]"),
     display_name: (r.display_name as string | null) ?? null,
     status: r.status as DictionaryEntry["status"],
+    confirmed: JSON.parse((r.confirmed_aliases as string) ?? "[]"),
     version: (r.version as number) ?? 1,
     created_at: iso(r.created_at)!,
   };
@@ -220,6 +222,25 @@ export const pgStore: Store = {
     const rows =
       await sql`SELECT * FROM dictionary_entries WHERE project_id = ${projectId} ORDER BY canonical`;
     return rows.map(rowToDictEntry);
+  },
+
+  async confirmDictionaryNames(projectId, names) {
+    const sql = await db();
+    const norms = new Set(names.map((n) => n.trim().toLowerCase()));
+    const rows =
+      await sql`SELECT * FROM dictionary_entries WHERE project_id = ${projectId}`;
+    await sql.begin(async (tx) => {
+      for (const row of rows) {
+        const e = rowToDictEntry(row);
+        const owned = [e.canonical.trim().toLowerCase(), ...e.aliases];
+        const add = owned.filter((n) => norms.has(n));
+        if (add.length === 0) continue;
+        const next = [...new Set([...e.confirmed, ...add])];
+        if (next.length !== e.confirmed.length) {
+          await tx`UPDATE dictionary_entries SET confirmed_aliases = ${JSON.stringify(next)} WHERE id = ${e.id}`;
+        }
+      }
+    });
   },
 
   async insertDictionaryEntries(projectId, entries) {

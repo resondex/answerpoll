@@ -84,6 +84,9 @@ export interface DictionaryEntry {
   /** User-facing label; renameable at any time without touching matching. */
   display_name: string | null;
   status: "active" | "pending" | "rejected";
+  /** Normalized names the user has explicitly confirmed in the Identify
+   * view — drives the red (new) / blue (confirmed) pill states. */
+  confirmed: string[];
   version: number;
   created_at: string;
 }
@@ -279,6 +282,8 @@ export interface Store {
     projectId: string,
     entries: { canonical: string; aliases: string[] }[]
   ): Promise<void>;
+  /** Mark names (normalized) as user-confirmed on whichever entry owns them. */
+  confirmDictionaryNames(projectId: string, names: string[]): Promise<void>;
   bumpDictionaryVersion(projectId: string): Promise<number>;
   getProject(id: string): Promise<Project | null>;
   /** All projects when userId is omitted (cron); the user's own otherwise. */
