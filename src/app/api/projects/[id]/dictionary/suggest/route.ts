@@ -1,35 +1,15 @@
 import { NextResponse } from "next/server";
-import { store } from "@/lib/store";
 import { requireAuth, requireProject } from "@/lib/auth";
-import { apiKeyConfigured, openaiClient } from "@/lib/engine/providers";
+import { apiKeyConfigured } from "@/lib/engine/providers";
+import { getDictionarySuggestions } from "@/lib/engine/dict_suggest";
 
 export const maxDuration = 120;
-
-const SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    suggestions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          name: { type: "string" },
-          action: { type: "string", enum: ["merge", "approve", "ignore"] },
-          merge_into: { type: ["string", "null"] },
-          rationale: { type: "string" },
-        },
-        required: ["name", "action", "merge_into", "rationale"],
-      },
-    },
-  },
-  required: ["suggestions"],
-} as const;
 
 /**
  * AI pre-review of the pending dictionary queue. Returns proposed
  * dispositions only — nothing is applied without the batch confirm.
+ * Cache-first: the expensive pass runs at run completion, so this is
+ * normally an instant cache read.
  */
 export async function POST(
   _req: Request,
@@ -46,74 +26,6 @@ export async function POST(
       { status: 503 }
     );
   }
-  const entries = await store.getDictionary(id);
-  const pending = entries.filter((e) => e.status === "pending");
-  const active = entries.filter((e) => e.status === "active");
-  if (pending.length === 0) {
-    return NextResponse.json({ suggestions: [] });
-  }
-
-  const res = await openaiClient().chat.completions.create({
-    model: process.env.SUGGEST_MODEL ?? "gpt-5-mini",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You review a brand-dictionary queue for a study of AI answers in " +
-          `the category "${project.category}". For each pending name, propose:\n` +
-          "- merge: the name is the SAME offering as one of the active brands " +
-          "(alternate name, spelling, sub-surface of the same product). Set " +
-          "merge_into to that active brand's canonical name exactly.\n" +
-          "- approve: a genuinely distinct brand/product competing in or " +
-          "relevant to the category, worth its own row.\n" +
-          "- ignore: not a brand in this category (generic terms, one-off " +
-          "tangents, tools from unrelated categories).\n" +
-          "Be conservative with merge: different products from the same " +
-          "company are NOT merges. Every suggestion needs a one-line rationale.\n" +
-          `Active brands: ${active.map((a) => a.canonical).join(", ")}.\n` +
-          "Also treat pending names as potential merge targets for OTHER " +
-          "pending names by proposing approve for the best-named variant and " +
-          "merge for the rest, with merge_into set to the approved variant.",
-      },
-      {
-        role: "user",
-        content: JSON.stringify(pending.map((p) => p.canonical)),
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: "dispositions", strict: true, schema: SCHEMA },
-    },
-  });
-  const parsed = JSON.parse(
-    res.choices[0]?.message?.content ?? '{"suggestions":[]}'
-  ) as {
-    suggestions: {
-      name: string;
-      action: "merge" | "approve" | "ignore";
-      merge_into: string | null;
-      rationale: string;
-    }[];
-  };
-
-  // Attach entry ids; resolve merge targets to entry ids where possible.
-  const byName = new Map(entries.map((e) => [e.canonical.trim().toLowerCase(), e]));
-  const suggestions = parsed.suggestions
-    .map((s) => {
-      const entry = byName.get(s.name.trim().toLowerCase());
-      if (!entry || entry.status !== "pending") return null;
-      const target = s.merge_into
-        ? byName.get(s.merge_into.trim().toLowerCase())
-        : null;
-      return {
-        entryId: entry.id,
-        name: entry.canonical,
-        action: s.action,
-        mergeIntoId: target?.id ?? null,
-        mergeIntoName: target?.canonical ?? s.merge_into,
-        rationale: s.rationale,
-      };
-    })
-    .filter(Boolean);
+  const suggestions = await getDictionarySuggestions(id, project.category);
   return NextResponse.json({ suggestions });
 }

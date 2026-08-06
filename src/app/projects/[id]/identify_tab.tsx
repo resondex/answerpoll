@@ -90,7 +90,7 @@ export default function IdentifyTab({
               entryId: e.id,
               kind: "canonical",
               homeStatus: "active",
-              locked: true,
+              locked: false,
               confirmed: e.confirmed.includes(norm(e.canonical)),
               moved: false,
             },
@@ -229,37 +229,55 @@ export default function IdentifyTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingEntries.length, projectId]);
 
-  function placePill(pill: Pill, toKey: string, next: Bucket[]): Bucket[] {
+  function placePills(pills: Pill[], toKey: string, next: Bucket[]): Bucket[] {
+    const anchor = pills.find((p) => p.kind === "canonical") ?? pills[0];
     if (toKey === "__new__") {
       next.splice(next.length - 2, 0, {
-        key: `new:${pill.entryId}:${pill.norm}`,
+        key: `new:${anchor.entryId}:${anchor.norm}`,
         kind: "new",
-        entryId: pill.kind === "canonical" ? pill.entryId : null,
-        label: pill.name,
-        originalLabel: pill.name,
-        pills: [pill],
+        entryId: anchor.kind === "canonical" ? anchor.entryId : null,
+        label: anchor.name,
+        originalLabel: anchor.name,
+        pills,
       });
       return next;
     }
     const target = next.find((b) => b.key === toKey);
     if (!target) return next;
-    target.pills = [...target.pills, pill];
+    target.pills = [...target.pills, ...pills];
     return next;
   }
 
   function movePill(pillNorm: string, toKey: string) {
     setBuckets((prev) => {
-      let pill: Pill | null = null;
+      const src = prev.find((b) => b.pills.some((p) => p.norm === pillNorm));
+      if (!src || src.key === toKey) return prev;
+      const pill = src.pills.find((p) => p.norm === pillNorm)!;
+      // Dragging a group's anchor name takes the whole group with it — the
+      // grouping IS the anchor's entry, so its variants travel together.
+      const groupMove =
+        pill.kind === "canonical" &&
+        pill.homeStatus === "active" &&
+        src.kind === "brand";
+      const moving = (groupMove ? src.pills : [pill]).map((p) => ({
+        ...p,
+        moved: true,
+      }));
+      const movingNorms = new Set(moving.map((p) => p.norm));
       const next = prev
-        .map((b) => {
-          const found = b.pills.find((p) => p.norm === pillNorm);
-          if (found) pill = { ...found, moved: true };
-          return { ...b, pills: b.pills.filter((p) => p.norm !== pillNorm) };
-        })
-        // A drained new-bucket disappears.
-        .filter((b) => b.kind !== "new" || b.pills.length > 0);
-      if (!pill) return prev;
-      return placePill(pill, toKey, next);
+        .map((b) => ({
+          ...b,
+          pills:
+            b.key === src.key
+              ? b.pills.filter((p) => !movingNorms.has(p.norm))
+              : [...b.pills],
+        }))
+        // Groups with no pills left disappear.
+        .filter(
+          (b) =>
+            (b.kind !== "new" && b.kind !== "brand") || b.pills.length > 0
+        );
+      return placePills(moving, toKey, next);
     });
   }
 
@@ -268,17 +286,19 @@ export default function IdentifyTab({
     setBuckets((prev) => {
       if (prev.some((b) => b.pills.some((p) => p.entryId === entryId)))
         return prev;
-      return placePill(
-        {
-          name,
-          norm: norm(name),
-          entryId,
-          kind: "canonical",
-          homeStatus: "pending",
-          locked: false,
-          confirmed: false,
-          moved: true,
-        },
+      return placePills(
+        [
+          {
+            name,
+            norm: norm(name),
+            entryId,
+            kind: "canonical",
+            homeStatus: "pending",
+            locked: false,
+            confirmed: false,
+            moved: true,
+          },
+        ],
         toKey,
         prev.map((b) => ({ ...b, pills: [...b.pills] }))
       );
@@ -294,6 +314,16 @@ export default function IdentifyTab({
       const moves: Act[] = [];
       const merges: Act[] = [];
       for (const b of buckets) {
+        // Entries whose anchor pill sits in this bucket: their merge/reject
+        // carries all their aliases, so alias pills of the same entry that
+        // traveled along need no separate action.
+        const groupedHere = new Set(
+          b.pills
+            .filter((p) => p.kind === "canonical" && p.homeStatus === "active")
+            .map((p) => p.entryId)
+        );
+        const covered = (p: Pill) =>
+          p.kind === "alias" && groupedHere.has(p.entryId);
         if (b.kind === "new") {
           // A name promoted to its own brand. Canonical anchors approve in
           // place; alias anchors are detached into a fresh entry, and the
@@ -322,7 +352,7 @@ export default function IdentifyTab({
               });
             }
             for (const p of b.pills) {
-              if (p === anchor) continue;
+              if (p === anchor || covered(p)) continue;
               const target =
                 anchor.kind === "canonical"
                   ? { mergeIntoId: anchor.entryId }
@@ -349,7 +379,7 @@ export default function IdentifyTab({
             });
           }
           for (const p of b.pills) {
-            if (p.entryId === b.entryId) continue; // already home
+            if (p.entryId === b.entryId || covered(p)) continue; // home/rode along
             if (p.kind === "alias") {
               moves.push({
                 entryId: p.entryId,
@@ -368,7 +398,7 @@ export default function IdentifyTab({
           }
         } else if (b.kind === "other") {
           for (const p of b.pills) {
-            if (b.entryId && p.entryId === b.entryId) continue;
+            if ((b.entryId && p.entryId === b.entryId) || covered(p)) continue;
             if (p.kind === "alias") {
               moves.push({
                 entryId: p.entryId,
@@ -382,7 +412,7 @@ export default function IdentifyTab({
           }
         } else {
           for (const p of b.pills) {
-            if (p.homeStatus === "rejected") continue; // already ignored
+            if (p.homeStatus === "rejected" || covered(p)) continue;
             if (p.kind === "alias") {
               moves.push({
                 entryId: p.entryId,
@@ -451,8 +481,8 @@ export default function IdentifyTab({
             }}
             onDragEnd={() => setDragNorm(null)}
             title={
-              p.locked
-                ? "Anchor name for this grouping — edit the label instead of moving it"
+              p.kind === "canonical" && p.homeStatus === "active"
+                ? "Group anchor — dragging it moves the whole group"
                 : p.confirmed && !p.moved
                   ? "Confirmed"
                   : p.moved

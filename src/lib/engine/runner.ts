@@ -2,6 +2,7 @@ import { store } from "../store";
 import { getProvider } from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
+import { getDictionarySuggestions } from "./dict_suggest";
 
 const CONCURRENCY = 4;
 
@@ -141,6 +142,10 @@ export async function driveRunChunk(
           );
         }
       }
+      // Warm the Identify view: compute + cache the disposition suggestions
+      // now, so the review board opens pre-sorted instead of making the
+      // user watch the sorting pass.
+      await getDictionarySuggestions(project.id, project.category);
     } catch (err) {
       console.error("dictionary queue failed:", err);
     }
