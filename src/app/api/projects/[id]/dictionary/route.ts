@@ -29,9 +29,13 @@ const actionSchema = z.object({
     "rename",
     "unalias",
     "move_alias",
+    "promote_alias",
     "confirm",
   ]),
   mergeIntoId: z.string().min(1).optional(),
+  /** Fallback target for merge/move_alias when the target entry was created
+   * earlier in the same batch (its id is unknown to the client). */
+  mergeIntoName: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).max(80).optional(),
   alias: z.string().trim().min(1).optional(),
   /** move_alias: where the alias goes — an active entry, Other, or Ignore. */
@@ -48,6 +52,18 @@ type Action = z.infer<typeof actionSchema>;
 
 /** The catch-all analyzable grouping. Its label is fixed — never renamed. */
 const OTHER_CANONICAL = "Other";
+
+function resolveTarget(
+  entries: Awaited<ReturnType<typeof store.getDictionary>>,
+  a: { mergeIntoId?: string; mergeIntoName?: string }
+) {
+  if (a.mergeIntoId) return entries.find((e) => e.id === a.mergeIntoId);
+  if (!a.mergeIntoName) return undefined;
+  const norm = a.mergeIntoName.trim().toLowerCase();
+  return entries.find(
+    (e) => e.status === "active" && e.canonical.trim().toLowerCase() === norm
+  );
+}
 
 async function ensureOtherEntry(projectId: string) {
   const entries = await store.getDictionary(projectId);
@@ -96,6 +112,30 @@ async function applyAction(projectId: string, a: Action): Promise<string | null>
     });
   }
 
+  if (a.action === "promote_alias") {
+    // An alias becomes its own analyzable brand: detach it, fossilize it as
+    // a fresh active entry.
+    if (!a.alias) return "promote_alias needs alias";
+    const norm = a.alias.trim().toLowerCase();
+    if (!entry.aliases.includes(norm)) return `alias not on entry: ${a.alias}`;
+    await store.upsertDictionaryEntry({
+      id: entry.id,
+      projectId,
+      canonical: entry.canonical,
+      aliases: entry.aliases.filter((x) => x !== norm),
+      status: entry.status,
+    });
+    await store.upsertDictionaryEntry({
+      id: null,
+      projectId,
+      canonical: a.alias.trim(),
+      aliases: [],
+      status: "active",
+      displayName: a.displayName ?? null,
+    });
+    return null;
+  }
+
   if (a.action === "move_alias") {
     // Atomic re-file of one alias: detach from its entry, land it wherever
     // the user dropped it. The fossilized string itself is never destroyed.
@@ -110,9 +150,9 @@ async function applyAction(projectId: string, a: Action): Promise<string | null>
       status: entry.status,
     });
     if (a.to === "entry" || a.to === undefined) {
-      const into = entries.find((e) => e.id === a.mergeIntoId);
+      const into = resolveTarget(entries, a);
       if (!into || into.status !== "active")
-        return `move_alias target must be active: ${a.mergeIntoId}`;
+        return `move_alias target must be active: ${a.mergeIntoId ?? a.mergeIntoName}`;
       await store.upsertDictionaryEntry({
         id: into.id,
         projectId,
@@ -183,9 +223,9 @@ async function applyAction(projectId: string, a: Action): Promise<string | null>
     });
     await store.queueDictionaryCandidates(projectId, [a.alias.trim()]);
   } else {
-    const into = entries.find((e) => e.id === a.mergeIntoId);
+    const into = resolveTarget(entries, a);
     if (!into || into.status !== "active")
-      return `merge target must be active: ${a.mergeIntoId}`;
+      return `merge target must be active: ${a.mergeIntoId ?? a.mergeIntoName}`;
     await store.upsertDictionaryEntry({
       id: into.id,
       projectId,

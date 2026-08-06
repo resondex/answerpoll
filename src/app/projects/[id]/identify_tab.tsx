@@ -56,6 +56,11 @@ export default function IdentifyTab({
   const [suggesting, setSuggesting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [dragNorm, setDragNorm] = useState<string | null>(null);
+  const [suggestSummary, setSuggestSummary] = useState<{
+    merged: number;
+    proposed: number;
+    ignored: number;
+  } | null>(null);
   // Entry ids the suggestion pass has already placed — avoids re-suggesting.
   const suggestedFor = useRef<Set<string>>(new Set());
 
@@ -174,6 +179,7 @@ export default function IdentifyTab({
         });
         if (!res.ok) return;
         const suggestions: Suggestion[] = (await res.json()).suggestions ?? [];
+        const summary = { merged: 0, proposed: 0, ignored: 0 };
         setBuckets((prev) => {
           const next = prev.map((b) => ({ ...b, pills: [...b.pills] }));
           for (const s of suggestions) {
@@ -198,6 +204,7 @@ export default function IdentifyTab({
               target = next.find((b) => b.key === "__ignore__");
             }
             if (s.action === "approve" || !target) {
+              summary.proposed++;
               next.splice(next.length - 2, 0, {
                 key: `new:${entry.id}`,
                 kind: "new",
@@ -207,11 +214,14 @@ export default function IdentifyTab({
                 pills: [pill],
               });
             } else {
+              if (target.kind === "ignore") summary.ignored++;
+              else summary.merged++;
               target.pills.push(pill);
             }
           }
           return next;
         });
+        setSuggestSummary(summary);
       } finally {
         setSuggesting(false);
       }
@@ -285,35 +295,48 @@ export default function IdentifyTab({
       const merges: Act[] = [];
       for (const b of buckets) {
         if (b.kind === "new") {
-          // A pending/rejected canonical promoted to its own brand.
-          const anchor = b.pills.find(
-            (p) => p.kind === "canonical" && p.entryId === b.entryId
-          );
+          // A name promoted to its own brand. Canonical anchors approve in
+          // place; alias anchors are detached into a fresh entry, and the
+          // rest of the bucket targets the anchor by name (its id may not
+          // exist until the batch runs).
+          const anchor =
+            b.pills.find((p) => p.kind === "canonical") ?? b.pills[0];
           if (anchor) {
-            approves.push({ entryId: anchor.entryId, action: "approve" });
-            if (b.label.trim() && b.label.trim() !== anchor.name) {
-              renames.push({
+            if (anchor.kind === "canonical") {
+              approves.push({ entryId: anchor.entryId, action: "approve" });
+              if (b.label.trim() && b.label.trim() !== anchor.name) {
+                renames.push({
+                  entryId: anchor.entryId,
+                  action: "rename",
+                  displayName: b.label.trim(),
+                });
+              }
+            } else {
+              approves.push({
                 entryId: anchor.entryId,
-                action: "rename",
-                displayName: b.label.trim(),
+                action: "promote_alias",
+                alias: anchor.name,
+                ...(b.label.trim() && b.label.trim() !== anchor.name
+                  ? { displayName: b.label.trim() }
+                  : {}),
               });
             }
             for (const p of b.pills) {
               if (p === anchor) continue;
+              const target =
+                anchor.kind === "canonical"
+                  ? { mergeIntoId: anchor.entryId }
+                  : { mergeIntoName: anchor.name };
               if (p.kind === "alias") {
                 moves.push({
                   entryId: p.entryId,
                   action: "move_alias",
                   alias: p.name,
                   to: "entry",
-                  mergeIntoId: anchor.entryId,
+                  ...target,
                 });
               } else {
-                merges.push({
-                  entryId: p.entryId,
-                  action: "merge",
-                  mergeIntoId: anchor.entryId,
-                });
+                merges.push({ entryId: p.entryId, action: "merge", ...target });
               }
             }
           }
@@ -496,8 +519,19 @@ export default function IdentifyTab({
       </div>
       {suggesting && (
         <p className="text-[13px] text-ink-3">
+          <span
+            aria-hidden="true"
+            className="inline-block h-3 w-3 mr-1.5 align-[-1px] rounded-full border-2 border-line border-t-primary animate-spin"
+          />
           Sorting {unplacedPending.length || "new"} names into suggested
           groups…
+        </p>
+      )}
+      {suggestSummary && !suggesting && (
+        <p className="text-[13px] text-ink-3">
+          Suggestions placed: {suggestSummary.merged} grouped into existing
+          brands, {suggestSummary.proposed} proposed as new brands,{" "}
+          {suggestSummary.ignored} ignored. Rearrange anything, then confirm.
         </p>
       )}
       {unplacedPending.length > 0 && !suggesting && (
@@ -526,7 +560,7 @@ export default function IdentifyTab({
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {buckets
-          .filter((b) => b.kind === "brand" || b.kind === "new")
+          .filter((b) => b.kind === "brand")
           .map((b) => (
             <div key={b.key} className="card p-4">
               <input
@@ -544,25 +578,53 @@ export default function IdentifyTab({
               {bucketBody(b)}
             </div>
           ))}
-        <div
-          className="card p-4 border-dashed grid place-items-center text-xs text-ink-3 min-h-20"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const n = e.dataTransfer.getData("text/pill");
-            if (n) movePill(n, "__new__");
-            const staged = e.dataTransfer.getData("text/staged");
-            if (staged) {
-              const s = JSON.parse(staged) as {
-                entryId: string;
-                name: string;
-              };
-              dropStaged(s.entryId, s.name, "__new__");
-            }
-            setDragNorm(null);
-          }}
-        >
-          drop a name here to make it its own brand
+      </div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-2">
+          Proposed new brands (
+          {buckets.filter((b) => b.kind === "new").length}) — each analyzes as
+          its own brand
+        </p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {buckets
+            .filter((b) => b.kind === "new")
+            .map((b) => (
+              <div key={b.key} className="card p-3">
+                <input
+                  value={b.label}
+                  onChange={(e) =>
+                    setBuckets((prev) =>
+                      prev.map((x) =>
+                        x.key === b.key ? { ...x, label: e.target.value } : x
+                      )
+                    )
+                  }
+                  className="w-full bg-transparent text-[13px] font-semibold mb-1.5 outline-none border-b border-transparent focus:border-line"
+                  title="Grouping label — used across all reports and dashboards"
+                />
+                {bucketBody(b)}
+              </div>
+            ))}
+          <div
+            className="card p-3 border-dashed grid place-items-center text-xs text-ink-3 min-h-16"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const n = e.dataTransfer.getData("text/pill");
+              if (n) movePill(n, "__new__");
+              const staged = e.dataTransfer.getData("text/staged");
+              if (staged) {
+                const s = JSON.parse(staged) as {
+                  entryId: string;
+                  name: string;
+                };
+                dropStaged(s.entryId, s.name, "__new__");
+              }
+              setDragNorm(null);
+            }}
+          >
+            drop a name here to make it its own brand
+          </div>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
