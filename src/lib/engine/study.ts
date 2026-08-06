@@ -3,6 +3,8 @@ import { store } from "../store";
 import { buildCanonicalizer, computeRunMetrics, wilson } from "./metrics";
 import { computeProjectTrend } from "./trend";
 import { apiKeyConfigured, openaiClient } from "./providers";
+import { buildRunInsights, type InsightsBundle } from "./insights";
+import { buildAnalysisWorkbook, buildScorecardWorkbook } from "./workbooks";
 import type { MentionRow, Project, ResponseRow, Run } from "../types";
 
 const SUMMARY_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
@@ -282,6 +284,62 @@ export async function buildStudyBundle(
     }
   }
 
+  // ---------- live-formula workbooks (02 + 03) ----------
+  let insights: InsightsBundle | null = null;
+  if (apiKeyConfigured()) {
+    try {
+      insights = await buildRunInsights(run.id);
+    } catch (err) {
+      console.error("insights unavailable for workbooks:", err);
+    }
+  }
+  try {
+    const wbInputs = {
+      project, run, metrics, prompts, responses, mentionsByResponse, canon,
+      dictionary, insights,
+      promptCode: (promptId: string) =>
+        promptCode(promptById.get(promptId)!.idx),
+    };
+    const [scorecardWb, analysisWb] = await Promise.all([
+      buildScorecardWorkbook(wbInputs),
+      buildAnalysisWorkbook(wbInputs),
+    ]);
+    root.file("02_scorecard/scorecard_workbook.xlsx", scorecardWb);
+    root.file("03_analysis/analysis_workbook.xlsx", analysisWb);
+  } catch (err) {
+    console.error("workbook build failed — CSVs still ship:", err);
+  }
+  if (insights) {
+    const insightsMd = [
+      "# Insights and plays",
+      "",
+      header,
+      "",
+      ...insights.sections.flatMap((s) => [
+        `## ${s.title}`,
+        "",
+        ...s.insights.map((t, i) => `${i + 1}. ${t}`),
+        "",
+      ]),
+      "## Recommended plays",
+      "",
+      ...insights.plays.flatMap((p) => [
+        `### ${p.title}`,
+        "",
+        `${p.gap}`,
+        "",
+        `**Play:** ${p.play}`,
+        "",
+        `**Measured by:** ${p.measuredBy} - today ${p.today}. Re-run the study and this play grades itself.`,
+        "",
+      ]),
+      "---",
+      "",
+      `Every figure above was substituted from the study's verified fact registry (${insights.verification.figuresSupplied} facts) and gate-checked against the dataset before shipping.`,
+    ].join("\n");
+    root.file("01_executive_summary/insights_and_plays.md", insightsMd);
+  }
+
   // ---------- 01: executive summary ----------
   const summary = await executiveSummary(project, run, metrics, {
     fnRate, fnCi, firstNamed: firstNamed.length, unbranded: unbranded.length,
@@ -499,9 +557,9 @@ response.
 | Folder | Contents |
 |---|---|
 | 00_README.md | This document - the map of the package |
-| 01_executive_summary | The findings and what they mean, in narrative form |
-| 02_scorecard | Headline metrics with confidence intervals + the per-prompt grid |
-| 03_analysis | Brand leaderboard, theme rollups${x.hasTrend ? ", trend across runs" : ""} - as clean CSVs |
+| 01_executive_summary | The findings, numbered insights, and plays with baselines |
+| 02_scorecard | Live-formula workbook + CSVs: headline metrics and the per-prompt grid - every rate is a COUNTIFS you can click and trace |
+| 03_analysis | Live-formula workbook + CSVs: leaderboard, top picks, argument lift, positions, parents${x.hasTrend ? ", trend across runs" : ""} |
 | 04_master_dataset | Every coded answer and every brand mention - recompute anything |
 | 05_response_library | The full text of every sampled answer, filed by prompt |
 | 06_methodology | How the study was designed, collected, coded - and its limits |
