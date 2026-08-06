@@ -209,8 +209,9 @@ const LINT_SCHEMA = {
         properties: {
           anchored: { type: "boolean" },
           inferred_category: { type: "string" },
+          spec_sheet: { type: "boolean" },
         },
-        required: ["anchored", "inferred_category"],
+        required: ["anchored", "inferred_category", "spec_sheet"],
       },
     },
   },
@@ -227,13 +228,14 @@ const REPAIR_SCHEMA = {
 } as const;
 
 /**
- * Anchoring lint: each prompt is read cold by a classifier that infers what
- * category it's about. Prompts whose inferred category doesn't match get one
- * repair round (rewrite preserving intent, length, register — adding the
- * category anchor); unrepairable ones survive as-is and are caught later by
- * the post-first-run health check.
+ * Battery lint: each prompt is read cold by a classifier that checks two
+ * failure modes — anchoring (the inferred category doesn't match the study
+ * category) and spec-sheet texture (a long prompt written as a requirements
+ * list instead of how people actually type). Failing prompts get one repair
+ * round scoped to their specific issues; unrepairable ones survive as-is and
+ * are caught later by the post-first-run health check.
  */
-async function lintAndRepairAnchoring(
+async function lintAndRepair(
   prompts: PromptSpec[],
   category: string
 ): Promise<PromptSpec[]> {
@@ -245,12 +247,20 @@ async function lintAndRepairAnchoring(
           role: "system",
           content:
             "For each prompt, imagine an AI assistant reading ONLY that prompt " +
-            "with no other context. Report what product/service category the " +
-            "assistant would understand the prompt to be about " +
-            "(inferred_category), and whether that clearly matches the study " +
-            `category "${category}" (anchored). A prompt about 'a tool' or ` +
-            "'our tooling' with no category signal is NOT anchored. Return one " +
-            "result per prompt, in order.",
+            "with no other context. Report:\n" +
+            "- inferred_category: what product/service category the assistant " +
+            "would understand the prompt to be about.\n" +
+            "- anchored: whether that clearly matches the study category " +
+            `"${category}". A prompt about 'a tool' or 'our tooling' with no ` +
+            "category signal is NOT anchored.\n" +
+            "- spec_sheet: whether the prompt reads like a requirements list " +
+            "or RFP rather than something a person typed into a chat box — " +
+            "four or more requirements chained in parallel clauses, or precise " +
+            "round constraints like an exact annual budget or an exact " +
+            "adoption timeline. Real typed prompts carry at most 2-3 explicit " +
+            "needs and vague constraints ('cheap', 'easy to pick up'); long " +
+            "ones are long because of backstory, not feature lists.\n" +
+            "Return one result per prompt, in order.",
         },
         { role: "user", content: JSON.stringify(prompts.map((p) => p.text)) },
       ],
@@ -261,16 +271,27 @@ async function lintAndRepairAnchoring(
     });
     const results = (
       JSON.parse(lintRes.choices[0]?.message?.content ?? '{"results":[]}') as {
-        results: { anchored: boolean; inferred_category: string }[];
+        results: {
+          anchored: boolean;
+          inferred_category: string;
+          spec_sheet: boolean;
+        }[];
       }
     ).results;
     const bad = prompts
-      .map((p, i) => ({ p, i, r: results[i] }))
-      .filter((x) => x.r && !x.r.anchored);
+      .map((p, i) => ({
+        p,
+        i,
+        issues: [
+          ...(results[i] && !results[i].anchored ? ["anchoring"] : []),
+          ...(results[i]?.spec_sheet ? ["spec_sheet"] : []),
+        ],
+      }))
+      .filter((x) => x.issues.length > 0);
     if (bad.length === 0) return prompts;
     console.log(
-      `anchoring lint: repairing ${bad.length} prompt(s):`,
-      bad.map((b) => b.p.text)
+      `battery lint: repairing ${bad.length} prompt(s):`,
+      bad.map((b) => ({ text: b.p.text, issues: b.issues }))
     );
     const repairRes = await openaiClient().chat.completions.create({
       model: SUGGEST_MODEL,
@@ -278,13 +299,26 @@ async function lintAndRepairAnchoring(
         {
           role: "system",
           content:
-            "Rewrite each prompt so it is unambiguously about " +
+            "Rewrite each prompt to fix ONLY its listed issues, preserving " +
+            "the intent and the casual register. Never add brand names.\n" +
+            "- 'anchoring': make the prompt unambiguously about " +
             `"${category}" when read with zero context — work the category ` +
-            "(or an unmistakable everyday synonym) into the prompt. PRESERVE " +
-            "the intent, the specific details, the length, and the casual " +
-            "register. Never add brand names. Return the rewrites in order.",
+            "(or an unmistakable everyday synonym) into it. Preserve the " +
+            "specific details and the length.\n" +
+            "- 'spec_sheet': keep roughly the length, but convert the " +
+            "requirements list into how a person actually types — backstory, " +
+            "what's going wrong, the ask sometimes buried mid-thought. Keep " +
+            "the 2 or 3 needs that matter most and DROP the rest. Replace " +
+            "precise round constraints with vague ones ('cheap', 'not too " +
+            "complicated', 'something the team will actually use').\n" +
+            "Return the rewrites in order.",
         },
-        { role: "user", content: JSON.stringify(bad.map((b) => b.p.text)) },
+        {
+          role: "user",
+          content: JSON.stringify(
+            bad.map((b) => ({ text: b.p.text, issues: b.issues }))
+          ),
+        },
       ],
       response_format: {
         type: "json_schema",
@@ -303,7 +337,7 @@ async function lintAndRepairAnchoring(
     });
     return out;
   } catch (err) {
-    console.error("anchoring lint failed, battery unmodified:", err);
+    console.error("battery lint failed, battery unmodified:", err);
     return prompts;
   }
 }
@@ -379,9 +413,9 @@ const BATTERY_SCHEMA = {
   required: ["prompts"],
 } as const;
 
-// v5: v4 corpus calibration + category-anchoring rule with lint-and-repair
-// (every prompt must read as being about the category with zero context).
-const BATTERY_STYLE_VERSION = "v5";
+// v6: v5 anchoring + long-prompt texture rule (long = backstory, never a
+// requirements list; no precise round constraints) with spec-sheet lint.
+const BATTERY_STYLE_VERSION = "v6";
 
 /**
  * Generate the unbranded battery with the model (falling back to templates),
@@ -439,14 +473,26 @@ export async function generateBatteryAi(input: {
             "given category on its face — a reader seeing only the prompt must " +
             "know what kind of product is being asked about. Never write 'a " +
             "tool', 'something', or 'our tooling' without the category (or an " +
-            "unmistakable synonym of it) in the prompt.\n\n" +
+            "unmistakable synonym of it) in the prompt.\n" +
+            "- LONG PROMPT TEXTURE (hard rule): when a prompt runs long, it is " +
+            "long because of STORY — backstory, what's going wrong, half-formed " +
+            "thoughts — never because of a requirements list. At most 2 or 3 " +
+            "explicit needs per prompt. NEVER chain four or more features in " +
+            "parallel clauses ('handle X, Y, Z, and support A, B, and C') — " +
+            "that reads like an RFP, and nobody types RFPs into a chat box. " +
+            "Constraints stay vague the way people talk ('cheap', 'not too " +
+            "complicated', 'something the team will actually use'), never " +
+            "precise round figures ('$5,000 annually', 'learn in under two " +
+            "weeks').\n\n" +
             "Register examples from a DIFFERENT category (match this feel, not the topic):\n" +
             "- 'best project management tool for a small construction company'\n" +
             "- 'my team keeps missing deadlines, what app should we use to track jobs?'\n" +
             "- 'whats a good free alternative to the big project management apps'\n" +
-            "- 'We're a 12-person remodeling company and everything lives in text " +
-            "threads right now. I need something the field guys will actually use — " +
-            "what would you recommend and why?'\n\n" +
+            "- 'so we've been scheduling crews in spreadsheets for like 2 years " +
+            "and it's honestly a mess, jobs get double booked, nobody knows whos " +
+            "on what site, and my boss now wants some kind of calendar the " +
+            "office and the field can both see. we're maybe 15 people. is real " +
+            "scheduling software worth it for us or is there something simpler'\n\n" +
             "Produce exactly 12, with theme counts matching the measured " +
             "distribution of real commercial asks (59% discovery / 27% " +
             "recommendation / 8% comparison / 6% use_case): 7 'discovery' " +
@@ -488,7 +534,7 @@ export async function generateBatteryAi(input: {
       audience: input.audience,
     }).filter((p) => p.theme !== "branded");
   } else {
-    unbranded = await lintAndRepairAnchoring(unbranded, input.category);
+    unbranded = await lintAndRepair(unbranded, input.category);
   }
   return [
     ...unbranded,
