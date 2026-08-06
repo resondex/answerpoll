@@ -562,6 +562,18 @@ export const sqliteStore: Store = {
     insertAll();
   },
 
+  async deleteRun(runId) {
+    const db = getDb();
+    const del = db.transaction(() => {
+      db.prepare(
+        "DELETE FROM mentions WHERE response_id IN (SELECT id FROM responses WHERE run_id = ?)"
+      ).run(runId);
+      db.prepare("DELETE FROM responses WHERE run_id = ?").run(runId);
+      db.prepare("DELETE FROM runs WHERE id = ?").run(runId);
+    });
+    del();
+  },
+
   async countResponses(runId) {
     const row = getDb()
       .prepare("SELECT COUNT(*) AS n FROM responses WHERE run_id = ?")

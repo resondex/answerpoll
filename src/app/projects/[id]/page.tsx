@@ -319,6 +319,22 @@ export default function ProjectPage() {
                         Dashboard →
                       </Link>
                     )}
+                    {!active && (
+                      <button
+                        type="button"
+                        aria-label="delete run"
+                        onClick={async () => {
+                          if (!confirm("Delete this run and its data?")) return;
+                          await fetch(`/api/runs/${r.id}`, {
+                            method: "DELETE",
+                          });
+                          refresh();
+                        }}
+                        className="text-ink-3 hover:text-danger text-lg leading-none"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
                 </li>
               );

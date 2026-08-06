@@ -325,6 +325,8 @@ export interface Store {
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;
   }): Promise<void>;
+  /** Delete a run and its responses/mentions. Prompts and dictionary stay. */
+  deleteRun(runId: string): Promise<void>;
   countResponses(runId: string): Promise<number>;
   listResponses(runId: string): Promise<ResponseRow[]>;
   listMentionsForRun(runId: string): Promise<MentionRow[]>;

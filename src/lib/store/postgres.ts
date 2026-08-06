@@ -446,6 +446,15 @@ export const pgStore: Store = {
     });
   },
 
+  async deleteRun(runId) {
+    const sql = await db();
+    await sql.begin(async (tx) => {
+      await tx`DELETE FROM mentions WHERE response_id IN (SELECT id FROM responses WHERE run_id = ${runId})`;
+      await tx`DELETE FROM responses WHERE run_id = ${runId}`;
+      await tx`DELETE FROM runs WHERE id = ${runId}`;
+    });
+  },
+
   async countResponses(runId) {
     const sql = await db();
     const rows =
