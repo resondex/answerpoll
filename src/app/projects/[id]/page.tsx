@@ -27,6 +27,8 @@ interface Progress {
   total: number;
 }
 
+type OpenModal = "run" | "dictionary" | "health" | null;
+
 export default function ProjectPage() {
   return (
     <Suspense>
@@ -59,6 +61,7 @@ function ProjectDashboard() {
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
+  const [openModal, setOpenModal] = useState<OpenModal>(null);
   // Which run's results are shown. null = follow the latest complete run;
   // set explicitly when the user picks a run (or arrives via ?run=).
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
@@ -204,7 +207,9 @@ function ProjectDashboard() {
   const pendingDict = dict.filter((e) => e.status === "pending").length;
   const flaggedPrompts = prompts.filter(
     (p) => p.flagged === 1 && p.retired === 0
-  ).length;
+  );
+  // The Run button's task bubble: nothing measured yet and nothing running.
+  const needsFirstRun = completeRuns.length === 0 && !activeRun;
 
   return (
     <div className="grid gap-8">
@@ -259,116 +264,36 @@ function ProjectDashboard() {
         </div>
       </div>
 
-      <section className="card p-6">
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="grid gap-1.5 text-sm font-medium">
-            Model
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="input w-44"
-            >
-              {MODELS.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium">
-            Repeats per prompt
-            <input
-              type="number"
-              min={1}
-              max={20}
-              value={repeats}
-              onChange={(e) => setRepeats(Number(e.target.value))}
-              className="input w-24"
-            />
-          </label>
-          <button
-            onClick={launchRun}
-            disabled={launching || hasActiveRun}
-            className="btn-primary inline-flex items-center gap-2"
-          >
-            {launching && (
-              <span
-                aria-hidden="true"
-                className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin"
-              />
-            )}
-            {launching
-              ? "Starting…"
-              : hasActiveRun
-                ? "Run in progress…"
-                : `Run ${totalCalls} queries`}
-          </button>
-          <label className="grid gap-1.5 text-sm font-medium sm:ml-auto">
-            Automatic runs
-            <select
-              value={project.schedule}
-              onChange={(e) => setSchedule(e.target.value as RunSchedule)}
-              className="input w-36"
-            >
-              <option value="none">off</option>
-              <option value="weekly">weekly</option>
-              <option value="monthly">monthly</option>
-            </select>
-          </label>
-        </div>
-        {activeRun && progress ? (
-          <div className="mt-4 flex items-center gap-4">
-            <StatusBadge status={activeRun.status} />
+      <div className="flex flex-wrap items-center gap-3">
+        <TaskButton
+          label={
+            activeRun
+              ? "Run in progress…"
+              : "Run"
+          }
+          primary
+          bubble={needsFirstRun ? "dot" : null}
+          onClick={() => setOpenModal("run")}
+        />
+        <TaskButton
+          label="Brand dictionary"
+          bubble={pendingDict > 0 ? pendingDict : null}
+          onClick={() => setOpenModal("dictionary")}
+        />
+        <TaskButton
+          label="Health check"
+          bubble={flaggedPrompts.length > 0 ? flaggedPrompts.length : null}
+          onClick={() => setOpenModal("health")}
+        />
+        {activeRun && progress && (
+          <div className="flex items-center gap-3 ml-1">
             <ProgressBar
               completed={progress.completed}
               total={progress.total}
             />
-            <span className="text-[13px] text-ink-3">
-              {activeRun.model} · {activeRun.repeats} repeats — results appear
-              below the moment it completes.
-            </span>
           </div>
-        ) : (
-          <p className="text-[13px] text-ink-3 mt-3">
-            {prompts.length} prompts × {repeats} repeats — more repeats,
-            tighter confidence intervals.
-            {project.schedule !== "none" &&
-              ` Automatic ${project.schedule} runs fire at the daily 06:00 UTC check.`}
-          </p>
         )}
-      </section>
-
-      {(pendingDict > 0 || flaggedPrompts > 0) && (
-        <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm grid gap-1">
-          {pendingDict > 0 && (
-            <p>
-              <span className="font-semibold">
-                {pendingDict} new brand name{pendingDict === 1 ? "" : "s"}
-              </span>{" "}
-              surfaced in the answers — the metrics below count them as
-              separate brands until you review them.{" "}
-              <a
-                href="#dictionary"
-                className="font-semibold text-primary hover:opacity-80"
-              >
-                Review the dictionary ↓
-              </a>
-            </p>
-          )}
-          {flaggedPrompts > 0 && (
-            <p>
-              <span className="font-semibold">Health check:</span> the first
-              run flagged {flaggedPrompts} prompt
-              {flaggedPrompts === 1 ? "" : "s"} whose answers drifted
-              off-category.{" "}
-              <a
-                href="#battery"
-                className="font-semibold text-primary hover:opacity-80"
-              >
-                Review the battery ↓
-              </a>
-            </p>
-          )}
-        </div>
-      )}
+      </div>
 
       {shownRun ? (
         <>
@@ -389,7 +314,10 @@ function ProjectDashboard() {
               </select>
             </div>
           )}
-          <RunResults key={`${shownRun.id}:${dictVersion}`} runId={shownRun.id} />
+          <RunResults
+            key={`${shownRun.id}:${dictVersion}`}
+            runId={shownRun.id}
+          />
         </>
       ) : (
         !activeRun && (
@@ -409,209 +337,6 @@ function ProjectDashboard() {
           <TrendChart trend={trend} />
         </section>
       )}
-
-      {dict.some((e) => e.status === "pending") && (
-        <section id="dictionary" className="card p-6 scroll-mt-6">
-          <div className="flex items-baseline justify-between gap-4">
-            <h2 className="section-label mb-1">
-              Brand dictionary — review queue
-            </h2>
-            <button
-              type="button"
-              onClick={suggestDispositions}
-              disabled={suggesting2}
-              className="text-[13px] font-medium text-primary hover:opacity-80"
-            >
-              {suggesting2 ? "Reviewing…" : "Suggest dispositions"}
-            </button>
-          </div>
-          <p className="text-[13px] text-ink-3 mb-4">
-            New names the answers surfaced. Approve as a distinct brand, merge
-            as an alias of a known one, or reject. Decisions apply
-            retroactively to every run - the raw extracted names are never
-            changed, so everything is reversible.
-          </p>
-          {suggestions && (
-            <div className="mb-5 rounded-lg border border-primary/30 bg-primary-soft/40 p-4">
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-sm font-semibold">
-                  Proposed dispositions ({suggestions.length})
-                </span>
-                <span className="flex gap-4">
-                  <button
-                    type="button"
-                    onClick={applySuggestions}
-                    disabled={applying}
-                    className="btn-primary px-3 py-1.5 text-[13px]"
-                  >
-                    {applying ? "Applying…" : "Apply all"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSuggestions(null)}
-                    className="text-[13px] text-ink-3 hover:text-ink"
-                  >
-                    Discard
-                  </button>
-                </span>
-              </div>
-              <div className="grid gap-1 max-h-72 overflow-y-auto text-[13px]">
-                {suggestions.map((s, i) => (
-                  <div key={s.entryId} className="flex items-center gap-2">
-                    <span className="font-medium w-44 truncate">{s.name}</span>
-                    <select
-                      className="input w-28 text-xs"
-                      value={s.action}
-                      onChange={(e) =>
-                        setSuggestions(
-                          suggestions.map((x, j) =>
-                            j === i
-                              ? {
-                                  ...x,
-                                  action: e.target.value as typeof x.action,
-                                }
-                              : x
-                          )
-                        )
-                      }
-                    >
-                      <option value="merge">merge</option>
-                      <option value="approve">approve</option>
-                      <option value="ignore">ignore</option>
-                    </select>
-                    <span className="text-ink-3 truncate flex-1">
-                      {s.action === "merge" && s.mergeIntoName
-                        ? `→ ${s.mergeIntoName} · `
-                        : ""}
-                      {s.rationale}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="grid gap-2">
-            {dict
-              .filter((e) => e.status === "pending")
-              .slice(0, 15)
-              .map((e) => (
-                <div
-                  key={e.id}
-                  className="flex flex-wrap items-center gap-2 text-sm border-b border-line/60 pb-2"
-                >
-                  <span className="font-medium min-w-40">{e.canonical}</span>
-                  <span className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => dictAction(e.id, "approve")}
-                    className="text-[13px] font-medium text-success hover:opacity-80"
-                  >
-                    Approve as brand
-                  </button>
-                  <select
-                    className="input w-40 text-xs"
-                    value={mergeTargets[e.id] ?? ""}
-                    onChange={(ev) =>
-                      setMergeTargets({
-                        ...mergeTargets,
-                        [e.id]: ev.target.value,
-                      })
-                    }
-                  >
-                    <option value="">merge into…</option>
-                    {dict
-                      .filter((x) => x.status === "active")
-                      .map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {x.canonical}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => dictAction(e.id, "merge")}
-                    disabled={!mergeTargets[e.id]}
-                    className="text-[13px] font-medium text-primary hover:opacity-80 disabled:opacity-40"
-                  >
-                    Merge
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => dictAction(e.id, "reject")}
-                    className="text-[13px] font-medium text-ink-3 hover:text-danger"
-                  >
-                    Reject
-                  </button>
-                </div>
-              ))}
-          </div>
-          <p className="text-xs text-ink-3 mt-3">
-            {pendingDict} pending ·{" "}
-            {dict.filter((e) => e.status === "active").length} active brands ·
-            dictionary v{project.dictionary_version}
-          </p>
-        </section>
-      )}
-
-      <section id="battery" className="scroll-mt-6">
-        <h2 className="section-label mb-3">Prompt battery</h2>
-        <div className="card divide-y divide-line">
-          {prompts
-            .filter((p) => p.retired === 0)
-            .map((p) => (
-              <div key={p.id} className="px-5 py-2.5">
-                <div className="flex items-baseline gap-4 text-sm">
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
-                    {p.theme.replace("_", " ")}
-                  </span>
-                  <span className="text-ink-2">{p.text}</span>
-                  {p.flagged === 1 && (
-                    <span className="ml-auto shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
-                      flagged
-                    </span>
-                  )}
-                </div>
-                {p.flagged === 1 && (
-                  <div className="mt-2 ml-32 border-l-2 border-warning/40 pl-3 grid gap-1.5">
-                    {p.flag_reason && (
-                      <p className="text-[13px] text-ink-3">{p.flag_reason}</p>
-                    )}
-                    {p.suggested_alternatives.map((alt, i) => (
-                      <div
-                        key={i}
-                        className="flex items-baseline gap-2 text-[13px]"
-                      >
-                        <span className="text-ink-2 flex-1">“{alt}”</span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await fetch(`/api/projects/${id}/prompts`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                action: "replace",
-                                promptId: p.id,
-                                text: alt,
-                              }),
-                            });
-                            refresh();
-                          }}
-                          className="shrink-0 font-medium text-primary hover:opacity-80"
-                        >
-                          Refield with this →
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-        </div>
-        <p className="text-[13px] text-ink-3 mt-2.5">
-          Headline rates come from the unbranded prompts — the branded probes
-          are reported separately, since naming the brand guarantees a mention.
-        </p>
-      </section>
 
       {runs.length > 0 && (
         <section>
@@ -685,6 +410,388 @@ function ProjectDashboard() {
           </ul>
         </section>
       )}
+
+      {openModal === "run" && (
+        <Modal title="Run the battery" onClose={() => setOpenModal(null)}>
+          <div className="grid gap-4">
+            <div className="flex flex-wrap items-end gap-4">
+              <label className="grid gap-1.5 text-sm font-medium">
+                Model
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="input w-44"
+                >
+                  {MODELS.map((m) => (
+                    <option key={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-sm font-medium">
+                Repeats per prompt
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={repeats}
+                  onChange={(e) => setRepeats(Number(e.target.value))}
+                  className="input w-24"
+                />
+              </label>
+              <button
+                onClick={async () => {
+                  await launchRun();
+                  setOpenModal(null);
+                }}
+                disabled={launching || hasActiveRun}
+                className="btn-primary inline-flex items-center gap-2"
+              >
+                {launching && (
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin"
+                  />
+                )}
+                {launching
+                  ? "Starting…"
+                  : hasActiveRun
+                    ? "Run in progress…"
+                    : `Run ${totalCalls} queries`}
+              </button>
+            </div>
+            <p className="text-[13px] text-ink-3">
+              {prompts.filter((p) => p.retired === 0).length} prompts ×{" "}
+              {repeats} repeats — more repeats, tighter confidence intervals.
+            </p>
+            <div className="border-t border-line pt-4">
+              <label className="grid gap-1.5 text-sm font-medium max-w-48">
+                Automatic runs
+                <select
+                  value={project.schedule}
+                  onChange={(e) => setSchedule(e.target.value as RunSchedule)}
+                  className="input"
+                >
+                  <option value="none">off</option>
+                  <option value="weekly">weekly</option>
+                  <option value="monthly">monthly</option>
+                </select>
+              </label>
+              {project.schedule !== "none" && (
+                <p className="text-[13px] text-ink-3 mt-2">
+                  Automatic {project.schedule} runs fire at the daily 06:00 UTC
+                  check.
+                </p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {openModal === "dictionary" && (
+        <Modal
+          title="Brand dictionary"
+          wide
+          onClose={() => setOpenModal(null)}
+        >
+          <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+            New names the answers surfaced. Approve as a distinct brand, merge
+            as an alias of a known one, or reject. Decisions apply
+            retroactively to every run — the raw extracted names are never
+            changed, so everything is reversible.
+          </p>
+          {pendingDict > 0 && (
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={suggestDispositions}
+                disabled={suggesting2}
+                className="btn-primary px-3 py-1.5 text-[13px]"
+              >
+                {suggesting2
+                  ? "Reviewing…"
+                  : `Suggest dispositions for all ${pendingDict}`}
+              </button>
+            </div>
+          )}
+          {suggestions && (
+            <div className="mb-5 rounded-lg border border-primary/30 bg-primary-soft/40 p-4">
+              <div className="flex items-baseline justify-between mb-2">
+                <span className="text-sm font-semibold">
+                  Proposed dispositions ({suggestions.length})
+                </span>
+                <span className="flex gap-4">
+                  <button
+                    type="button"
+                    onClick={applySuggestions}
+                    disabled={applying}
+                    className="btn-primary px-3 py-1.5 text-[13px]"
+                  >
+                    {applying ? "Applying…" : "Apply all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSuggestions(null)}
+                    className="text-[13px] text-ink-3 hover:text-ink"
+                  >
+                    Discard
+                  </button>
+                </span>
+              </div>
+              <div className="grid gap-1 max-h-72 overflow-y-auto text-[13px]">
+                {suggestions.map((s, i) => (
+                  <div key={s.entryId} className="flex items-center gap-2">
+                    <span className="font-medium w-44 truncate">{s.name}</span>
+                    <select
+                      className="input w-28 text-xs"
+                      value={s.action}
+                      onChange={(e) =>
+                        setSuggestions(
+                          suggestions.map((x, j) =>
+                            j === i
+                              ? {
+                                  ...x,
+                                  action: e.target.value as typeof x.action,
+                                }
+                              : x
+                          )
+                        )
+                      }
+                    >
+                      <option value="merge">merge</option>
+                      <option value="approve">approve</option>
+                      <option value="ignore">ignore</option>
+                    </select>
+                    <span className="text-ink-3 truncate flex-1">
+                      {s.action === "merge" && s.mergeIntoName
+                        ? `→ ${s.mergeIntoName} · `
+                        : ""}
+                      {s.rationale}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {pendingDict > 0 ? (
+            <div className="grid gap-2">
+              {dict
+                .filter((e) => e.status === "pending")
+                .map((e) => (
+                  <div
+                    key={e.id}
+                    className="flex flex-wrap items-center gap-2 text-sm border-b border-line/60 pb-2"
+                  >
+                    <span className="font-medium min-w-40">{e.canonical}</span>
+                    <span className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => dictAction(e.id, "approve")}
+                      className="text-[13px] font-medium text-success hover:opacity-80"
+                    >
+                      Approve as brand
+                    </button>
+                    <select
+                      className="input w-40 text-xs"
+                      value={mergeTargets[e.id] ?? ""}
+                      onChange={(ev) =>
+                        setMergeTargets({
+                          ...mergeTargets,
+                          [e.id]: ev.target.value,
+                        })
+                      }
+                    >
+                      <option value="">merge into…</option>
+                      {dict
+                        .filter((x) => x.status === "active")
+                        .map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.canonical}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => dictAction(e.id, "merge")}
+                      disabled={!mergeTargets[e.id]}
+                      className="text-[13px] font-medium text-primary hover:opacity-80 disabled:opacity-40"
+                    >
+                      Merge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => dictAction(e.id, "reject")}
+                      className="text-[13px] font-medium text-ink-3 hover:text-danger"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <p className="text-sm text-ink-3 py-2">
+              No names waiting for review — new ones queue here after each run.
+            </p>
+          )}
+          <p className="text-xs text-ink-3 mt-4">
+            {pendingDict} pending ·{" "}
+            {dict.filter((e) => e.status === "active").length} active brands ·
+            dictionary v{project.dictionary_version}
+          </p>
+        </Modal>
+      )}
+
+      {openModal === "health" && (
+        <Modal title="Prompt health" wide onClose={() => setOpenModal(null)}>
+          {flaggedPrompts.length > 0 ? (
+            <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+              The first run flagged {flaggedPrompts.length} prompt
+              {flaggedPrompts.length === 1 ? "" : "s"} whose answers drifted
+              off-category. Refield with a suggested alternative — history is
+              preserved, and the replacement fields on the next run.
+            </p>
+          ) : (
+            <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+              All prompts passed the health check. The full battery, for
+              reference:
+            </p>
+          )}
+          <div className="card divide-y divide-line">
+            {prompts
+              .filter((p) => p.retired === 0)
+              .map((p) => (
+                <div key={p.id} className="px-5 py-2.5">
+                  <div className="flex items-baseline gap-4 text-sm">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                      {p.theme.replace("_", " ")}
+                    </span>
+                    <span className="text-ink-2">{p.text}</span>
+                    {p.flagged === 1 && (
+                      <span className="ml-auto shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
+                        flagged
+                      </span>
+                    )}
+                  </div>
+                  {p.flagged === 1 && (
+                    <div className="mt-2 ml-32 border-l-2 border-warning/40 pl-3 grid gap-1.5">
+                      {p.flag_reason && (
+                        <p className="text-[13px] text-ink-3">
+                          {p.flag_reason}
+                        </p>
+                      )}
+                      {p.suggested_alternatives.map((alt, i) => (
+                        <div
+                          key={i}
+                          className="flex items-baseline gap-2 text-[13px]"
+                        >
+                          <span className="text-ink-2 flex-1">“{alt}”</span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await fetch(`/api/projects/${id}/prompts`, {
+                                method: "POST",
+                                headers: {
+                                  "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify({
+                                  action: "replace",
+                                  promptId: p.id,
+                                  text: alt,
+                                }),
+                              });
+                              refresh();
+                            }}
+                            className="shrink-0 font-medium text-primary hover:opacity-80"
+                          >
+                            Refield with this →
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+          </div>
+          <p className="text-[13px] text-ink-3 mt-3">
+            Headline rates come from the unbranded prompts — the branded
+            probes are reported separately, since naming the brand guarantees
+            a mention.
+          </p>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function TaskButton({
+  label,
+  bubble,
+  primary,
+  onClick,
+}: {
+  label: string;
+  bubble: number | "dot" | null;
+  primary?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative ${
+        primary
+          ? "btn-primary"
+          : "card px-4 py-2 text-sm font-semibold text-ink-2 hover:border-primary/40 hover:text-ink"
+      }`}
+    >
+      {label}
+      {bubble !== null && (
+        <span
+          className={`absolute -top-1.5 -right-1.5 rounded-full bg-danger text-white ${
+            bubble === "dot"
+              ? "h-2.5 w-2.5"
+              : "h-4.5 min-w-4.5 px-1 text-[10px] font-bold leading-[1.125rem] text-center"
+          }`}
+        >
+          {bubble === "dot" ? "" : bubble}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function Modal({
+  title,
+  wide,
+  onClose,
+  children,
+}: {
+  title: string;
+  wide?: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onClose}
+    >
+      <div
+        className={`card mx-auto my-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"} bg-white p-6`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+          <button
+            type="button"
+            aria-label="close"
+            onClick={onClose}
+            className="text-ink-3 hover:text-ink text-xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
@@ -698,7 +805,7 @@ function ProgressBar({
 }) {
   const pct = total > 0 ? (completed / total) * 100 : 0;
   return (
-    <div className="flex items-center gap-3 mt-2">
+    <div className="flex items-center gap-3">
       <div className="h-1.5 w-44 rounded-full bg-line overflow-hidden">
         <div
           className="h-full rounded-full bg-primary transition-[width] duration-700"
