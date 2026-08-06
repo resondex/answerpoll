@@ -454,23 +454,28 @@ export default function IdentifyTab({
     0
   );
 
+  /** Drop handlers for a bucket — spread on the whole card so any point in
+   * the box accepts the pill, not just the pill row. */
+  function dropProps(toKey: string) {
+    return {
+      onDragOver: (e: React.DragEvent) => e.preventDefault(),
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        const n = e.dataTransfer.getData("text/pill");
+        if (n) movePill(n, toKey);
+        const staged = e.dataTransfer.getData("text/staged");
+        if (staged) {
+          const s = JSON.parse(staged) as { entryId: string; name: string };
+          dropStaged(s.entryId, s.name, toKey);
+        }
+        setDragNorm(null);
+      },
+    };
+  }
+
   function bucketBody(b: Bucket) {
     return (
-      <div
-        className="flex flex-wrap gap-1.5 min-h-9 rounded-lg p-1 -m-1"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const n = e.dataTransfer.getData("text/pill");
-          if (n) movePill(n, b.key);
-          const staged = e.dataTransfer.getData("text/staged");
-          if (staged) {
-            const s = JSON.parse(staged) as { entryId: string; name: string };
-            dropStaged(s.entryId, s.name, b.key);
-          }
-          setDragNorm(null);
-        }}
-      >
+      <div className="flex flex-wrap gap-1.5 min-h-9 rounded-lg p-1 -m-1">
         {b.pills.map((p) => (
           <span
             key={p.norm}
@@ -592,7 +597,7 @@ export default function IdentifyTab({
         {buckets
           .filter((b) => b.kind === "brand")
           .map((b) => (
-            <div key={b.key} className="card p-4">
+            <div key={b.key} className="card p-4" {...dropProps(b.key)}>
               <input
                 value={b.label}
                 onChange={(e) =>
@@ -619,7 +624,7 @@ export default function IdentifyTab({
           {buckets
             .filter((b) => b.kind === "new")
             .map((b) => (
-              <div key={b.key} className="card p-3">
+              <div key={b.key} className="card p-3" {...dropProps(b.key)}>
                 <input
                   value={b.label}
                   onChange={(e) =>
@@ -637,21 +642,7 @@ export default function IdentifyTab({
             ))}
           <div
             className="card p-3 border-dashed grid place-items-center text-xs text-ink-3 min-h-16"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const n = e.dataTransfer.getData("text/pill");
-              if (n) movePill(n, "__new__");
-              const staged = e.dataTransfer.getData("text/staged");
-              if (staged) {
-                const s = JSON.parse(staged) as {
-                  entryId: string;
-                  name: string;
-                };
-                dropStaged(s.entryId, s.name, "__new__");
-              }
-              setDragNorm(null);
-            }}
+            {...dropProps("__new__")}
           >
             drop a name here to make it its own brand
           </div>
@@ -661,7 +652,11 @@ export default function IdentifyTab({
         {buckets
           .filter((b) => b.kind === "other" || b.kind === "ignore")
           .map((b) => (
-            <div key={b.key} className="card p-4 bg-surface-2/50">
+            <div
+              key={b.key}
+              className="card p-4 bg-surface-2/50"
+              {...dropProps(b.key)}
+            >
               <div
                 className="text-sm font-semibold mb-2 text-ink-2"
                 title={
