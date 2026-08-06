@@ -31,6 +31,8 @@ const actionSchema = z.object({
     "move_alias",
     "promote_alias",
     "confirm",
+    "set_parent",
+    "rename_parent",
   ]),
   mergeIntoId: z.string().min(1).optional(),
   /** Fallback target for merge/move_alias when the target entry was created
@@ -42,6 +44,9 @@ const actionSchema = z.object({
   to: z.enum(["entry", "other", "ignore"]).optional(),
   /** confirm: names the user has signed off on in the Identify view. */
   names: z.array(z.string().trim().min(1)).max(500).optional(),
+  /** set_parent: the parent-company label (null clears). rename_parent: the
+   * current label, with displayName carrying the new one. */
+  parent: z.string().trim().min(1).max(80).nullable().optional(),
 });
 
 const batchSchema = z.object({
@@ -98,9 +103,22 @@ async function applyAction(projectId: string, a: Action): Promise<string | null>
     return null;
   }
 
+  if (a.action === "rename_parent") {
+    if (!a.parent || !a.displayName) {
+      return "rename_parent needs parent (old) and displayName (new)";
+    }
+    await store.renameDictionaryParent(projectId, a.parent, a.displayName);
+    return null;
+  }
+
   const entries = await store.getDictionary(projectId);
   const entry = entries.find((e) => e.id === a.entryId);
   if (!entry) return `entry not found: ${a.entryId}`;
+
+  if (a.action === "set_parent") {
+    await store.setDictionaryParent(entry.id, a.parent ?? null);
+    return null;
+  }
 
   if (a.action === "merge_other") {
     const other = await ensureOtherEntry(projectId);

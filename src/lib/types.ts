@@ -87,6 +87,8 @@ export interface DictionaryEntry {
   /** Normalized names the user has explicitly confirmed in the Identify
    * view — drives the red (new) / blue (confirmed) pill states. */
   confirmed: string[];
+  /** Parent-company label for rollups; null = not assigned to a parent. */
+  parent: string | null;
   version: number;
   created_at: string;
 }
@@ -284,6 +286,14 @@ export interface Store {
   ): Promise<void>;
   /** Mark names (normalized) as user-confirmed on whichever entry owns them. */
   confirmDictionaryNames(projectId: string, names: string[]): Promise<void>;
+  /** Assign (or clear, with null) an entry's parent-company label. */
+  setDictionaryParent(entryId: string, parent: string | null): Promise<void>;
+  /** Rename a parent label across every entry in the project that has it. */
+  renameDictionaryParent(
+    projectId: string,
+    from: string,
+    to: string
+  ): Promise<void>;
   bumpDictionaryVersion(projectId: string): Promise<number>;
   getProject(id: string): Promise<Project | null>;
   /** All projects when userId is omitted (cron); the user's own otherwise. */

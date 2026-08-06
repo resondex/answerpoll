@@ -73,6 +73,7 @@ function ensureSchema(): Promise<void> {
       )`;
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS display_name TEXT`;
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS confirmed_aliases TEXT NOT NULL DEFAULT '[]'`;
+      await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS parent TEXT`;
       await sql`CREATE TABLE IF NOT EXISTS user_plans (
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
@@ -176,6 +177,7 @@ function rowToDictEntry(r: Record<string, unknown>): DictionaryEntry {
     display_name: (r.display_name as string | null) ?? null,
     status: r.status as DictionaryEntry["status"],
     confirmed: JSON.parse((r.confirmed_aliases as string) ?? "[]"),
+    parent: (r.parent as string | null) ?? null,
     version: (r.version as number) ?? 1,
     created_at: iso(r.created_at)!,
   };
@@ -222,6 +224,16 @@ export const pgStore: Store = {
     const rows =
       await sql`SELECT * FROM dictionary_entries WHERE project_id = ${projectId} ORDER BY canonical`;
     return rows.map(rowToDictEntry);
+  },
+
+  async setDictionaryParent(entryId, parent) {
+    const sql = await db();
+    await sql`UPDATE dictionary_entries SET parent = ${parent} WHERE id = ${entryId}`;
+  },
+
+  async renameDictionaryParent(projectId, from, to) {
+    const sql = await db();
+    await sql`UPDATE dictionary_entries SET parent = ${to} WHERE project_id = ${projectId} AND parent = ${from}`;
   },
 
   async confirmDictionaryNames(projectId, names) {

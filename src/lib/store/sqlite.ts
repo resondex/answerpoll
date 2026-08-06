@@ -46,6 +46,7 @@ function createDb(): Database.Database {
       display_name TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       confirmed_aliases TEXT NOT NULL DEFAULT '[]',
+      parent TEXT,
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -155,6 +156,9 @@ function createDb(): Database.Database {
       "ALTER TABLE dictionary_entries ADD COLUMN confirmed_aliases TEXT NOT NULL DEFAULT '[]'"
     );
   }
+  if (dictCols.length > 0 && !dictCols.some((c) => c.name === "parent")) {
+    db.exec("ALTER TABLE dictionary_entries ADD COLUMN parent TEXT");
+  }
   const promptCols = db.prepare("PRAGMA table_info(prompts)").all() as {
     name: string;
   }[];
@@ -223,6 +227,7 @@ function parseDictEntry(row: Record<string, unknown>): DictionaryEntry {
     display_name: (row.display_name as string | null) ?? null,
     status: row.status as DictionaryEntry["status"],
     confirmed: JSON.parse((row.confirmed_aliases as string) ?? "[]"),
+    parent: (row.parent as string | null) ?? null,
     version: (row.version as number) ?? 1,
     created_at: row.created_at as string,
   };
@@ -270,6 +275,20 @@ export const sqliteStore: Store = {
         )
         .all(projectId) as Record<string, unknown>[]
     ).map(parseDictEntry);
+  },
+
+  async setDictionaryParent(entryId, parent) {
+    getDb()
+      .prepare("UPDATE dictionary_entries SET parent = ? WHERE id = ?")
+      .run(parent, entryId);
+  },
+
+  async renameDictionaryParent(projectId, from, to) {
+    getDb()
+      .prepare(
+        "UPDATE dictionary_entries SET parent = ? WHERE project_id = ? AND parent = ?"
+      )
+      .run(to, projectId, from);
   },
 
   async confirmDictionaryNames(projectId, names) {

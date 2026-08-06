@@ -6,6 +6,7 @@ import Link from "next/link";
 import TrendChart from "./trend_chart";
 import RunResults from "./run_results";
 import IdentifyTab from "./identify_tab";
+import ParentsTab from "./parents_tab";
 import type {
   DictionaryEntry,
   Project,
@@ -49,7 +50,9 @@ function ProjectDashboard() {
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
   const [openModal, setOpenModal] = useState<OpenModal>(null);
-  const [dictTab, setDictTab] = useState<"identify" | "analyze">("identify");
+  const [dictTab, setDictTab] = useState<"identify" | "parents" | "analyze">(
+    "identify"
+  );
   // Example answers revealed per prompt in the prompt-health view.
   const [examples, setExamples] = useState<
     Record<string, string[] | "loading">
@@ -462,33 +465,39 @@ function ProjectDashboard() {
           title="Brand dictionary"
           wide
           onClose={() => setOpenModal(null)}
-        >
-          <div className="mb-4 flex gap-1 border-b border-line">
-            {(
-              [
+          subheader={
+            <div className="flex gap-1 border-b border-line">
+              {(
                 [
-                  "identify",
-                  `Identify${pendingDict > 0 ? ` (${pendingDict})` : ""}`,
-                ],
-                ["analyze", "Analyze"],
-              ] as const
-            ).map(([tab, label]) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setDictTab(tab)}
-                className={`px-3 py-2 text-sm font-semibold -mb-px border-b-2 ${
-                  dictTab === tab
-                    ? "border-primary text-ink"
-                    : "border-transparent text-ink-3 hover:text-ink"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+                  [
+                    "identify",
+                    `Identify${pendingDict > 0 ? ` (${pendingDict})` : ""}`,
+                  ],
+                  ["parents", "Parents"],
+                  ["analyze", "Analyze"],
+                ] as const
+              ).map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setDictTab(tab)}
+                  className={`px-3 py-2 text-sm font-semibold -mb-px border-b-2 ${
+                    dictTab === tab
+                      ? "border-primary text-ink"
+                      : "border-transparent text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          }
+        >
           {dictTab === "identify" && (
             <IdentifyTab projectId={id} dict={dict} onApplied={refreshDict} />
+          )}
+          {dictTab === "parents" && (
+            <ParentsTab projectId={id} dict={dict} onApplied={refreshDict} />
           )}
           {dictTab === "analyze" && (
             <>
@@ -500,6 +509,15 @@ function ProjectDashboard() {
               <div className="grid gap-1">
                 {dict
                   .filter((e) => e.status !== "pending")
+                  // Merge remnants live on as aliases of an active grouping —
+                  // they are not their own row anymore.
+                  .filter((e) => {
+                    if (e.status !== "rejected") return true;
+                    const n = e.canonical.trim().toLowerCase();
+                    return !dict.some(
+                      (x) => x.status === "active" && x.aliases.includes(n)
+                    );
+                  })
                   .sort((a, b) =>
                     a.status === b.status
                       ? a.canonical.localeCompare(b.canonical)
@@ -744,11 +762,14 @@ function Modal({
   title,
   wide,
   onClose,
+  subheader,
   children,
 }: {
   title: string;
   wide?: boolean;
   onClose: () => void;
+  /** Pinned below the title, above the scroll area — e.g. a tab bar. */
+  subheader?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -771,7 +792,8 @@ function Modal({
             ×
           </button>
         </div>
-        <div className="overflow-y-auto px-6 pb-6">{children}</div>
+        {subheader && <div className="shrink-0 px-6">{subheader}</div>}
+        <div className="overflow-y-auto px-6 pb-6 pt-4">{children}</div>
       </div>
     </div>
   );
