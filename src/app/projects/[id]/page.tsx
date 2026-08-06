@@ -27,7 +27,7 @@ interface Progress {
   total: number;
 }
 
-type OpenModal = "run" | "dictionary" | "health" | null;
+type OpenModal = "run" | "schedule" | "dictionary" | "health" | null;
 
 export default function ProjectPage() {
   return (
@@ -62,6 +62,11 @@ function ProjectDashboard() {
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
   const [openModal, setOpenModal] = useState<OpenModal>(null);
+  const [dictTab, setDictTab] = useState<"merge" | "analyze">("merge");
+  // Example answers revealed per prompt in the prompt-health view.
+  const [examples, setExamples] = useState<
+    Record<string, string[] | "loading">
+  >({});
   // Which run's results are shown. null = follow the latest complete run;
   // set explicitly when the user picks a run (or arrives via ?run=).
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
@@ -276,12 +281,20 @@ function ProjectDashboard() {
           onClick={() => setOpenModal("run")}
         />
         <TaskButton
-          label="Brand dictionary"
-          bubble={pendingDict > 0 ? pendingDict : null}
-          onClick={() => setOpenModal("dictionary")}
+          label="Schedule"
+          bubble={null}
+          onClick={() => setOpenModal("schedule")}
         />
         <TaskButton
-          label="Health check"
+          label="Brand dictionary"
+          bubble={pendingDict > 0 ? pendingDict : null}
+          onClick={() => {
+            setDictTab("merge");
+            setOpenModal("dictionary");
+          }}
+        />
+        <TaskButton
+          label="Prompt health"
           bubble={flaggedPrompts.length > 0 ? flaggedPrompts.length : null}
           onClick={() => setOpenModal("health")}
         />
@@ -463,26 +476,32 @@ function ProjectDashboard() {
               {prompts.filter((p) => p.retired === 0).length} prompts ×{" "}
               {repeats} repeats — more repeats, tighter confidence intervals.
             </p>
-            <div className="border-t border-line pt-4">
-              <label className="grid gap-1.5 text-sm font-medium max-w-48">
-                Automatic runs
-                <select
-                  value={project.schedule}
-                  onChange={(e) => setSchedule(e.target.value as RunSchedule)}
-                  className="input"
-                >
-                  <option value="none">off</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
-              </label>
-              {project.schedule !== "none" && (
-                <p className="text-[13px] text-ink-3 mt-2">
-                  Automatic {project.schedule} runs fire at the daily 06:00 UTC
-                  check.
-                </p>
-              )}
-            </div>
+          </div>
+        </Modal>
+      )}
+
+      {openModal === "schedule" && (
+        <Modal title="Automatic runs" onClose={() => setOpenModal(null)}>
+          <div className="grid gap-3">
+            <label className="grid gap-1.5 text-sm font-medium max-w-48">
+              Cadence
+              <select
+                value={project.schedule}
+                onChange={(e) => setSchedule(e.target.value as RunSchedule)}
+                className="input"
+              >
+                <option value="none">off</option>
+                <option value="weekly">weekly</option>
+                <option value="monthly">monthly</option>
+              </select>
+            </label>
+            <p className="text-[13px] text-ink-3">
+              {project.schedule === "none"
+                ? "Off — runs only fire when you launch them."
+                : `Automatic ${project.schedule} runs fire at the daily 06:00 UTC check, using the latest battery and 5 repeats.`}{" "}
+              Scheduled runs build the trend line — same prompts, same
+              dictionary, comparable over time.
+            </p>
           </div>
         </Modal>
       )}
@@ -493,26 +512,49 @@ function ProjectDashboard() {
           wide
           onClose={() => setOpenModal(null)}
         >
-          <p className="text-[13px] text-ink-3 mb-4 -mt-1">
-            New names the answers surfaced. Approve as a distinct brand, merge
-            as an alias of a known one, or reject. Decisions apply
-            retroactively to every run — the raw extracted names are never
-            changed, so everything is reversible.
-          </p>
-          {pendingDict > 0 && (
-            <div className="mb-4">
+          <div className="mb-4 flex gap-1 border-b border-line">
+            {(
+              [
+                ["merge", `Merge${pendingDict > 0 ? ` (${pendingDict})` : ""}`],
+                ["analyze", "Analyze"],
+              ] as const
+            ).map(([tab, label]) => (
               <button
+                key={tab}
                 type="button"
-                onClick={suggestDispositions}
-                disabled={suggesting2}
-                className="btn-primary px-3 py-1.5 text-[13px]"
+                onClick={() => setDictTab(tab)}
+                className={`px-3 py-2 text-sm font-semibold -mb-px border-b-2 ${
+                  dictTab === tab
+                    ? "border-primary text-ink"
+                    : "border-transparent text-ink-3 hover:text-ink"
+                }`}
               >
-                {suggesting2
-                  ? "Reviewing…"
-                  : `Suggest dispositions for all ${pendingDict}`}
+                {label}
               </button>
-            </div>
-          )}
+            ))}
+          </div>
+          {dictTab === "merge" && (
+            <>
+              <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+                New names the answers surfaced. Approve as a distinct brand,
+                merge as an alias of a known one, or reject. Decisions apply
+                retroactively to every run — the raw extracted names are never
+                changed, so everything is reversible.
+              </p>
+              {pendingDict > 0 && (
+                <div className="mb-4">
+                  <button
+                    type="button"
+                    onClick={suggestDispositions}
+                    disabled={suggesting2}
+                    className="btn-primary px-3 py-1.5 text-[13px]"
+                  >
+                    {suggesting2
+                      ? "Reviewing…"
+                      : `Suggest dispositions for all ${pendingDict}`}
+                  </button>
+                </div>
+              )}
           {suggestions && (
             <div className="mb-5 rounded-lg border border-primary/30 bg-primary-soft/40 p-4">
               <div className="flex items-baseline justify-between mb-2">
@@ -632,9 +674,60 @@ function ProjectDashboard() {
               No names waiting for review — new ones queue here after each run.
             </p>
           )}
+            </>
+          )}
+          {dictTab === "analyze" && (
+            <>
+              <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+                Every grouping and whether it counts in the analysis. Excluded
+                groupings stay in the raw data and can be re-included at any
+                time — the metrics recompute retroactively.
+              </p>
+              <div className="grid gap-1">
+                {dict
+                  .filter((e) => e.status !== "pending")
+                  .sort((a, b) =>
+                    a.status === b.status
+                      ? a.canonical.localeCompare(b.canonical)
+                      : a.status === "active"
+                        ? -1
+                        : 1
+                  )
+                  .map((e) => (
+                    <label
+                      key={e.id}
+                      className="flex items-center gap-3 text-sm border-b border-line/60 py-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={e.status === "active"}
+                        onChange={() =>
+                          dictAction(
+                            e.id,
+                            e.status === "active" ? "reject" : "approve"
+                          )
+                        }
+                        className="h-4 w-4 accent-[var(--color-primary)]"
+                      />
+                      <span
+                        className={`font-medium ${e.status === "active" ? "" : "text-ink-3 line-through"}`}
+                      >
+                        {e.display_name ?? e.canonical}
+                      </span>
+                      {e.aliases.length > 0 && (
+                        <span className="text-xs text-ink-3 truncate flex-1">
+                          groups: {e.aliases.join(", ")}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+              </div>
+            </>
+          )}
           <p className="text-xs text-ink-3 mt-4">
             {pendingDict} pending ·{" "}
-            {dict.filter((e) => e.status === "active").length} active brands ·
+            {dict.filter((e) => e.status === "active").length} in analysis ·{" "}
+            {dict.filter((e) => e.status === "rejected").length} excluded ·
             dictionary v{project.dictionary_version}
           </p>
         </Modal>
@@ -642,74 +735,148 @@ function ProjectDashboard() {
 
       {openModal === "health" && (
         <Modal title="Prompt health" wide onClose={() => setOpenModal(null)}>
-          {flaggedPrompts.length > 0 ? (
-            <p className="text-[13px] text-ink-3 mb-4 -mt-1">
-              The first run flagged {flaggedPrompts.length} prompt
-              {flaggedPrompts.length === 1 ? "" : "s"} whose answers drifted
-              off-category. Refield with a suggested alternative — history is
-              preserved, and the replacement fields on the next run.
-            </p>
-          ) : (
-            <p className="text-[13px] text-ink-3 mb-4 -mt-1">
-              All prompts passed the health check. The full battery, for
-              reference:
-            </p>
-          )}
-          <div className="card divide-y divide-line">
-            {prompts
-              .filter((p) => p.retired === 0)
-              .map((p) => (
-                <div key={p.id} className="px-5 py-2.5">
-                  <div className="flex items-baseline gap-4 text-sm">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
-                      {p.theme.replace("_", " ")}
-                    </span>
-                    <span className="text-ink-2">{p.text}</span>
-                    {p.flagged === 1 && (
-                      <span className="ml-auto shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
-                        flagged
-                      </span>
-                    )}
-                  </div>
-                  {p.flagged === 1 && (
-                    <div className="mt-2 ml-32 border-l-2 border-warning/40 pl-3 grid gap-1.5">
-                      {p.flag_reason && (
-                        <p className="text-[13px] text-ink-3">
-                          {p.flag_reason}
-                        </p>
-                      )}
-                      {p.suggested_alternatives.map((alt, i) => (
-                        <div
-                          key={i}
-                          className="flex items-baseline gap-2 text-[13px]"
-                        >
-                          <span className="text-ink-2 flex-1">“{alt}”</span>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await fetch(`/api/projects/${id}/prompts`, {
-                                method: "POST",
-                                headers: {
-                                  "Content-Type": "application/json",
-                                },
-                                body: JSON.stringify({
-                                  action: "replace",
-                                  promptId: p.id,
-                                  text: alt,
-                                }),
-                              });
-                              refresh();
-                            }}
-                            className="shrink-0 font-medium text-primary hover:opacity-80"
+          <p className="text-[13px] text-ink-3 mb-4 -mt-1">
+            {flaggedPrompts.length > 0
+              ? `The health check flagged ${flaggedPrompts.length} prompt${flaggedPrompts.length === 1 ? "" : "s"} whose answers drifted off-category. Refield with a suggested alternative — history is preserved, and the replacement fields on the next run.`
+              : "All prompts passed the health check."}
+          </p>
+          <div className="grid gap-3">
+            <details open={flaggedPrompts.length > 0} className="group">
+              <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold py-1 select-none">
+                <span className="text-ink-3 transition-transform group-open:rotate-90">
+                  ▸
+                </span>
+                Flagged ({flaggedPrompts.length})
+              </summary>
+              {flaggedPrompts.length > 0 ? (
+                <div className="card divide-y divide-line mt-2">
+                  {flaggedPrompts.map((p) => (
+                    <div key={p.id} className="px-5 py-2.5">
+                      <div className="flex items-baseline gap-4 text-sm">
+                        <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                          {p.theme.replace("_", " ")}
+                        </span>
+                        <span className="text-ink-2">{p.text}</span>
+                      </div>
+                      <div className="mt-2 ml-32 border-l-2 border-warning/40 pl-3 grid gap-1.5">
+                        {p.flag_reason && (
+                          <p className="text-[13px] text-ink-3">
+                            {p.flag_reason}
+                          </p>
+                        )}
+                        {p.suggested_alternatives.map((alt, i) => (
+                          <div
+                            key={i}
+                            className="flex items-baseline gap-2 text-[13px]"
                           >
-                            Refield with this →
-                          </button>
-                        </div>
-                      ))}
+                            <span className="text-ink-2 flex-1">“{alt}”</span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await fetch(`/api/projects/${id}/prompts`, {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                  },
+                                  body: JSON.stringify({
+                                    action: "replace",
+                                    promptId: p.id,
+                                    text: alt,
+                                  }),
+                                });
+                                refresh();
+                              }}
+                              className="shrink-0 font-medium text-primary hover:opacity-80"
+                            >
+                              Refield with this →
+                            </button>
+                          </div>
+                        ))}
+                        {shownRun && (
+                          <div>
+                            {examples[p.id] === undefined && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setExamples((x) => ({
+                                    ...x,
+                                    [p.id]: "loading",
+                                  }));
+                                  const res = await fetch(
+                                    `/api/runs/${shownRun.id}/responses?promptId=${p.id}`
+                                  );
+                                  const d = res.ok
+                                    ? await res.json()
+                                    : { responses: [] };
+                                  setExamples((x) => ({
+                                    ...x,
+                                    [p.id]: d.responses
+                                      .slice(0, 3)
+                                      .map(
+                                        (r: { text: string }) => r.text
+                                      ),
+                                  }));
+                                }}
+                                className="text-[13px] font-medium text-primary hover:opacity-80"
+                              >
+                                Show example answers
+                              </button>
+                            )}
+                            {examples[p.id] === "loading" && (
+                              <span className="text-[13px] text-ink-3">
+                                loading…
+                              </span>
+                            )}
+                            {Array.isArray(examples[p.id]) && (
+                              <div className="grid gap-2 mt-1">
+                                {(examples[p.id] as string[]).map((t, i) => (
+                                  <p
+                                    key={i}
+                                    className="text-[13px] leading-relaxed text-ink-2 whitespace-pre-wrap border-l-2 border-line pl-3 max-h-40 overflow-y-auto"
+                                  >
+                                    {t}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <p className="text-sm text-ink-3 mt-2 ml-6">
+                  Nothing flagged.
+                </p>
+              )}
+            </details>
+            <details className="group">
+              <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold py-1 select-none">
+                <span className="text-ink-3 transition-transform group-open:rotate-90">
+                  ▸
+                </span>
+                Healthy (
+                {prompts.filter((p) => p.retired === 0 && p.flagged !== 1)
+                  .length}
+                )
+              </summary>
+              <div className="card divide-y divide-line mt-2">
+                {prompts
+                  .filter((p) => p.retired === 0 && p.flagged !== 1)
+                  .map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-baseline gap-4 px-5 py-2.5 text-sm"
+                    >
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3 w-28 shrink-0">
+                        {p.theme.replace("_", " ")}
+                      </span>
+                      <span className="text-ink-2">{p.text}</span>
+                    </div>
+                  ))}
+              </div>
+            </details>
           </div>
           <p className="text-[13px] text-ink-3 mt-3">
             Headline rates come from the unbranded prompts — the branded
@@ -772,14 +939,14 @@ function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:p-8"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 sm:p-8"
       onClick={onClose}
     >
       <div
-        className={`card mx-auto my-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"} bg-white p-6`}
+        className={`card flex w-full ${wide ? "max-w-3xl" : "max-w-xl"} max-h-[calc(100vh-3rem)] flex-col bg-white`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 p-6 pb-4">
           <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
           <button
             type="button"
@@ -790,7 +957,7 @@ function Modal({
             ×
           </button>
         </div>
-        {children}
+        <div className="overflow-y-auto px-6 pb-6">{children}</div>
       </div>
     </div>
   );
