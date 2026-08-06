@@ -216,6 +216,20 @@ export interface RunMetrics {
   negatives:
     | { promptText: string; quote: string | null; interpretation: string | null }[]
     | null;
+  /** Parent-company rollup — present when any grouping has a parent. */
+  parentRollup:
+    | {
+        parent: string;
+        brands: string[];
+        mentionCount: number;
+        responses: number;
+        mentionRate: number;
+        ciLow: number;
+        ciHigh: number;
+        shareOfVoice: number;
+        includesTarget: boolean;
+      }[]
+    | null;
   dictionaryVersion: number;
 }
 

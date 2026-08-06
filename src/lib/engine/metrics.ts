@@ -159,6 +159,56 @@ export async function computeRunMetrics(
   });
   brands.sort((a, b) => b.mentionRate - a.mentionRate);
 
+  // --- parent-company rollup (present only when parents are assigned) ---
+  // A parent's rate counts distinct answers naming ANY of its brands, so
+  // two siblings in one answer count once — not a sum of member rates.
+  const parentByNorm = new Map<string, string>();
+  const parentMembers = new Map<string, Set<string>>();
+  for (const e of dictionary) {
+    if (e.status !== "active" || !e.parent) continue;
+    parentByNorm.set(e.canonical.trim().toLowerCase(), e.parent);
+    const members = parentMembers.get(e.parent) ?? new Set<string>();
+    members.add(e.display_name ?? e.canonical);
+    parentMembers.set(e.parent, members);
+  }
+  let parentRollup: RunMetrics["parentRollup"] = null;
+  if (parentMembers.size > 0) {
+    const stats = new Map<
+      string,
+      { responseIds: Set<string>; mentionCount: number; hasTarget: boolean }
+    >();
+    for (const [norm, entry] of byBrand.entries()) {
+      const parent = parentByNorm.get(norm);
+      if (!parent) continue;
+      const s =
+        stats.get(parent) ??
+        { responseIds: new Set<string>(), mentionCount: 0, hasTarget: false };
+      for (const row of entry.rows) s.responseIds.add(row.response_id);
+      s.mentionCount += entry.rows.length;
+      if (norm === targetNorm) s.hasTarget = true;
+      stats.set(parent, s);
+    }
+    parentRollup = [...parentMembers.entries()]
+      .map(([parent, members]) => {
+        const s = stats.get(parent);
+        const k = s?.responseIds.size ?? 0;
+        const ci = wilson(k, unbranded.length);
+        return {
+          parent,
+          brands: [...members].sort(),
+          mentionCount: s?.mentionCount ?? 0,
+          responses: k,
+          mentionRate: unbranded.length > 0 ? k / unbranded.length : 0,
+          ciLow: ci.low,
+          ciHigh: ci.high,
+          shareOfVoice:
+            totalMentions > 0 ? (s?.mentionCount ?? 0) / totalMentions : 0,
+          includesTarget: s?.hasTarget ?? false,
+        };
+      })
+      .sort((a, b) => b.mentionRate - a.mentionRate);
+  }
+
   // Guarantee the target brand appears even at zero mentions.
   if (!brands.some((b) => b.isTarget)) {
     const ci = wilson(0, unbranded.length);
@@ -429,6 +479,7 @@ export async function computeRunMetrics(
     reasonLift,
     promptGrid,
     negatives,
+    parentRollup,
     dictionaryVersion: project.dictionary_version,
   };
 }

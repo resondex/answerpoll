@@ -282,8 +282,9 @@ function ProjectDashboard() {
             </div>
           )}
           <RunResults
-            key={`${shownRun.id}:${dictVersion}`}
+            key={shownRun.id}
             runId={shownRun.id}
+            refreshToken={dictVersion}
           />
         </>
       ) : (
@@ -464,6 +465,7 @@ function ProjectDashboard() {
         <Modal
           title="Brand dictionary"
           wide
+          tall
           onClose={() => setOpenModal(null)}
           subheader={
             <div className="flex gap-1 border-b border-line">
@@ -502,15 +504,16 @@ function ProjectDashboard() {
           {dictTab === "analyze" && (
             <>
               <p className="text-[13px] text-ink-3 mb-4 -mt-1">
-                Every grouping and whether it counts in the analysis. Excluded
-                groupings stay in the raw data and can be re-included at any
-                time — the metrics recompute retroactively.
+                Every grouping and whether it counts in the analysis, filed
+                under its parent company. Excluded groupings stay in the raw
+                data and can be re-included at any time — the metrics
+                recompute retroactively.
               </p>
-              <div className="grid gap-1">
-                {dict
+              {(() => {
+                // Merge remnants live on as aliases of an active grouping —
+                // they are not their own row anymore.
+                const rows = dict
                   .filter((e) => e.status !== "pending")
-                  // Merge remnants live on as aliases of an active grouping —
-                  // they are not their own row anymore.
                   .filter((e) => {
                     if (e.status !== "rejected") return true;
                     const n = e.canonical.trim().toLowerCase();
@@ -518,42 +521,83 @@ function ProjectDashboard() {
                       (x) => x.status === "active" && x.aliases.includes(n)
                     );
                   })
-                  .sort((a, b) =>
-                    a.status === b.status
-                      ? a.canonical.localeCompare(b.canonical)
-                      : a.status === "active"
-                        ? -1
-                        : 1
-                  )
-                  .map((e) => (
-                    <label
-                      key={e.id}
-                      className="flex items-center gap-3 text-sm border-b border-line/60 py-2 cursor-pointer"
+                  .sort((a, b) => a.canonical.localeCompare(b.canonical));
+                const active = rows.filter((e) => e.status === "active");
+                const excluded = rows.filter((e) => e.status === "rejected");
+                const parents = [
+                  ...new Set(
+                    active
+                      .map((e) => e.parent)
+                      .filter((p): p is string => !!p)
+                  ),
+                ].sort((a, b) => a.localeCompare(b));
+                const row = (e: DictionaryEntry, indent = false) => (
+                  <label
+                    key={e.id}
+                    className={`flex items-center gap-3 text-sm border-b border-line/60 py-2 cursor-pointer ${indent ? "ml-5" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={e.status === "active"}
+                      onChange={() =>
+                        dictAction(
+                          e.id,
+                          e.status === "active" ? "reject" : "approve"
+                        )
+                      }
+                      className="h-4 w-4 accent-[var(--color-primary)]"
+                    />
+                    <span
+                      className={`font-medium ${e.status === "active" ? "" : "text-ink-3 line-through"}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={e.status === "active"}
-                        onChange={() =>
-                          dictAction(
-                            e.id,
-                            e.status === "active" ? "reject" : "approve"
-                          )
-                        }
-                        className="h-4 w-4 accent-[var(--color-primary)]"
-                      />
-                      <span
-                        className={`font-medium ${e.status === "active" ? "" : "text-ink-3 line-through"}`}
-                      >
-                        {e.display_name ?? e.canonical}
+                      {e.display_name ?? e.canonical}
+                    </span>
+                    {e.aliases.length > 0 && (
+                      <span className="text-xs text-ink-3 truncate flex-1">
+                        groups: {e.aliases.join(", ")}
                       </span>
-                      {e.aliases.length > 0 && (
-                        <span className="text-xs text-ink-3 truncate flex-1">
-                          groups: {e.aliases.join(", ")}
-                        </span>
+                    )}
+                  </label>
+                );
+                return (
+                  <div className="grid gap-4">
+                    {parents.map((p) => (
+                      <div key={p}>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">
+                          {p}
+                        </p>
+                        <div className="grid gap-1">
+                          {active
+                            .filter((e) => e.parent === p)
+                            .map((e) => row(e, true))}
+                        </div>
+                      </div>
+                    ))}
+                    <div>
+                      {parents.length > 0 && (
+                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">
+                          Independent
+                        </p>
                       )}
-                    </label>
-                  ))}
-              </div>
+                      <div className="grid gap-1">
+                        {active
+                          .filter((e) => !e.parent)
+                          .map((e) => row(e, parents.length > 0))}
+                      </div>
+                    </div>
+                    {excluded.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">
+                          Excluded from analysis
+                        </p>
+                        <div className="grid gap-1">
+                          {excluded.map((e) => row(e, parents.length > 0))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
           <p className="text-xs text-ink-3 mt-4">
@@ -761,12 +805,16 @@ function TaskButton({
 function Modal({
   title,
   wide,
+  tall,
   onClose,
   subheader,
   children,
 }: {
   title: string;
   wide?: boolean;
+  /** Fixed height (vs. content-sized) — keeps tabbed modals from resizing
+   * as the user switches tabs. */
+  tall?: boolean;
   onClose: () => void;
   /** Pinned below the title, above the scroll area — e.g. a tab bar. */
   subheader?: React.ReactNode;
@@ -778,7 +826,7 @@ function Modal({
       onClick={onClose}
     >
       <div
-        className={`card flex w-full ${wide ? "max-w-3xl" : "max-w-xl"} max-h-[calc(100vh-3rem)] flex-col bg-white`}
+        className={`card flex w-full ${wide ? "max-w-3xl" : "max-w-xl"} ${tall ? "h-[calc(100vh-3rem)]" : "max-h-[calc(100vh-3rem)]"} flex-col bg-white`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-start justify-between gap-4 p-6 pb-4">

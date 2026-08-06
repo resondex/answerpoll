@@ -10,23 +10,37 @@ const pct = (x: number) => `${Math.round(x * 100)}%`;
  * dashboard. Fetches its own metrics so the parent only has to say which
  * run is selected.
  */
-export default function RunResults({ runId }: { runId: string }) {
+export default function RunResults({
+  runId,
+  refreshToken = 0,
+}: {
+  runId: string;
+  /** Bump to refetch in place — current results stay up while the new ones
+   * load, so dictionary edits don't flash a skeleton. */
+  refreshToken?: number;
+}) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    setLoaded(false);
+    let cancelled = false;
     fetch(`/api/runs/${runId}/metrics`)
       .then((r) => r.json())
       .then((d) => {
+        if (cancelled) return;
         setMetrics(d.metrics);
         setProject(d.project);
       })
-      .finally(() => setLoaded(true));
-  }, [runId]);
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, refreshToken]);
 
-  if (!loaded) {
+  if (!loaded && !metrics) {
     return (
       <div className="grid gap-4">
         <div className="grid gap-3 sm:grid-cols-3">
@@ -271,6 +285,59 @@ export default function RunResults({ runId }: { runId: string }) {
           />
         </div>
       </section>
+
+      {metrics.parentRollup && metrics.parentRollup.length > 0 && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">By parent company</h2>
+          <p className="text-[13px] text-ink-3 mb-5">
+            Combined footprint of each parent&apos;s brands — an answer naming
+            any of them counts once, so this is reach, not a sum of the rows
+            above.
+          </p>
+          <div className="grid gap-2.5">
+            {metrics.parentRollup.map((p) => {
+              const maxParent = Math.max(
+                ...metrics.parentRollup!.map((x) => x.mentionRate),
+                0.01
+              );
+              return (
+                <div
+                  key={p.parent}
+                  className="grid grid-cols-[9rem_1fr_11rem] items-center gap-3"
+                  title={`${p.parent}: ${p.brands.join(", ")} — named in ${p.responses} of ${metrics.unbrandedResponses} answers (95% CI ${pct(p.ciLow)}–${pct(p.ciHigh)}) · ${pct(p.shareOfVoice)} share of voice`}
+                >
+                  <span
+                    className={`truncate text-sm text-right ${p.includesTarget ? "font-semibold text-primary" : "text-ink-2"}`}
+                  >
+                    {p.parent}
+                  </span>
+                  <div className="h-4 relative">
+                    <div
+                      className={`absolute inset-y-0 left-0 rounded-r-[4px] ${p.includesTarget ? "bg-primary" : "bg-ink-3"}`}
+                      style={{
+                        width: `${(p.mentionRate / maxParent) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-sm tabular-nums text-ink-2 whitespace-nowrap">
+                    {pct(p.mentionRate)}
+                    <span className="text-xs text-ink-3">
+                      {" "}
+                      · CI {pct(p.ciLow)}–{pct(p.ciHigh)} · SOV{" "}
+                      {pct(p.shareOfVoice)}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-ink-3 mt-4">
+            {metrics.parentRollup
+              .map((p) => `${p.parent}: ${p.brands.join(", ")}`)
+              .join(" · ")}
+          </p>
+        </section>
+      )}
 
       <section className="card p-6">
         <h2 className="section-label mb-1">Brand summary</h2>
