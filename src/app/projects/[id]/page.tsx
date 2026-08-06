@@ -150,14 +150,20 @@ export default function ProjectPage() {
   }, [hasActiveRun, refresh]);
 
   async function launchRun() {
+    if (launching || hasActiveRun) return;
     setLaunching(true);
-    await fetch(`/api/projects/${id}/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, repeats }),
-    });
-    setLaunching(false);
-    refresh();
+    try {
+      await fetch(`/api/projects/${id}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, repeats }),
+      });
+      // Stay in the launching state until the refreshed run list shows the
+      // active run — otherwise the button re-enables for a beat in between.
+      await refresh();
+    } finally {
+      setLaunching(false);
+    }
   }
 
   if (!detail) {
@@ -253,9 +259,19 @@ export default function ProjectPage() {
           <button
             onClick={launchRun}
             disabled={launching || hasActiveRun}
-            className="btn-primary"
+            className="btn-primary inline-flex items-center gap-2"
           >
-            {hasActiveRun ? "Run in progress…" : `Run ${totalCalls} queries`}
+            {launching && (
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin"
+              />
+            )}
+            {launching
+              ? "Starting…"
+              : hasActiveRun
+                ? "Run in progress…"
+                : `Run ${totalCalls} queries`}
           </button>
           <label className="grid gap-1.5 text-sm font-medium sm:ml-auto">
             Automatic runs
