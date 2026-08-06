@@ -576,7 +576,7 @@ function ProjectDashboard() {
                     <div>
                       {parents.length > 0 && (
                         <p className="text-xs font-semibold uppercase tracking-wide text-ink-3 mb-1">
-                          Independent
+                          Independent — each its own parent company
                         </p>
                       )}
                       <div className="grid gap-1">

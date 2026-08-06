@@ -290,12 +290,18 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">By parent company</h2>
           <p className="text-[13px] text-ink-3 mb-5">
-            Combined footprint of each parent&apos;s brands — an answer naming
-            any of them counts once, so this is reach, not a sum of the rows
-            above.
+            Combined footprint at parent grain — every independent brand is
+            its own parent company. An answer naming any of a parent&apos;s
+            brands counts once, so this is reach, not a sum of the rows above.
           </p>
           <div className="grid gap-2.5">
-            {metrics.parentRollup.map((p) => {
+            {(() => {
+              // Top rows only, with the target's parent always on the board.
+              const shown = metrics.parentRollup!.slice(0, 12);
+              const mine = metrics.parentRollup!.find((p) => p.includesTarget);
+              if (mine && !shown.includes(mine)) shown[shown.length - 1] = mine;
+              return shown;
+            })().map((p) => {
               const maxParent = Math.max(
                 ...metrics.parentRollup!.map((x) => x.mentionRate),
                 0.01
@@ -333,8 +339,12 @@ export default function RunResults({
           </div>
           <p className="text-xs text-ink-3 mt-4">
             {metrics.parentRollup
+              .filter((p) => p.brands.length > 1)
               .map((p) => `${p.parent}: ${p.brands.join(", ")}`)
-              .join(" · ")}
+              .join(" · ") || null}
+            {metrics.parentRollup.some((p) => p.brands.length > 1)
+              ? " — every other brand stands as its own parent."
+              : "Every brand currently stands as its own parent."}
           </p>
         </section>
       )}

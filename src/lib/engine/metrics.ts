@@ -162,17 +162,22 @@ export async function computeRunMetrics(
   // --- parent-company rollup (present only when parents are assigned) ---
   // A parent's rate counts distinct answers naming ANY of its brands, so
   // two siblings in one answer count once — not a sum of member rates.
+  // Every independent brand is its own parent company by default, so the
+  // view is a complete parent-grain landscape, not just the grouped ones.
   const parentByNorm = new Map<string, string>();
   const parentMembers = new Map<string, Set<string>>();
+  const explicitParents = new Set<string>();
   for (const e of dictionary) {
-    if (e.status !== "active" || !e.parent) continue;
-    parentByNorm.set(e.canonical.trim().toLowerCase(), e.parent);
-    const members = parentMembers.get(e.parent) ?? new Set<string>();
+    if (e.status !== "active") continue;
+    const label = e.parent ?? e.display_name ?? e.canonical;
+    if (e.parent) explicitParents.add(e.parent);
+    parentByNorm.set(e.canonical.trim().toLowerCase(), label);
+    const members = parentMembers.get(label) ?? new Set<string>();
     members.add(e.display_name ?? e.canonical);
-    parentMembers.set(e.parent, members);
+    parentMembers.set(label, members);
   }
   let parentRollup: RunMetrics["parentRollup"] = null;
-  if (parentMembers.size > 0) {
+  if (explicitParents.size > 0) {
     const stats = new Map<
       string,
       { responseIds: Set<string>; mentionCount: number; hasTarget: boolean }
@@ -206,6 +211,14 @@ export async function computeRunMetrics(
           includesTarget: s?.hasTarget ?? false,
         };
       })
+      // Deliberately-grouped parents always show; single-brand default
+      // parents earn their row by appearing in this run (or being you).
+      .filter(
+        (p) =>
+          explicitParents.has(p.parent) ||
+          p.mentionCount > 0 ||
+          p.includesTarget
+      )
       .sort((a, b) => b.mentionRate - a.mentionRate);
   }
 
