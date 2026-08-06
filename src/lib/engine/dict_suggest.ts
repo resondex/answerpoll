@@ -4,9 +4,10 @@ import { store } from "../store";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
-// v2: grain rule — feature surfaces/tiers merge into the buyer-level
-// offering. In the cache key so prompt changes bypass stale suggestions.
-const SUGGEST_RULES_VERSION = "v2";
+// v3: grain rule (feature surfaces/tiers merge into the buyer-level
+// offering) + plainest-name anchoring. In the cache key so prompt changes
+// bypass stale suggestions.
+const SUGGEST_RULES_VERSION = "v3";
 
 const SCHEMA = {
   type: "object",
@@ -93,7 +94,10 @@ export async function getDictionarySuggestions(
           `Active brands: ${active.map((a) => a.canonical).join(", ")}.\n` +
           "Also treat pending names as potential merge targets for OTHER " +
           "pending names by proposing approve for the best-named variant and " +
-          "merge for the rest, with merge_into set to the approved variant.",
+          "merge for the rest, with merge_into set to the approved variant. " +
+          "The approved variant must be the plainest buyer-facing brand name " +
+          "('GitLab', not 'GitLab Issues & Boards'; 'Notion', not 'Notion " +
+          "Projects') — feature-phrased variants are always the ones merged.",
       },
       {
         role: "user",
