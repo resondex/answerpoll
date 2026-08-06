@@ -6,7 +6,7 @@ import type { RunMetrics } from "../types";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v1";
+const INSIGHTS_VERSION = "v2";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -106,16 +106,10 @@ function buildFacts(
   }
   if (metrics.reasonLift) {
     const sorted = [...metrics.reasonLift].sort((a, b) => b.lift - a.lift);
-    for (const r of sorted.slice(0, 2)) {
+    for (const r of [...sorted.slice(0, 2), ...sorted.slice(-2)]) {
       add(
-        `argument lift: ${r.code}`,
-        `appears in ${pct(r.shareWins)} of ${brandName} wins vs ${pct(r.shareAll)} of all answers (${r.lift >= 0 ? "+" : ""}${Math.round(r.lift * 100)} pts)`
-      );
-    }
-    for (const r of sorted.slice(-2)) {
-      add(
-        `argument lift: ${r.code}`,
-        `appears in ${pct(r.shareWins)} of ${brandName} wins vs ${pct(r.shareAll)} of all answers (${r.lift >= 0 ? "+" : ""}${Math.round(r.lift * 100)} pts)`
+        `share of answers using the argument "${r.code}" — in ${brandName} wins vs overall`,
+        `${pct(r.shareWins)} of wins vs ${pct(r.shareAll)} of all answers (${r.lift >= 0 ? "+" : ""}${Math.round(r.lift * 100)} pts)`
       );
     }
   }
@@ -136,15 +130,15 @@ function buildFacts(
   }
   if (metrics.negatives) {
     add(
-      "negative framings",
-      `${metrics.negatives.length} answers framed ${brandName} negatively`
+      `answers framing ${brandName} negatively`,
+      String(metrics.negatives.length)
     );
   }
   if (metrics.parentRollup) {
     for (const p of metrics.parentRollup.slice(0, 3)) {
       add(
-        `parent company ${p.parent} reach`,
-        `named in ${pct(p.mentionRate)} of answers (95% CI ${pct(p.ciLow)}–${pct(p.ciHigh)}; ${pct(p.shareOfVoice)} share of voice)`
+        `parent company "${p.parent}" (any of its brands) named in`,
+        `${pct(p.mentionRate)} of answers (95% CI ${pct(p.ciLow)}–${pct(p.ciHigh)}), with ${pct(p.shareOfVoice)} share of voice`
       );
     }
   }
@@ -273,6 +267,14 @@ export async function buildRunInsights(
           "placeholder. Sentences violating this are deleted by an automated " +
           "gate, so a beautiful insight with a hand-typed number is a wasted " +
           "insight.\n\n" +
+          "GRAMMAR — each placeholder expands to exactly its fact's value (a " +
+          "figure phrase; the label tells you what it measures but is NOT " +
+          "inserted). Write the sentence so the expanded phrase reads as " +
+          "natural prose: 'Reporting travels with wins — {F14}.' expands " +
+          "cleanly; 'appearing at the rate indicated by {F14}' does not. " +
+          "Read your sentence back with the value dropped in before " +
+          "committing to it. Do NOT number your insights ('One.', '1.') — " +
+          "numbering is applied by the renderer.\n\n" +
           "Produce:\n" +
           "- sections: one per analysis with 2-4 numbered insights each. Keys " +
           "and titles, in order: scorecard 'Headline'; leaderboard 'Brand " +
@@ -283,11 +285,14 @@ export async function buildRunInsights(
           "exists).\n" +
           "- plays: 3 to 5 recommendations. Each names the measured gap " +
           "(gap), the action (play), the exact metric that will grade it " +
-          "(measured_by, e.g. 'first-pick rate on budget-constrained " +
-          "prompts'), and today's baseline (today — a single {F#} " +
-          "placeholder, nothing else).\n" +
+          "(measured_by), and today's baseline (today — a single {F#} " +
+          "placeholder, nothing else). measured_by must describe THE SAME " +
+          "metric the today placeholder carries — if the baseline fact is " +
+          "the overall first-pick rate, measured_by says 'overall first-pick " +
+          "rate', not a subset we did not measure.\n" +
           "An insight is a claim someone could act on, not a restatement of " +
-          "a table row.",
+          "a table row; never write methodological filler ('these results " +
+          "derive from a sample of…').",
       },
       {
         role: "user",
