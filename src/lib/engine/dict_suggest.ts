@@ -4,6 +4,9 @@ import { store } from "../store";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
+// v2: grain rule — feature surfaces/tiers merge into the buyer-level
+// offering. In the cache key so prompt changes bypass stale suggestions.
+const SUGGEST_RULES_VERSION = "v2";
 
 const SCHEMA = {
   type: "object",
@@ -54,6 +57,7 @@ export async function getDictionarySuggestions(
   const stateHash = createHash("sha256")
     .update(
       JSON.stringify({
+        v: SUGGEST_RULES_VERSION,
         p: pending.map((e) => e.canonical.trim().toLowerCase()).sort(),
         a: active.map((e) => e.canonical.trim().toLowerCase()).sort(),
       })
@@ -78,8 +82,14 @@ export async function getDictionarySuggestions(
           "relevant to the category, worth its own row.\n" +
           "- ignore: not a brand in this category (generic terms, one-off " +
           "tangents, tools from unrelated categories).\n" +
-          "Be conservative with merge: different products from the same " +
-          "company are NOT merges. Every suggestion needs a one-line rationale.\n" +
+          "GRAIN RULE — the analyzable unit is the offering a buyer would " +
+          "choose in this category. Feature surfaces, sub-modules, tiers, and " +
+          "compound phrasings of the same offering ('X Issues', 'X Boards', " +
+          "'X Issues & Boards', 'X CE/EE', 'X Ultimate') all merge into that " +
+          "offering. Distinct purchasable products a buyer weighs separately " +
+          "(even from the same company) stay separate — Jira and Trello are " +
+          "different offerings; GitLab Issues and GitLab Boards are the same " +
+          "one. Every suggestion needs a one-line rationale.\n" +
           `Active brands: ${active.map((a) => a.canonical).join(", ")}.\n` +
           "Also treat pending names as potential merge targets for OTHER " +
           "pending names by proposing approve for the best-named variant and " +
