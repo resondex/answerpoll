@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import TrendChart from "./trend_chart";
+import RunResults from "./run_results";
 import type {
   DictionaryEntry,
   Project,
@@ -27,7 +28,16 @@ interface Progress {
 }
 
 export default function ProjectPage() {
+  return (
+    <Suspense>
+      <ProjectDashboard />
+    </Suspense>
+  );
+}
+
+function ProjectDashboard() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [trend, setTrend] = useState<ProjectTrend | null>(null);
@@ -49,6 +59,14 @@ export default function ProjectPage() {
   const [model, setModel] = useState(MODELS[0]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
+  // Which run's results are shown. null = follow the latest complete run;
+  // set explicitly when the user picks a run (or arrives via ?run=).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(
+    searchParams.get("run")
+  );
+  // Bumped after dictionary edits so RunResults refetches — dictionary
+  // decisions apply retroactively at read time.
+  const [dictVersion, setDictVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -75,6 +93,12 @@ export default function ProjectPage() {
     if (dr.ok) setDict((await dr.json()).entries ?? []);
   }, [id]);
 
+  async function refreshDict() {
+    const dr = await fetch(`/api/projects/${id}/dictionary`);
+    if (dr.ok) setDict((await dr.json()).entries ?? []);
+    setDictVersion((v) => v + 1);
+  }
+
   async function suggestDispositions() {
     setSuggesting2(true);
     const res = await fetch(`/api/projects/${id}/dictionary/suggest`, {
@@ -87,15 +111,13 @@ export default function ProjectPage() {
   async function applySuggestions() {
     if (!suggestions) return;
     setApplying(true);
-    const actions = suggestions
-      .filter((s) => s.action !== "ignore" || true)
-      .map((s) =>
-        s.action === "merge" && s.mergeIntoId
-          ? { entryId: s.entryId, action: "merge", mergeIntoId: s.mergeIntoId }
-          : s.action === "approve"
-            ? { entryId: s.entryId, action: "approve" }
-            : { entryId: s.entryId, action: "reject" }
-      );
+    const actions = suggestions.map((s) =>
+      s.action === "merge" && s.mergeIntoId
+        ? { entryId: s.entryId, action: "merge", mergeIntoId: s.mergeIntoId }
+        : s.action === "approve"
+          ? { entryId: s.entryId, action: "approve" }
+          : { entryId: s.entryId, action: "reject" }
+    );
     await fetch(`/api/projects/${id}/dictionary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -103,8 +125,7 @@ export default function ProjectPage() {
     });
     setApplying(false);
     setSuggestions(null);
-    const dr = await fetch(`/api/projects/${id}/dictionary`);
-    if (dr.ok) setDict((await dr.json()).entries ?? []);
+    await refreshDict();
   }
 
   async function dictAction(
@@ -120,14 +141,11 @@ export default function ProjectPage() {
         mergeIntoId: action === "merge" ? mergeTargets[entryId] : undefined,
       }),
     });
-    const dr = await fetch(`/api/projects/${id}/dictionary`);
-    if (dr.ok) setDict((await dr.json()).entries ?? []);
+    await refreshDict();
   }
 
   async function setSchedule(schedule: RunSchedule) {
-    setDetail((d) =>
-      d ? { ...d, project: { ...d.project, schedule } } : d
-    );
+    setDetail((d) => (d ? { ...d, project: { ...d.project, schedule } } : d));
     await fetch(`/api/projects/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -176,13 +194,24 @@ export default function ProjectPage() {
   }
   const { project, prompts, runs } = detail;
   const totalCalls = prompts.length * repeats;
+  const completeRuns = runs.filter((r) => r.status === "complete");
+  // Selected run must still exist and be complete; otherwise show latest.
+  const shownRun =
+    completeRuns.find((r) => r.id === selectedRunId) ?? completeRuns[0] ?? null;
+  const activeRun = runs.find(
+    (r) => r.status === "pending" || r.status === "running"
+  );
+  const pendingDict = dict.filter((e) => e.status === "pending").length;
+  const flaggedPrompts = prompts.filter(
+    (p) => p.flagged === 1 && p.retired === 0
+  ).length;
 
   return (
     <div className="grid gap-8">
       <div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <h1 className="text-2xl font-semibold tracking-tight">
-            {project.name}
+            {project.name} — LLM visibility
           </h1>
           <Link
             href="/"
@@ -201,7 +230,7 @@ export default function ProjectPage() {
             {project.audience ? ` · ${project.audience}` : ""}
           </p>
           <span className="flex items-center gap-4">
-            {runs.some((r) => r.status === "complete") && (
+            {completeRuns.length > 0 && (
               <a
                 href={`/api/projects/${id}/study`}
                 className="text-sm font-semibold text-primary hover:opacity-80"
@@ -231,7 +260,6 @@ export default function ProjectPage() {
       </div>
 
       <section className="card p-6">
-        <h2 className="section-label mb-4">New run</h2>
         <div className="flex flex-wrap items-end gap-4">
           <label className="grid gap-1.5 text-sm font-medium">
             Model
@@ -286,99 +314,104 @@ export default function ProjectPage() {
             </select>
           </label>
         </div>
-        <p className="text-[13px] text-ink-3 mt-3">
-          {prompts.length} prompts × {repeats} repeats — more repeats, tighter
-          confidence intervals.
-          {project.schedule !== "none" &&
-            ` Automatic ${project.schedule} runs fire at the daily 06:00 UTC check.`}
-        </p>
-      </section>
-
-      <section className="card p-6">
-        <h2 className="section-label mb-1">Trend</h2>
-        {trend && trend.runs.length >= 2 ? (
-          <>
-            <p className="text-[13px] text-ink-3 mb-4">
-              {project.brand} vs. named competitors across {trend.runs.length}{" "}
-              completed runs.
-            </p>
-            <TrendChart trend={trend} />
-          </>
+        {activeRun && progress ? (
+          <div className="mt-4 flex items-center gap-4">
+            <StatusBadge status={activeRun.status} />
+            <ProgressBar
+              completed={progress.completed}
+              total={progress.total}
+            />
+            <span className="text-[13px] text-ink-3">
+              {activeRun.model} · {activeRun.repeats} repeats — results appear
+              below the moment it completes.
+            </span>
+          </div>
         ) : (
-          <p className="text-sm text-ink-3 py-4">
-            The trend line starts with your second completed run — schedule
-            automatic runs and the history builds itself.
+          <p className="text-[13px] text-ink-3 mt-3">
+            {prompts.length} prompts × {repeats} repeats — more repeats,
+            tighter confidence intervals.
+            {project.schedule !== "none" &&
+              ` Automatic ${project.schedule} runs fire at the daily 06:00 UTC check.`}
           </p>
         )}
       </section>
 
-      <section>
-        <h2 className="section-label mb-3">Runs</h2>
-        {runs.length === 0 ? (
-          <div className="card px-5 py-8 text-center text-sm text-ink-3">
-            Launch your first run to start measuring.
+      {(pendingDict > 0 || flaggedPrompts > 0) && (
+        <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm grid gap-1">
+          {pendingDict > 0 && (
+            <p>
+              <span className="font-semibold">
+                {pendingDict} new brand name{pendingDict === 1 ? "" : "s"}
+              </span>{" "}
+              surfaced in the answers — the metrics below count them as
+              separate brands until you review them.{" "}
+              <a
+                href="#dictionary"
+                className="font-semibold text-primary hover:opacity-80"
+              >
+                Review the dictionary ↓
+              </a>
+            </p>
+          )}
+          {flaggedPrompts > 0 && (
+            <p>
+              <span className="font-semibold">Health check:</span> the first
+              run flagged {flaggedPrompts} prompt
+              {flaggedPrompts === 1 ? "" : "s"} whose answers drifted
+              off-category.{" "}
+              <a
+                href="#battery"
+                className="font-semibold text-primary hover:opacity-80"
+              >
+                Review the battery ↓
+              </a>
+            </p>
+          )}
+        </div>
+      )}
+
+      {shownRun ? (
+        <>
+          {completeRuns.length > 1 && (
+            <div className="flex items-center gap-3 -mb-2">
+              <span className="section-label">Results</span>
+              <select
+                className="input w-auto text-[13px]"
+                value={shownRun.id}
+                onChange={(e) => setSelectedRunId(e.target.value)}
+              >
+                {completeRuns.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.created_at.slice(0, 10)} · {r.model} · {r.repeats}{" "}
+                    repeats
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <RunResults key={`${shownRun.id}:${dictVersion}`} runId={shownRun.id} />
+        </>
+      ) : (
+        !activeRun && (
+          <div className="card px-5 py-10 text-center text-sm text-ink-3">
+            Launch your first run to start measuring — results land here.
           </div>
-        ) : (
-          <ul className="grid gap-2">
-            {runs.map((r) => {
-              const active = r.status === "pending" || r.status === "running";
-              return (
-                <li
-                  key={r.id}
-                  className="card flex items-center justify-between gap-4 px-5 py-3.5"
-                >
-                  <div className="text-sm min-w-0">
-                    <span className="font-semibold">{r.model}</span>
-                    <span className="text-ink-3">
-                      {" "}
-                      · {r.repeats} repeats · {r.created_at}
-                    </span>
-                    {r.error && (
-                      <span className="text-danger"> · {r.error}</span>
-                    )}
-                    {active && progress && (
-                      <ProgressBar
-                        completed={progress.completed}
-                        total={progress.total}
-                      />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-4 shrink-0">
-                    <StatusBadge status={r.status} />
-                    {r.status === "complete" && (
-                      <Link
-                        href={`/projects/${id}/runs/${r.id}`}
-                        className="text-sm font-semibold text-primary hover:opacity-80"
-                      >
-                        Dashboard →
-                      </Link>
-                    )}
-                    {!active && (
-                      <button
-                        type="button"
-                        aria-label="delete run"
-                        onClick={async () => {
-                          if (!confirm("Delete this run and its data?")) return;
-                          await fetch(`/api/runs/${r.id}`, {
-                            method: "DELETE",
-                          });
-                          refresh();
-                        }}
-                        className="text-ink-3 hover:text-danger text-lg leading-none"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+        )
+      )}
+
+      {trend && trend.runs.length >= 2 && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">Trend</h2>
+          <p className="text-[13px] text-ink-3 mb-4">
+            {project.brand} vs. named competitors across {trend.runs.length}{" "}
+            completed runs.
+          </p>
+          <TrendChart trend={trend} />
+        </section>
+      )}
 
       {dict.some((e) => e.status === "pending") && (
-        <section className="card p-6">
+        <section id="dictionary" className="card p-6 scroll-mt-6">
           <div className="flex items-baseline justify-between gap-4">
             <h2 className="section-label mb-1">
               Brand dictionary — review queue
@@ -513,24 +546,15 @@ export default function ProjectPage() {
               ))}
           </div>
           <p className="text-xs text-ink-3 mt-3">
-            {dict.filter((e) => e.status === "pending").length} pending ·{" "}
+            {pendingDict} pending ·{" "}
             {dict.filter((e) => e.status === "active").length} active brands ·
             dictionary v{project.dictionary_version}
           </p>
         </section>
       )}
 
-      <section>
+      <section id="battery" className="scroll-mt-6">
         <h2 className="section-label mb-3">Prompt battery</h2>
-        {prompts.some((p) => p.flagged === 1 && p.retired === 0) && (
-          <div className="card border-warning/40 bg-warning/8 px-5 py-3.5 text-sm mb-3">
-            <span className="font-semibold">Health check:</span> the first run
-            flagged{" "}
-            {prompts.filter((p) => p.flagged === 1 && p.retired === 0).length}{" "}
-            prompt(s) whose answers drifted off-category. Review below before
-            scheduling automatic runs.
-          </div>
-        )}
         <div className="card divide-y divide-line">
           {prompts
             .filter((p) => p.retired === 0)
@@ -553,7 +577,10 @@ export default function ProjectPage() {
                       <p className="text-[13px] text-ink-3">{p.flag_reason}</p>
                     )}
                     {p.suggested_alternatives.map((alt, i) => (
-                      <div key={i} className="flex items-baseline gap-2 text-[13px]">
+                      <div
+                        key={i}
+                        className="flex items-baseline gap-2 text-[13px]"
+                      >
                         <span className="text-ink-2 flex-1">“{alt}”</span>
                         <button
                           type="button"
@@ -585,6 +612,79 @@ export default function ProjectPage() {
           are reported separately, since naming the brand guarantees a mention.
         </p>
       </section>
+
+      {runs.length > 0 && (
+        <section>
+          <h2 className="section-label mb-3">Run history</h2>
+          <ul className="grid gap-2">
+            {runs.map((r) => {
+              const active = r.status === "pending" || r.status === "running";
+              const shown = shownRun?.id === r.id;
+              return (
+                <li
+                  key={r.id}
+                  className={`card flex items-center justify-between gap-4 px-5 py-3.5 ${
+                    shown ? "border-primary/40" : ""
+                  }`}
+                >
+                  <div className="text-sm min-w-0">
+                    <span className="font-semibold">{r.model}</span>
+                    <span className="text-ink-3">
+                      {" "}
+                      · {r.repeats} repeats · {r.created_at}
+                    </span>
+                    {r.error && (
+                      <span className="text-danger"> · {r.error}</span>
+                    )}
+                    {active && progress && (
+                      <ProgressBar
+                        completed={progress.completed}
+                        total={progress.total}
+                      />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <StatusBadge status={r.status} />
+                    {r.status === "complete" &&
+                      (shown ? (
+                        <span className="text-xs font-semibold uppercase tracking-wide text-primary">
+                          shown above
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRunId(r.id);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="text-sm font-semibold text-primary hover:opacity-80"
+                        >
+                          View results ↑
+                        </button>
+                      ))}
+                    {!active && (
+                      <button
+                        type="button"
+                        aria-label="delete run"
+                        onClick={async () => {
+                          if (!confirm("Delete this run and its data?")) return;
+                          await fetch(`/api/runs/${r.id}`, {
+                            method: "DELETE",
+                          });
+                          refresh();
+                        }}
+                        className="text-ink-3 hover:text-danger text-lg leading-none"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
