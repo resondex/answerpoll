@@ -1,6 +1,7 @@
 import { store } from "../store";
 import { getProvider } from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
+import { classifyNonBrands } from "./suggest";
 
 const CONCURRENCY = 4;
 
@@ -111,6 +112,35 @@ export async function driveRunChunk(
             .filter((b): b is string => Boolean(b)),
         ]),
       ]);
+      // Junk filter: obvious non-brands ("self-hosted server") land in the
+      // dictionary pre-excluded — out of the review queue but visible and
+      // reversible in the Analyze tab. Real names stay pending for review.
+      const dict = await store.getDictionary(project.id);
+      const pendingEntries = dict.filter((e) => e.status === "pending");
+      if (pendingEntries.length > 0) {
+        const nonBrands = await classifyNonBrands(
+          pendingEntries.map((e) => e.canonical)
+        );
+        let excluded = 0;
+        for (const e of pendingEntries) {
+          if (nonBrands.has(e.canonical.trim().toLowerCase())) {
+            await store.upsertDictionaryEntry({
+              id: e.id,
+              projectId: project.id,
+              canonical: e.canonical,
+              aliases: e.aliases,
+              status: "rejected",
+            });
+            excluded++;
+          }
+        }
+        if (excluded > 0) {
+          await store.bumpDictionaryVersion(project.id);
+          console.log(
+            `dictionary junk filter: pre-excluded ${excluded} non-brand name(s)`
+          );
+        }
+      }
     } catch (err) {
       console.error("dictionary queue failed:", err);
     }

@@ -119,13 +119,19 @@ const openaiProvider: CompletionProvider = {
               "You code an AI assistant's answer for a brand-visibility study. " +
               `The focus brand is "${ctx.targetBrand}". Return:\n` +
               "- mentions: every company, brand, product, or provider named, in " +
-              "order of first appearance. framing: 'recommended' if endorsed or " +
-              "ranked favorably, 'negative' if criticized or advised against, " +
-              "else 'mentioned'.\n" +
+              "order of first appearance. ONLY proper-noun names — a generic " +
+              "descriptor ('a self-hosted server', 'open-source tools', " +
+              "'spreadsheets', 'a custom build') is NEVER a mention, even when " +
+              "the answer recommends it as an alternative. framing: " +
+              "'recommended' if endorsed or ranked favorably, 'negative' if " +
+              "criticized or advised against, else 'mentioned'.\n" +
               "- top_pick_brand: the ONE brand the answer explicitly crowns as " +
               "its choice ('my pick', 'best overall', the one it would get). " +
               "This is about endorsement, not order — it may differ from the " +
-              "first brand mentioned. null if the answer commits to none.\n" +
+              "first brand mentioned. Must be a proper-noun brand/product; if " +
+              "the answer's choice is a generic approach rather than a named " +
+              "product, top_pick_brand is null. null too if the answer commits " +
+              "to none.\n" +
               "- outcome: 'pick' when a top pick exists; 'clarification' when " +
               "the answer mainly asks a question instead of answering; " +
               "'no_pick' when it explains options without committing.\n" +

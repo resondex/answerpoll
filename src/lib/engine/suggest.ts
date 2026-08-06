@@ -195,6 +195,63 @@ export async function seedDictionary(
   );
 }
 
+const NONBRAND_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    non_brands: { type: "array", items: { type: "string" } },
+  },
+  required: ["non_brands"],
+} as const;
+
+/**
+ * From extracted names, pick out the ones that are NOT real brands — generic
+ * descriptors the extraction model occasionally promotes to mentions. Used
+ * post-run so junk lands in the dictionary pre-excluded (reversible in the
+ * Analyze tab) instead of cluttering the review queue.
+ */
+export async function classifyNonBrands(
+  names: string[]
+): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+  try {
+    const res = await openaiClient().chat.completions.create({
+      model: SUGGEST_MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are given names extracted from AI answers in a brand-tracking " +
+            "study. Return the ones that are NOT proper-noun brands, " +
+            "companies, or products: generic descriptors ('self-hosted " +
+            "server', 'open-source tools', 'spreadsheets', 'a custom build'), " +
+            "category words, or feature phrases. Genuine brand or product " +
+            "names — including niche and open-source ones — must NOT appear " +
+            "in your output. When unsure, leave the name out: wrongly " +
+            "excluding a real brand costs far more than letting a stray " +
+            "descriptor through.",
+        },
+        { role: "user", content: JSON.stringify(names) },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "non_brands",
+          strict: true,
+          schema: NONBRAND_SCHEMA,
+        },
+      },
+    });
+    const parsed = JSON.parse(
+      res.choices[0]?.message?.content ?? '{"non_brands":[]}'
+    ) as { non_brands: string[] };
+    return new Set(parsed.non_brands.map((n) => n.trim().toLowerCase()));
+  } catch (err) {
+    console.error("non-brand classification skipped:", err);
+    return new Set();
+  }
+}
+
 const LINT_SCHEMA = {
   type: "object",
   additionalProperties: false,
