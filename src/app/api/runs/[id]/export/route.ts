@@ -77,6 +77,16 @@ export async function GET(
         repeat_idx: r.repeat_idx,
         created_at: r.created_at,
         text: r.text,
+        outcome: r.outcome,
+        top_pick_brand: r.top_pick_brand,
+        reason_codes: r.reason_codes ? r.reason_codes.split("|") : [],
+        clarification_requested: r.clarification_requested,
+        gives_recommendation: r.gives_recommendation,
+        includes_prices: r.includes_prices,
+        includes_specs: r.includes_specs,
+        total_recommendations: r.total_recommendations,
+        focus_quote: r.focus_quote,
+        focus_interpretation: r.focus_interpretation,
         mentions: (mentionsByResponse.get(r.id) ?? []).map((m) => ({
           brand: m.brand,
           rank: m.rank,
@@ -110,7 +120,7 @@ export async function GET(
     ];
   } else if (table === "responses") {
     rows = [
-      ["response_id", "prompt", "theme", "repeat_idx", "created_at", "brands_in_order", "mention_count", "target_mentioned", "text"],
+      ["response_id", "prompt", "theme", "repeat_idx", "created_at", "brands_in_order", "mention_count", "target_mentioned", "outcome", "top_pick_brand", "reason_codes", "clarification_requested", "gives_recommendation", "includes_prices", "includes_specs", "total_recommendations", "focus_quote", "focus_interpretation", "text"],
       ...responses.map((r) => {
         const p = promptById.get(r.prompt_id);
         const ms = mentionsByResponse.get(r.id) ?? [];
@@ -123,6 +133,16 @@ export async function GET(
           ms.map((m) => m.brand).join("|"),
           ms.length,
           ms.some((m) => m.brand_norm === targetNorm) ? 1 : 0,
+          r.outcome,
+          r.top_pick_brand,
+          r.reason_codes,
+          r.clarification_requested,
+          r.gives_recommendation,
+          r.includes_prices,
+          r.includes_specs,
+          r.total_recommendations,
+          r.focus_quote,
+          r.focus_interpretation,
           r.text,
         ];
       }),
