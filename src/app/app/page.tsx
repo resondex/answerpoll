@@ -624,8 +624,14 @@ export default function AppHomePage() {
                       prompts === null ||
                       prompts.filter((p) => p.text.trim()).length < 4
                     }
-                    className="btn-primary"
+                    className="btn-primary inline-flex items-center gap-2"
                   >
+                    {submitting && (
+                      <span
+                        aria-hidden="true"
+                        className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin"
+                      />
+                    )}
                     {submitting ? "Creating…" : "Create tracker"}
                   </button>
                 </div>
