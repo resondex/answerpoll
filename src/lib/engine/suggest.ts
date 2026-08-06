@@ -222,14 +222,17 @@ export async function classifyNonBrands(
           role: "system",
           content:
             "You are given names extracted from AI answers in a brand-tracking " +
-            "study. Return the ones that are NOT proper-noun brands, " +
-            "companies, or products: generic descriptors ('self-hosted " +
-            "server', 'open-source tools', 'spreadsheets', 'a custom build'), " +
-            "category words, or feature phrases. Genuine brand or product " +
-            "names — including niche and open-source ones — must NOT appear " +
-            "in your output. When unsure, leave the name out: wrongly " +
-            "excluding a real brand costs far more than letting a stray " +
-            "descriptor through.",
+            "study. Return the ones that are NOT analyzable proper-noun " +
+            "brands, companies, or products: generic or infrastructure " +
+            "descriptors ('self-hosted server', 'open-source tools', " +
+            "'spreadsheets', 'a custom build'), category words, feature " +
+            "fragments with no brand attached ('Issue Boards', 'kanban " +
+            "boards'), and compound names listing multiple distinct brands " +
+            "('Trello / Asana'). Genuine single brand or product names — " +
+            "including niche and open-source ones — must NOT appear in your " +
+            "output. When unsure, leave the name out: wrongly excluding a " +
+            "real brand costs far more than letting a stray descriptor " +
+            "through.",
         },
         { role: "user", content: JSON.stringify(names) },
       ],

@@ -54,6 +54,18 @@ export default function IdentifyTab({
 }) {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  // Delayed indicator: cached suggestions resolve in <1s — flashing
+  // "Sorting…" for that beat reads as flicker, so it only shows when the
+  // pass is genuinely slow.
+  const [showSorting, setShowSorting] = useState(false);
+  useEffect(() => {
+    if (!suggesting) {
+      setShowSorting(false);
+      return;
+    }
+    const t = setTimeout(() => setShowSorting(true), 600);
+    return () => clearTimeout(t);
+  }, [suggesting]);
   const [confirming, setConfirming] = useState(false);
   const [dragNorm, setDragNorm] = useState<string | null>(null);
   const [suggestSummary, setSuggestSummary] = useState<{
@@ -552,21 +564,25 @@ export default function IdentifyTab({
               : "All confirmed"}
         </button>
       </div>
-      {suggesting && (
+      {(showSorting || (suggestSummary && !suggesting)) && (
         <p className="text-[13px] text-ink-3">
-          <span
-            aria-hidden="true"
-            className="inline-block h-3 w-3 mr-1.5 align-[-1px] rounded-full border-2 border-line border-t-primary animate-spin"
-          />
-          Sorting {unplacedPending.length || "new"} names into suggested
-          groups…
-        </p>
-      )}
-      {suggestSummary && !suggesting && (
-        <p className="text-[13px] text-ink-3">
-          Suggestions placed: {suggestSummary.merged} grouped into existing
-          brands, {suggestSummary.proposed} proposed as new brands,{" "}
-          {suggestSummary.ignored} ignored. Rearrange anything, then confirm.
+          {suggesting ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="inline-block h-3 w-3 mr-1.5 align-[-1px] rounded-full border-2 border-line border-t-primary animate-spin"
+              />
+              Sorting {unplacedPending.length || "new"} names into suggested
+              groups…
+            </>
+          ) : (
+            <>
+              Suggestions placed: {suggestSummary!.merged} grouped into
+              existing brands, {suggestSummary!.proposed} proposed as new
+              brands, {suggestSummary!.ignored} ignored. Rearrange anything,
+              then confirm.
+            </>
+          )}
         </p>
       )}
       {unplacedPending.length > 0 && !suggesting && (

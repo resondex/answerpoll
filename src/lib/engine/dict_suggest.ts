@@ -4,10 +4,11 @@ import { store } from "../store";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
-// v3: grain rule (feature surfaces/tiers merge into the buyer-level
-// offering) + plainest-name anchoring. In the cache key so prompt changes
-// bypass stale suggestions.
-const SUGGEST_RULES_VERSION = "v3";
+// v4: v3 grain rule + plainest-name anchoring, plus explicit ignores for
+// generic/infrastructure descriptors, brandless feature fragments, and
+// compound names listing multiple distinct brands. In the cache key so
+// prompt changes bypass stale suggestions.
+const SUGGEST_RULES_VERSION = "v4";
 
 const SCHEMA = {
   type: "object",
@@ -81,8 +82,13 @@ export async function getDictionarySuggestions(
           "merge_into to that active brand's canonical name exactly.\n" +
           "- approve: a genuinely distinct brand/product competing in or " +
           "relevant to the category, worth its own row.\n" +
-          "- ignore: not a brand in this category (generic terms, one-off " +
-          "tangents, tools from unrelated categories).\n" +
+          "- ignore: not an analyzable brand. This includes generic or " +
+          "infrastructure descriptors ('self-hosted server', 'open-source " +
+          "tools', 'spreadsheets'), feature fragments with no brand attached " +
+          "('Issue Boards', 'kanban boards'), compound names listing multiple " +
+          "DISTINCT brands ('Trello / Asana' — merging it into either would " +
+          "misattribute the other), one-off tangents, and tools from " +
+          "unrelated categories.\n" +
           "GRAIN RULE — the analyzable unit is the offering a buyer would " +
           "choose in this category. Feature surfaces, sub-modules, tiers, and " +
           "compound phrasings of the same offering ('X Issues', 'X Boards', " +

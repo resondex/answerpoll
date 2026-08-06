@@ -122,7 +122,12 @@ const openaiProvider: CompletionProvider = {
               "order of first appearance. ONLY proper-noun names — a generic " +
               "descriptor ('a self-hosted server', 'open-source tools', " +
               "'spreadsheets', 'a custom build') is NEVER a mention, even when " +
-              "the answer recommends it as an alternative. framing: " +
+              "the answer recommends it as an alternative. A phrase naming " +
+              "several brands at once ('Trello / Asana', 'Jira or Linear') is " +
+              "listed as one mention PER brand, never as a compound. A feature " +
+              "fragment without its brand ('Issue Boards') is attributed to " +
+              "the full product name when the answer makes it clear, otherwise " +
+              "omitted. framing: " +
               "'recommended' if endorsed or ranked favorably, 'negative' if " +
               "criticized or advised against, else 'mentioned'.\n" +
               "- top_pick_brand: the ONE brand the answer explicitly crowns as " +
