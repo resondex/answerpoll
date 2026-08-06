@@ -274,6 +274,11 @@ export interface Store {
   }): Promise<DictionaryEntry>;
   /** Queue unmatched raw names as pending entries (skip known names). */
   queueDictionaryCandidates(projectId: string, names: string[]): Promise<void>;
+  /** Bulk-insert active entries for a fresh project (one write, no upsert). */
+  insertDictionaryEntries(
+    projectId: string,
+    entries: { canonical: string; aliases: string[] }[]
+  ): Promise<void>;
   bumpDictionaryVersion(projectId: string): Promise<number>;
   getProject(id: string): Promise<Project | null>;
   /** All projects when userId is omitted (cron); the user's own otherwise. */

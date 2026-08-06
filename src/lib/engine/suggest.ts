@@ -186,15 +186,13 @@ export async function seedDictionary(
   } catch (err) {
     console.error("alias seeding fell back to bare entries:", err);
   }
-  for (const e of entries) {
-    await store.upsertDictionaryEntry({
-      id: null,
-      projectId,
+  await store.insertDictionaryEntries(
+    projectId,
+    entries.map((e) => ({
       canonical: e.canonical,
       aliases: e.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean),
-      status: "active",
-    });
-  }
+    }))
+  );
 }
 
 const LINT_SCHEMA = {

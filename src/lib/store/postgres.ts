@@ -222,6 +222,19 @@ export const pgStore: Store = {
     return rows.map(rowToDictEntry);
   },
 
+  async insertDictionaryEntries(projectId, entries) {
+    if (entries.length === 0) return;
+    const sql = await db();
+    const rows = entries.map((e) => ({
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      canonical: e.canonical,
+      aliases: JSON.stringify(e.aliases),
+      status: "active",
+    }));
+    await sql`INSERT INTO dictionary_entries ${sql(rows, "id", "project_id", "canonical", "aliases", "status")}`;
+  },
+
   async upsertDictionaryEntry(input) {
     const sql = await db();
     const id = input.id ?? crypto.randomUUID();
@@ -341,12 +354,15 @@ export const pgStore: Store = {
 
   async insertPrompts(projectId, prompts) {
     const sql = await db();
-    await sql.begin(async (tx) => {
-      for (const p of prompts) {
-        await tx`INSERT INTO prompts (id, project_id, text, theme)
-          VALUES (${crypto.randomUUID()}, ${projectId}, ${p.text}, ${p.theme})`;
-      }
-    });
+    const rows = prompts.map((p) => ({
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      text: p.text,
+      theme: p.theme,
+    }));
+    if (rows.length > 0) {
+      await sql`INSERT INTO prompts ${sql(rows, "id", "project_id", "text", "theme")}`;
+    }
     return this.listPrompts(projectId);
   },
 

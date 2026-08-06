@@ -262,6 +262,24 @@ export const sqliteStore: Store = {
     ).map(parseDictEntry);
   },
 
+  async insertDictionaryEntries(projectId, entries) {
+    const db = getDb();
+    const stmt = db.prepare(
+      "INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status) VALUES (?, ?, ?, ?, 'active')"
+    );
+    const insertAll = db.transaction(() => {
+      for (const e of entries) {
+        stmt.run(
+          crypto.randomUUID(),
+          projectId,
+          e.canonical,
+          JSON.stringify(e.aliases)
+        );
+      }
+    });
+    insertAll();
+  },
+
   async upsertDictionaryEntry(input) {
     const id = input.id ?? crypto.randomUUID();
     getDb()
