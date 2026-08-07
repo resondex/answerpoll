@@ -14,7 +14,7 @@ import type { InsightsBundle } from "./insights";
 
 /**
  * Live-formula Excel workbooks — the trust feature: every aggregate is a
- * COUNTIFS/AVERAGEIFS over embedded Data/Mentions sheets, so any number can
+ * COUNTIFS/AVERAGEIFS over the embedded Data and Mention Data sheets, so any
  * be clicked and traced to the coded answers behind it. The scorecard
  * carries a focus dropdown (any brand or parent company) that re-computes
  * the whole workbook for the selected focus. Confidence intervals are the
@@ -115,7 +115,7 @@ function ceremonySections(
     ],
     [
       "Source",
-      `Run ${x.run.id.slice(0, 8)} (data lock ${x.run.completed_at ?? x.run.created_at}), dictionary v${x.metrics.dictionaryVersion}. The Data and Mentions sheets are embedded copies so every formula resolves inside this file.`,
+      `Run ${x.run.id.slice(0, 8)} (data lock ${x.run.completed_at ?? x.run.created_at}), dictionary v${x.metrics.dictionaryVersion}. The Data and Mention Data sheets are embedded copies so every formula resolves inside this file.`,
     ],
     [
       "Live formulas",
@@ -157,68 +157,99 @@ function parentMap(x: WorkbookInputs): Map<string, string> {
   );
 }
 
-/** Per-answer canonicalized mention summary, shared by both sheet builders. */
-function answerMentions(
-  x: WorkbookInputs,
-  r: ResponseRow
-): { norm: string; display: string; rank: number; framing: string }[] {
-  const perBrand = new Map<
-    string,
-    { display: string; rank: number; framing: string }
-  >();
+interface AnswerMention {
+  norm: string;
+  display: string;
+  rank: number;
+  framing: string;
+  /** Every fossilized string that resolved to this brand in this answer —
+   * the dictionary made auditable inside the workbook. */
+  raws: string[];
+  /** How many times the brand was named. Repetition is emphasis. */
+  times: number;
+}
+
+/** Per-answer canonicalized mention summary, shared by every sheet builder.
+ * One entry per (answer, brand): repeat mentions collapse into times/raws
+ * and the brand keeps its earliest position. */
+function answerMentions(x: WorkbookInputs, r: ResponseRow): AnswerMention[] {
+  const perBrand = new Map<string, AnswerMention>();
   for (const m of x.mentionsByResponse.get(r.id) ?? []) {
     if (x.canon.isRejected(m.brand)) continue;
     const norm = x.canon.norm(m.brand);
     const prev = perBrand.get(norm);
-    if (!prev || m.rank < prev.rank) {
+    if (!prev) {
       perBrand.set(norm, {
+        norm,
         display: x.canon.canonical(m.brand),
         rank: m.rank,
-        framing: prev?.framing === "negative" ? "negative" : m.framing,
+        framing: m.framing,
+        raws: [m.brand],
+        times: 1,
       });
-    } else if (m.framing === "negative") {
-      prev.framing = "negative";
+      continue;
     }
+    prev.times += 1;
+    if (!prev.raws.includes(m.brand)) prev.raws.push(m.brand);
+    if (m.rank < prev.rank) prev.rank = m.rank;
+    // Any negative framing of a brand in the answer colors the whole row.
+    if (m.framing === "negative") prev.framing = "negative";
   }
-  return [...perBrand.entries()]
-    .map(([norm, v]) => ({ norm, ...v }))
-    .sort((a, b) => a.rank - b.rank);
+  return [...perBrand.values()].sort((a, b) => a.rank - b.rank);
+}
+
+const DATA_FIXED = [
+  "key",
+  "model",
+  "response_id",
+  "prompt_code",
+  "theme",
+  "prompt_text",
+  "repeat",
+  "is_branded",
+  "target_named",
+  "target_first_named",
+  "target_position",
+  "target_negative",
+  "first_brand",
+  "n_brands",
+  "top_pick",
+  "top_pick_parent",
+  "target_first_pick",
+  "outcome",
+  "total_recommendations",
+];
+
+/** Column geometry for the Data sheet, computable before the sheet exists —
+ * so the presentation sheets can be written first and the evidence sheets
+ * land at the end of the tab order. */
+function dataLayout(x: WorkbookInputs) {
+  const codes = x.project.reason_taxonomy;
+  const cols: Record<string, string> = {};
+  DATA_FIXED.forEach((name, i) => (cols[name] = colLetter(i + 1)));
+  const codeCols = new Map<string, string>();
+  codes.forEach((c, i) => codeCols.set(c, colLetter(DATA_FIXED.length + i + 1)));
+  return {
+    headers: [...DATA_FIXED, ...codes.map((c) => `arg: ${c}`)],
+    cols,
+    codeCols,
+    codes,
+  };
 }
 
 /** The shared Data sheet: one row per coded answer. `key` = prompt|repeat
  * powers the prompt grid's INDEX/MATCH pick cells. */
 function addDataSheet(
   wb: ExcelJS.Workbook,
-  x: WorkbookInputs
-): { cols: Record<string, string>; codeCols: Map<string, string> } {
+  x: WorkbookInputs,
+  layout: ReturnType<typeof dataLayout>
+): void {
   const { project, prompts, responses, canon } = x;
   const targetNorm = canon.norm(project.brand);
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const parents = parentMap(x);
-  const codes = project.reason_taxonomy;
+  const { headers, codes } = layout;
 
-  const fixed = [
-    "key",
-    "model",
-    "response_id",
-    "prompt_code",
-    "theme",
-    "prompt_text",
-    "repeat",
-    "is_branded",
-    "target_named",
-    "target_first_named",
-    "target_position",
-    "target_negative",
-    "first_brand",
-    "n_brands",
-    "top_pick",
-    "top_pick_parent",
-    "target_first_pick",
-    "outcome",
-    "total_recommendations",
-  ];
-  const headers = [...fixed, ...codes.map((c) => `arg: ${c}`)];
   const ws = wb.addWorksheet("Data");
   ws.addRow(headers);
   styleHeader(ws);
@@ -226,13 +257,8 @@ function addDataSheet(
   // Self-describing: a note past the last column, out of every formula range.
   const dataNote = ws.getCell(1, headers.length + 2);
   dataNote.value =
-    "EVIDENCE SHEET — one row per sampled answer. Every rate in this workbook is a COUNTIFS over these rows. response_id traces to the Quotes sheet and to 05_response_library in the study bundle. 'arg:' columns are 1 when the answer used that argument. Do not sort or edit: the formulas count, they do not depend on order, but edits change the numbers.";
+    "EVIDENCE SHEET — one row per sampled ANSWER (see 'Mention Data' for one row per brand named inside an answer). Every rate in this workbook is a COUNTIFS over these rows. response_id traces to the Quotes sheet and to 05_response_library in the study bundle. 'arg:' columns are 1 when the answer used that argument. Do not edit: the formulas count these cells.";
   dataNote.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
-
-  const cols: Record<string, string> = {};
-  fixed.forEach((name, i) => (cols[name] = colLetter(i + 1)));
-  const codeCols = new Map<string, string>();
-  codes.forEach((c, i) => codeCols.set(c, colLetter(fixed.length + i + 1)));
 
   for (const r of responses) {
     const p = promptById.get(r.prompt_id)!;
@@ -269,45 +295,65 @@ function addDataSheet(
       ...codes.map((c) => (usedCodes.has(c) ? 1 : 0)),
     ]);
   }
-  return { cols, codeCols };
 }
 
-/** Mentions sheet (long format) with dedup flags so distinct-answer counts
- * are a plain COUNTIFS — at brand and parent grain. */
-function addMentionsSheet(
-  wb: ExcelJS.Workbook,
-  x: WorkbookInputs
-): { cols: Record<string, string> } {
-  const { prompts, responses, canon } = x;
+const MENTION_HEADERS = [
+  "response_id",
+  "model",
+  "prompt_code",
+  "theme",
+  "repeat",
+  "is_branded",
+  "raw_name",
+  "brand",
+  "parent",
+  "brand_type",
+  "position",
+  "framing",
+  "times_mentioned",
+  "is_top_pick",
+  "n_brands_in_answer",
+  "outcome",
+  "first_of_parent_in_answer",
+];
+
+/** Column geometry for Mention Data, computable before the sheet exists. */
+function mentionLayout(): Record<string, string> {
+  const cols: Record<string, string> = {};
+  MENTION_HEADERS.forEach((h, i) => (cols[h] = colLetter(i + 1)));
+  return cols;
+}
+
+/**
+ * Mention Data (long format): one row per (answer, brand). Repeat mentions
+ * of a brand inside one answer collapse into times_mentioned/raw_name and
+ * keep the earliest position, so a plain COUNTIFS on brand already counts
+ * DISTINCT ANSWERS — no dedup flag needed. The parent flag stays, because
+ * two sibling brands can share one answer.
+ */
+function addMentionDataSheet(wb: ExcelJS.Workbook, x: WorkbookInputs): void {
+  const { project, prompts, responses, canon } = x;
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const parents = parentMap(x);
-  const ws = wb.addWorksheet("Mentions");
-  const headers = [
-    "response_id",
-    "model",
-    "prompt_code",
-    "theme",
-    "is_branded",
-    "brand",
-    "parent",
-    "position",
-    "framing",
-    "first_of_brand_in_answer",
-    "first_of_parent_in_answer",
-  ];
-  ws.addRow(headers);
+  const targetNorm = canon.norm(project.brand);
+  const competitorNorms = new Set(project.competitors.map((c) => canon.norm(c)));
+  const ws = wb.addWorksheet("Mention Data");
+  ws.addRow(MENTION_HEADERS);
   styleHeader(ws);
-  const mentionsNote = ws.getCell(1, headers.length + 2);
-  mentionsNote.value =
-    "EVIDENCE SHEET — one row per BRAND NAMED inside an answer (Data has one row per answer; this has one row per name in it). It carries where each brand appeared (position), how it was framed, and the parent company it rolls up to. This is what lets the Focus dropdown re-compute every table for any brand or parent. first_of_brand_in_answer / first_of_parent_in_answer = 1 marks the row to count when you want DISTINCT ANSWERS rather than total mentions.";
-  mentionsNote.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
-  const cols: Record<string, string> = {};
-  headers.forEach((h, i) => (cols[h] = colLetter(i + 1)));
+  ws.getColumn(7).width = 24;
+  ws.getColumn(8).width = 24;
+  ws.getColumn(9).width = 20;
+  const note = ws.getCell(1, MENTION_HEADERS.length + 2);
+  note.value =
+    "EVIDENCE SHEET — one row per BRAND NAMED inside an answer. Data has one row per ANSWER and describes what that answer did about the study's focus brand; this sheet describes EVERY brand, which is what lets the Focus dropdown re-compute the whole workbook for any brand or parent company. One row = one brand in one answer, so COUNTIFS on brand counts distinct answers directly. raw_name is the fossilized extracted string(s) that resolved to this brand — the dictionary, auditable in place.";
+  note.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
 
   for (const r of responses) {
     const p = promptById.get(r.prompt_id)!;
+    const mentions = answerMentions(x, r);
+    const topPickNorm = r.top_pick_brand ? canon.norm(r.top_pick_brand) : null;
     const seenParent = new Set<string>();
-    for (const m of answerMentions(x, r)) {
+    for (const m of mentions) {
       const parent = parents.get(m.norm) ?? m.display;
       const firstParent = !seenParent.has(parent);
       seenParent.add(parent);
@@ -316,17 +362,26 @@ function addMentionsSheet(
         x.run.model,
         x.promptCode(r.prompt_id),
         p.theme,
+        r.repeat_idx + 1,
         p.theme === "branded" ? 1 : 0,
+        m.raws.join(" | "),
         m.display,
         parent,
+        m.norm === targetNorm
+          ? "target"
+          : competitorNorms.has(m.norm)
+            ? "competitor"
+            : "emerged",
         m.rank,
         m.framing,
-        1, // rows are already deduped per (answer, brand)
+        m.times,
+        m.norm === topPickNorm ? 1 : 0,
+        mentions.length,
+        r.outcome ?? "",
         firstParent ? 1 : 0,
       ]);
     }
   }
-  return { cols };
 }
 
 interface FocusStats {
@@ -485,16 +540,16 @@ export async function buildScorecardWorkbook(
           "The evidence layer: one row per sampled answer, with its prompt, engine, whether the focus was named and where, what the answer picked, and a 0/1 column per argument it used. Every formula in this file counts over this sheet.",
         ],
         [
-          "Mentions",
-          "The evidence layer at brand grain: one row per brand named in an answer, with its position and framing, plus the parent company it rolls up to. Data answers 'what did this answer do?'; Mentions answers 'who was named, where, and how?' — which is what makes the Focus dropdown able to re-compute for any brand.",
+          "Mention Data",
+          "The evidence layer at brand grain: one row per brand named in an answer, with its raw extracted name, position, framing, whether it was that answer's pick, how many times it was named, and the parent it rolls up to. Data answers 'what did this answer do?'; Mention Data answers 'who was named, where, and how?' — which is what makes the Focus dropdown able to re-compute for any brand.",
         ],
       ]
     )
   );
-  const { cols } = addDataSheet(wb, x);
-  const { cols: mc } = addMentionsSheet(wb, x);
-  const D = (c: string) => `Data!${cols[c]}:${cols[c]}`;
-  const M = (c: string) => `Mentions!${mc[c]}:${mc[c]}`;
+  const dl = dataLayout(x);
+  const mc = mentionLayout();
+  const D = (c: string) => `Data!${dl.cols[c]}:${dl.cols[c]}`;
+  const M = (c: string) => `'Mention Data'!${mc[c]}:${mc[c]}`;
 
   // ----- focus options: every analyzable brand, then parents -----
   const brandOptions = x.metrics.brands.map((b) => b.brand);
@@ -584,11 +639,11 @@ export async function buildScorecardWorkbook(
   const mCrit = (extra: string, modelCrit: string) =>
     `${modelCrit ? `${M("model")},${modelCrit},` : ""}${M("is_branded")},0${extra}`;
   const namedF = (modelCrit: string, extra = "") =>
-    `IF(${SCORE_PARENT}<>"",COUNTIFS(${mCrit(extra, modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${mCrit(extra, modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`;
+    `IF(${SCORE_PARENT}<>"",COUNTIFS(${mCrit(extra, modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${mCrit(extra, modelCrit)},${M("brand")},$B$1))`;
   const picksF = (modelCrit: string, extra = "") =>
     `IF(${SCORE_PARENT}<>"",COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick_parent")},${SCORE_PARENT}),COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick")},$B$1))`;
   const posF = (modelCrit: string) =>
-    `IFERROR(IF(${SCORE_PARENT}<>"",AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1)),"—")`;
+    `IFERROR(IF(${SCORE_PARENT}<>"",AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("brand")},$B$1)),"—")`;
 
   // ===== Section 1: the persuasion funnel, by engine =====
   let row = 3;
@@ -681,7 +736,7 @@ export async function buildScorecardWorkbook(
     ],
     [
       "Trace any number",
-      "Every count filters the Data or Mentions sheet; each row there carries response_id, which is the same id used in the Quotes sheet and in 05_response_library of the study bundle.",
+      "Every count filters the Data or Mention Data sheet; each row there carries response_id, which is the same id used in the Quotes sheet and in 05_response_library of the study bundle.",
     ],
   ]);
   row += 2;
@@ -766,7 +821,7 @@ export async function buildScorecardWorkbook(
       theme.replace("_", " "),
       { formula: `COUNTIFS(${D("theme")},$A${rowN},${D("is_branded")},0)` },
       {
-        formula: `IF(${SCORE_PARENT}<>"",COUNTIFS(${M("theme")},$A${rowN},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("theme")},$A${rowN},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`,
+        formula: `IF(${SCORE_PARENT}<>"",COUNTIFS(${M("theme")},$A${rowN},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("theme")},$A${rowN},${M("brand")},$B$1))`,
       },
       { formula: `IFERROR(C${rowN}/B${rowN},"")` },
       {
@@ -823,7 +878,7 @@ export async function buildScorecardWorkbook(
     ws.getRow(rowN).values = [
       brand,
       {
-        formula: `IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN},${M("first_of_brand_in_answer")},1)/COUNTIFS(${D("is_branded")},0),"")`,
+        formula: `IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/COUNTIFS(${D("is_branded")},0),"")`,
       },
       {
         formula: `IFERROR(VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,2,FALSE),"[script]")`,
@@ -923,7 +978,7 @@ export async function buildScorecardWorkbook(
     values.push(
       { formula: `COUNTIFS(${D("prompt_code")},$A${rowN})` },
       {
-        formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${M("prompt_code")},$A${rowN},${M("parent")},${GRID_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("prompt_code")},$A${rowN},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`,
+        formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${M("prompt_code")},$A${rowN},${M("parent")},${GRID_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("prompt_code")},$A${rowN},${M("brand")},$B$1))`,
       },
       { formula: `IFERROR(${cNamed}${rowN}/${cAnswers}${rowN},"")` },
       {
@@ -1009,6 +1064,9 @@ export async function buildScorecardWorkbook(
   addKeyInsightsSheet(wb, x);
   addQuotesSheet(wb, x);
   addInsightsSheet(wb, x.insights);
+  // Evidence last: the story reads first, the receipts sit behind it.
+  addDataSheet(wb, x, dl);
+  addMentionDataSheet(wb, x);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -1167,7 +1225,7 @@ function addQuotesSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
   definitions(ws, defRow, 7, [
     [
       "response_id",
-      "The unique id of the sampled answer. The same id appears in the Data and Mentions sheets, in the study bundle's 04_master_dataset CSVs, and names the answer's file in 05_response_library — paste it anywhere to pull the full text.",
+      "The unique id of the sampled answer. The same id appears in the Data and Mention Data sheets, in the study bundle's 04_master_dataset CSVs, and names the answer's file in 05_response_library — paste it anywhere to pull the full text.",
     ],
     ["code", "Prompt code (P01, P02…). Matches the Prompt Grid and the response library folders."],
     ["repeat", "Which of the repeats of that prompt this answer was."],
@@ -1239,17 +1297,18 @@ export async function buildAnalysisWorkbook(
           "One row per sampled answer — the evidence every formula counts over.",
         ],
         [
-          "Mentions",
-          "One row per brand named in an answer, with position, framing, and parent company. This is what lets brand-level and parent-level tables be computed from the same evidence.",
+          "Mention Data",
+          "One row per brand named in an answer, with raw name, position, framing, pick flag, and parent company. This is what lets brand-level and parent-level tables be computed from the same evidence.",
         ],
       ]
     )
   );
-  const { cols, codeCols } = addDataSheet(wb, x);
-  const { cols: mc } = addMentionsSheet(wb, x);
+  const dl = dataLayout(x);
+  const { codeCols } = dl;
+  const mc = mentionLayout();
 
-  const D = (c: string) => `Data!${cols[c]}:${cols[c]}`;
-  const M = (c: string) => `Mentions!${mc[c]}:${mc[c]}`;
+  const D = (c: string) => `Data!${dl.cols[c]}:${dl.cols[c]}`;
+  const M = (c: string) => `'Mention Data'!${mc[c]}:${mc[c]}`;
   const unbr = `COUNTIFS(${D("is_branded")},0)`;
   const totalMentions = `COUNTIFS(${M("is_branded")},0)`;
 
@@ -1272,12 +1331,12 @@ export async function buildAnalysisWorkbook(
       b.brand,
       b.isTarget ? "target" : b.isCompetitor ? "competitor" : "emerged",
       {
-        formula: `COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN},${M("first_of_brand_in_answer")},1)`,
+        formula: `COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})`,
       },
       { formula: `IFERROR(C${rowN}/${unbr},"")` },
       `${Math.round(b.ciLow * 100)}%–${Math.round(b.ciHigh * 100)}%`,
       {
-        formula: `IFERROR(AVERAGEIFS(${M("position")},${M("is_branded")},0,${M("brand")},$A${rowN},${M("first_of_brand_in_answer")},1),"—")`,
+        formula: `IFERROR(AVERAGEIFS(${M("position")},${M("is_branded")},0,${M("brand")},$A${rowN}),"—")`,
       },
       {
         formula: `IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/${totalMentions},"")`,
@@ -1399,5 +1458,7 @@ export async function buildAnalysisWorkbook(
 
   addKeyInsightsSheet(wb, x);
   addInsightsSheet(wb, x.insights);
+  addDataSheet(wb, x, dl);
+  addMentionDataSheet(wb, x);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
