@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/store";
 import { requireAuth, requireRun } from "@/lib/auth";
-import { computeRunMetrics } from "@/lib/engine/metrics";
+import {
+  buildCanonicalizer,
+  computeRunMetrics,
+  dictionaryRoles,
+} from "@/lib/engine/metrics";
 
 function csvCell(v: unknown): string {
   const s = v === null || v === undefined ? "" : String(v);
@@ -56,10 +60,10 @@ export async function GET(
   for (const list of mentionsByResponse.values()) {
     list.sort((a, b) => a.rank - b.rank);
   }
-  const targetNorm = project.brand.trim().toLowerCase();
-  const competitorNorms = new Set(
-    project.competitors.map((c) => c.trim().toLowerCase())
-  );
+  const dictionary = await store.getDictionary(project.id);
+  const canon = buildCanonicalizer(dictionary);
+  const targetNorm = canon.norm(project.brand);
+  const roleOf = dictionaryRoles(dictionary, project, canon);
 
   const url = new URL(req.url);
   const format = url.searchParams.get("format") ?? "csv";
@@ -160,11 +164,7 @@ export async function GET(
           m.brand,
           m.rank,
           m.framing,
-          m.brand_norm === targetNorm
-            ? "target"
-            : competitorNorms.has(m.brand_norm)
-              ? "competitor"
-              : "emerged",
+          roleOf(m.brand_norm),
         ]);
       }),
     ];

@@ -531,10 +531,21 @@ function ProjectDashboard() {
                       .filter((p): p is string => !!p)
                   ),
                 ].sort((a, b) => a.localeCompare(b));
+                const brandNorm = project.brand.trim().toLowerCase();
+                const legacyComp = new Set(
+                  project.competitors.map((c) => c.trim().toLowerCase())
+                );
+                const isTargetEntry = (e: DictionaryEntry) =>
+                  e.canonical.trim().toLowerCase() === brandNorm ||
+                  e.aliases.includes(brandNorm);
+                const isCompetitor = (e: DictionaryEntry) =>
+                  e.role
+                    ? e.role === "competitor"
+                    : legacyComp.has(e.canonical.trim().toLowerCase());
                 const row = (e: DictionaryEntry, indent = false) => (
-                  <label
+                  <div
                     key={e.id}
-                    className={`flex items-center gap-3 text-sm border-b border-line/60 py-2 cursor-pointer ${indent ? "ml-5" : ""}`}
+                    className={`flex items-center gap-3 text-sm border-b border-line/60 py-2 ${indent ? "ml-5" : ""}`}
                   >
                     <input
                       type="checkbox"
@@ -545,19 +556,59 @@ function ProjectDashboard() {
                           e.status === "active" ? "reject" : "approve"
                         )
                       }
-                      className="h-4 w-4 accent-[var(--color-primary)]"
+                      className="h-4 w-4 accent-[var(--color-primary)] cursor-pointer"
                     />
                     <span
                       className={`font-medium ${e.status === "active" ? "" : "text-ink-3 line-through"}`}
                     >
                       {e.display_name ?? e.canonical}
                     </span>
+                    {isTargetEntry(e) ? (
+                      <span className="shrink-0 rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                        you
+                      </span>
+                    ) : (
+                      e.status === "active" &&
+                      e.canonical !== "Other" && (
+                        <button
+                          type="button"
+                          title={
+                            isCompetitor(e)
+                              ? "Tracked competitor — click to demote to discovered"
+                              : "Discovered by the model — click to track as a competitor"
+                          }
+                          onClick={async () => {
+                            await fetch(`/api/projects/${id}/dictionary`, {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                              },
+                              body: JSON.stringify({
+                                entryId: e.id,
+                                action: "set_role",
+                                role: isCompetitor(e)
+                                  ? "emerged"
+                                  : "competitor",
+                              }),
+                            });
+                            await refreshDict();
+                          }}
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                            isCompetitor(e)
+                              ? "bg-ink/10 text-ink"
+                              : "border border-line text-ink-3 hover:text-ink hover:border-ink-3"
+                          }`}
+                        >
+                          {isCompetitor(e) ? "competitor" : "discovered"}
+                        </button>
+                      )
+                    )}
                     {e.aliases.length > 0 && (
                       <span className="text-xs text-ink-3 truncate flex-1">
                         groups: {e.aliases.join(", ")}
                       </span>
                     )}
-                  </label>
+                  </div>
                 );
                 return (
                   <div className="grid gap-4">

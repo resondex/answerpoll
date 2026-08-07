@@ -1,6 +1,11 @@
 import JSZip from "jszip";
 import { store } from "../store";
-import { buildCanonicalizer, computeRunMetrics, wilson } from "./metrics";
+import {
+  buildCanonicalizer,
+  computeRunMetrics,
+  dictionaryRoles,
+  wilson,
+} from "./metrics";
 import { computeProjectTrend } from "./trend";
 import { apiKeyConfigured, openaiClient } from "./providers";
 import { buildRunInsights, type InsightsBundle } from "./insights";
@@ -61,10 +66,8 @@ export async function buildStudyBundle(
   }
   for (const list of mentionsByResponse.values()) list.sort((a, b) => a.rank - b.rank);
 
-  const targetNorm = project.brand.trim().toLowerCase();
-  const competitorNorms = new Set(project.competitors.map((c) => c.trim().toLowerCase()));
-  const brandType = (norm: string) =>
-    norm === targetNorm ? "target" : competitorNorms.has(norm) ? "competitor" : "emerged";
+  const targetNorm = canon.norm(project.brand);
+  const brandType = dictionaryRoles(dictionary, project, canon);
 
   const brandedIds = new Set(prompts.filter((p) => p.theme === "branded").map((p) => p.id));
   const unbranded = responses.filter((r) => !brandedIds.has(r.prompt_id));

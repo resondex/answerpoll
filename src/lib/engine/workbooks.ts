@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { wilson } from "./metrics";
+import { dictionaryRoles, wilson } from "./metrics";
 import type {
   DictionaryEntry,
   MentionRow,
@@ -335,8 +335,7 @@ function addMentionDataSheet(wb: ExcelJS.Workbook, x: WorkbookInputs): void {
   const { project, prompts, responses, canon } = x;
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const parents = parentMap(x);
-  const targetNorm = canon.norm(project.brand);
-  const competitorNorms = new Set(project.competitors.map((c) => canon.norm(c)));
+  const roleOf = dictionaryRoles(x.dictionary, project, canon);
   const ws = wb.addWorksheet("Mention Data");
   ws.addRow(MENTION_HEADERS);
   styleHeader(ws);
@@ -367,11 +366,7 @@ function addMentionDataSheet(wb: ExcelJS.Workbook, x: WorkbookInputs): void {
         m.raws.join(" | "),
         m.display,
         parent,
-        m.norm === targetNorm
-          ? "target"
-          : competitorNorms.has(m.norm)
-            ? "competitor"
-            : "emerged",
+        roleOf(m.norm),
         m.rank,
         m.framing,
         m.times,

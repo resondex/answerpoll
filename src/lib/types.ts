@@ -89,6 +89,10 @@ export interface DictionaryEntry {
   confirmed: string[];
   /** Parent-company label for rollups; null = not assigned to a parent. */
   parent: string | null;
+  /** Tracked rival or model-volunteered discovery. null = derive from the
+   * setup-time competitor list (pre-migration entries). The target brand's
+   * role is always derived from the project, never stored. */
+  role: "competitor" | "emerged" | null;
   version: number;
   created_at: string;
 }
@@ -296,7 +300,16 @@ export interface Store {
   /** Bulk-insert active entries for a fresh project (one write, no upsert). */
   insertDictionaryEntries(
     projectId: string,
-    entries: { canonical: string; aliases: string[] }[]
+    entries: {
+      canonical: string;
+      aliases: string[];
+      role?: "competitor" | "emerged" | null;
+    }[]
+  ): Promise<void>;
+  /** Flip a brand between tracked competitor and discovered. */
+  setDictionaryRole(
+    entryId: string,
+    role: "competitor" | "emerged"
   ): Promise<void>;
   /** Mark names (normalized) as user-confirmed on whichever entry owns them. */
   confirmDictionaryNames(projectId: string, names: string[]): Promise<void>;

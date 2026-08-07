@@ -146,11 +146,14 @@ const ALIAS_SCHEMA = {
   required: ["entries"],
 } as const;
 
-/** Seed the project dictionary: known aliases for target + competitors. */
+/** Seed the project dictionary: known aliases for target + competitors.
+ * The first brand is the target (role derived from the project, never
+ * stored); the rest arrive marked as tracked competitors. */
 export async function seedDictionary(
   projectId: string,
   brands: string[]
 ): Promise<void> {
+  const targetNorm = brands[0]?.trim().toLowerCase();
   let entries: { canonical: string; aliases: string[] }[] = brands.map(
     (b) => ({ canonical: b, aliases: [] })
   );
@@ -191,6 +194,8 @@ export async function seedDictionary(
     entries.map((e) => ({
       canonical: e.canonical,
       aliases: e.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean),
+      role:
+        e.canonical.trim().toLowerCase() === targetNorm ? null : "competitor",
     }))
   );
 }

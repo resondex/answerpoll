@@ -74,6 +74,7 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS display_name TEXT`;
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS confirmed_aliases TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS parent TEXT`;
+      await sql`ALTER TABLE dictionary_entries ADD COLUMN IF NOT EXISTS role TEXT`;
       await sql`CREATE TABLE IF NOT EXISTS user_plans (
         user_id TEXT PRIMARY KEY,
         plan TEXT NOT NULL DEFAULT 'free'
@@ -178,6 +179,7 @@ function rowToDictEntry(r: Record<string, unknown>): DictionaryEntry {
     status: r.status as DictionaryEntry["status"],
     confirmed: JSON.parse((r.confirmed_aliases as string) ?? "[]"),
     parent: (r.parent as string | null) ?? null,
+    role: (r.role as DictionaryEntry["role"]) ?? null,
     version: (r.version as number) ?? 1,
     created_at: iso(r.created_at)!,
   };
@@ -264,8 +266,14 @@ export const pgStore: Store = {
       canonical: e.canonical,
       aliases: JSON.stringify(e.aliases),
       status: "active",
+      role: e.role ?? null,
     }));
-    await sql`INSERT INTO dictionary_entries ${sql(rows, "id", "project_id", "canonical", "aliases", "status")}`;
+    await sql`INSERT INTO dictionary_entries ${sql(rows, "id", "project_id", "canonical", "aliases", "status", "role")}`;
+  },
+
+  async setDictionaryRole(entryId, role) {
+    const sql = await db();
+    await sql`UPDATE dictionary_entries SET role = ${role} WHERE id = ${entryId}`;
   },
 
   async upsertDictionaryEntry(input) {

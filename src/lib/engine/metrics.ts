@@ -4,6 +4,7 @@ import type {
   DictionaryEntry,
   Framing,
   MentionRow,
+  Project,
   PromptBadge,
   PromptStats,
   PromptTheme,
@@ -37,6 +38,31 @@ export function wilson(k: number, n: number): { low: number; high: number } {
  * names collapse onto canonical brands (aliases merged), so dictionary edits
  * retroactively clean every run without re-coding.
  */
+/**
+ * Brand roles from the dictionary — the single source of truth for who is a
+ * tracked competitor. Explicit entry roles win; entries that predate the
+ * role column fall back to the setup-time competitor list, so nothing
+ * changes until the user says so. Returns a lookup by fossilized norm.
+ */
+export function dictionaryRoles(
+  entries: DictionaryEntry[],
+  project: Project,
+  canon: ReturnType<typeof buildCanonicalizer>
+): (raw: string) => "target" | "competitor" | "emerged" {
+  const targetNorm = canon.norm(project.brand);
+  const legacy = new Set(project.competitors.map((c) => canon.norm(c)));
+  const byNorm = new Map<string, "competitor" | "emerged">();
+  for (const e of entries) {
+    if (e.status !== "active" || !e.role) continue;
+    byNorm.set(e.canonical.trim().toLowerCase(), e.role);
+  }
+  return (raw: string) => {
+    const norm = canon.norm(raw);
+    if (norm === targetNorm) return "target";
+    return byNorm.get(norm) ?? (legacy.has(norm) ? "competitor" : "emerged");
+  };
+}
+
 export function buildCanonicalizer(entries: DictionaryEntry[]) {
   // Match strings (canonical + aliases) are fossilized and drive identity;
   // display_name is a renameable label that never affects matching, so
@@ -106,7 +132,7 @@ export async function computeRunMetrics(
   const unbrandedIds = new Set(unbranded.map((r) => r.id));
 
   const targetNorm = canon.norm(project.brand);
-  const competitorNorms = new Set(project.competitors.map((c) => canon.norm(c)));
+  const roleOf = dictionaryRoles(dictionary, project, canon);
 
   // --- per-brand stats over unbranded responses (canonicalized) ---
   const byBrand = new Map<string, { display: string; rows: MentionRow[] }>();
@@ -147,7 +173,7 @@ export async function computeRunMetrics(
     return {
       brand: norm === targetNorm ? project.brand : entry.display,
       isTarget: norm === targetNorm,
-      isCompetitor: competitorNorms.has(norm),
+      isCompetitor: roleOf(norm) === "competitor",
       mentionCount: k,
       mentionRate: n > 0 ? k / n : 0,
       ciLow: ci.low,
@@ -356,7 +382,7 @@ export async function computeRunMetrics(
       .map(([norm, e]) => ({
         brand: norm === targetNorm ? project.brand : e.display,
         isTarget: norm === targetNorm,
-        isCompetitor: competitorNorms.has(norm),
+        isCompetitor: roleOf(norm) === "competitor",
         picks: e.n,
         shareOfDecided: decided.length > 0 ? e.n / decided.length : 0,
       }))

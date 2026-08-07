@@ -47,6 +47,7 @@ function createDb(): Database.Database {
       status TEXT NOT NULL DEFAULT 'active',
       confirmed_aliases TEXT NOT NULL DEFAULT '[]',
       parent TEXT,
+      role TEXT,
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -159,6 +160,9 @@ function createDb(): Database.Database {
   if (dictCols.length > 0 && !dictCols.some((c) => c.name === "parent")) {
     db.exec("ALTER TABLE dictionary_entries ADD COLUMN parent TEXT");
   }
+  if (dictCols.length > 0 && !dictCols.some((c) => c.name === "role")) {
+    db.exec("ALTER TABLE dictionary_entries ADD COLUMN role TEXT");
+  }
   const promptCols = db.prepare("PRAGMA table_info(prompts)").all() as {
     name: string;
   }[];
@@ -228,6 +232,7 @@ function parseDictEntry(row: Record<string, unknown>): DictionaryEntry {
     status: row.status as DictionaryEntry["status"],
     confirmed: JSON.parse((row.confirmed_aliases as string) ?? "[]"),
     parent: (row.parent as string | null) ?? null,
+    role: (row.role as DictionaryEntry["role"]) ?? null,
     version: (row.version as number) ?? 1,
     created_at: row.created_at as string,
   };
@@ -318,7 +323,7 @@ export const sqliteStore: Store = {
   async insertDictionaryEntries(projectId, entries) {
     const db = getDb();
     const stmt = db.prepare(
-      "INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status) VALUES (?, ?, ?, ?, 'active')"
+      "INSERT INTO dictionary_entries (id, project_id, canonical, aliases, status, role) VALUES (?, ?, ?, ?, 'active', ?)"
     );
     const insertAll = db.transaction(() => {
       for (const e of entries) {
@@ -326,11 +331,18 @@ export const sqliteStore: Store = {
           crypto.randomUUID(),
           projectId,
           e.canonical,
-          JSON.stringify(e.aliases)
+          JSON.stringify(e.aliases),
+          e.role ?? null
         );
       }
     });
     insertAll();
+  },
+
+  async setDictionaryRole(entryId, role) {
+    getDb()
+      .prepare("UPDATE dictionary_entries SET role = ? WHERE id = ?")
+      .run(role, entryId);
   },
 
   async upsertDictionaryEntry(input) {

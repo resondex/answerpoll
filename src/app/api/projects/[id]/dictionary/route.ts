@@ -33,6 +33,7 @@ const actionSchema = z.object({
     "confirm",
     "set_parent",
     "rename_parent",
+    "set_role",
   ]),
   mergeIntoId: z.string().min(1).optional(),
   /** Fallback target for merge/move_alias when the target entry was created
@@ -47,6 +48,8 @@ const actionSchema = z.object({
   /** set_parent: the parent-company label (null clears). rename_parent: the
    * current label, with displayName carrying the new one. */
   parent: z.string().trim().min(1).max(80).nullable().optional(),
+  /** set_role: tracked competitor or model-volunteered discovery. */
+  role: z.enum(["competitor", "emerged"]).optional(),
 });
 
 const batchSchema = z.object({
@@ -117,6 +120,12 @@ async function applyAction(projectId: string, a: Action): Promise<string | null>
 
   if (a.action === "set_parent") {
     await store.setDictionaryParent(entry.id, a.parent ?? null);
+    return null;
+  }
+
+  if (a.action === "set_role") {
+    if (!a.role) return "set_role needs role";
+    await store.setDictionaryRole(entry.id, a.role);
     return null;
   }
 
