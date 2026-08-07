@@ -1,5 +1,5 @@
 import { store } from "../store";
-import { getProvider } from "./providers";
+import { completeWithEngine, engineAvailable, getProvider } from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
 import { getDictionarySuggestions } from "./dict_suggest";
@@ -14,14 +14,18 @@ interface Task {
   promptId: string;
   promptText: string;
   repeatIdx: number;
+  /** Which engine answers this task — the third axis of the grid. */
+  model: string;
 }
 
 export type ChunkOutcome = "complete" | "continue" | "failed";
 
 /**
  * Process as much of a run as fits in budgetMs, then report whether work
- * remains. Tasks are (prompt × repeat) pairs; already-stored responses are
- * skipped, so a chunk can resume a run that a killed function left behind.
+ * remains. Tasks are (prompt × repeat × engine) triples; already-stored
+ * responses are skipped, so a chunk can resume a run that a killed function
+ * left behind. Answers come from each engine; coding always comes from the
+ * one fixed extraction model, so engine differences are real differences.
  */
 export async function driveRunChunk(
   runId: string,
@@ -44,17 +48,38 @@ export async function driveRunChunk(
 
   if (run.status === "pending") await store.updateRunStatus(runId, "running");
 
+  // Engines whose vendor key is missing would fail every task; drop them and
+  // measure what we can rather than failing the whole run.
+  const engines = (run.models.length > 0 ? run.models : [run.model]).filter(
+    (m) => engineAvailable(m)
+  );
+  if (engines.length === 0) {
+    await store.updateRunStatus(
+      runId,
+      "failed",
+      `no API key configured for any requested engine (${run.models.join(", ")})`
+    );
+    return "failed";
+  }
+
   const doneKeys = new Set(
     (await store.listResponses(runId)).map(
-      (r) => `${r.prompt_id}:${r.repeat_idx}`
+      (r) => `${r.prompt_id}:${r.repeat_idx}:${r.model}`
     )
   );
-  const total = prompts.length * run.repeats;
+  const total = prompts.length * run.repeats * engines.length;
   const pending: Task[] = [];
   for (const p of prompts) {
     for (let r = 0; r < run.repeats; r++) {
-      if (!doneKeys.has(`${p.id}:${r}`)) {
-        pending.push({ promptId: p.id, promptText: p.text, repeatIdx: r });
+      for (const model of engines) {
+        if (!doneKeys.has(`${p.id}:${r}:${model}`)) {
+          pending.push({
+            promptId: p.id,
+            promptText: p.text,
+            repeatIdx: r,
+            model,
+          });
+        }
       }
     }
   }
@@ -73,12 +98,13 @@ export async function driveRunChunk(
     while (cursor < pending.length && Date.now() < deadline) {
       const task = pending[cursor++];
       try {
-        const text = await provider.complete(task.promptText, run!.model);
+        const text = await completeWithEngine(task.model, task.promptText);
         const coding = await provider.extractCoding(text, extractionCtx);
         await store.insertResponse({
           runId,
           promptId: task.promptId,
           repeatIdx: task.repeatIdx,
+          model: task.model,
           text,
           mentions: coding.mentions,
           coding,

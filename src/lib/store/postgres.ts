@@ -133,7 +133,15 @@ function ensureSchema(): Promise<void> {
         rank INTEGER NOT NULL,
         framing TEXT NOT NULL
       )`;
-      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task ON responses(run_id, prompt_id, repeat_idx)`;
+      // Multi-engine: a task is prompt × repeat × ENGINE. Backfill the model
+      // on pre-multi-engine rows from their run, then re-key the index.
+      await sql`ALTER TABLE runs ADD COLUMN IF NOT EXISTS models TEXT NOT NULL DEFAULT '[]'`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS model TEXT`;
+      await sql`UPDATE responses r SET model = ru.model FROM runs ru
+        WHERE r.run_id = ru.id AND (r.model IS NULL OR r.model = '')`;
+      await sql`DROP INDEX IF EXISTS idx_responses_task`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task_engine
+        ON responses(run_id, prompt_id, repeat_idx, model)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id)`;
@@ -203,6 +211,14 @@ function rowToRun(r: Record<string, unknown>): Run {
     id: r.id as string,
     project_id: r.project_id as string,
     model: r.model as string,
+    models: (() => {
+      try {
+        const v = JSON.parse((r.models as string) ?? "[]");
+        return Array.isArray(v) && v.length > 0 ? v : [r.model as string];
+      } catch {
+        return [r.model as string];
+      }
+    })(),
     repeats: r.repeats as number,
     status: r.status as Run["status"],
     error: (r.error as string | null) ?? null,
@@ -441,8 +457,10 @@ export const pgStore: Store = {
   async createRun(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO runs (id, project_id, model, repeats, status)
-      VALUES (${id}, ${input.projectId}, ${input.model}, ${input.repeats}, 'pending')`;
+    const models =
+      input.models && input.models.length > 0 ? input.models : [input.model];
+    await sql`INSERT INTO runs (id, project_id, model, models, repeats, status)
+      VALUES (${id}, ${input.projectId}, ${models[0]}, ${JSON.stringify(models)}, ${input.repeats}, 'pending')`;
     return (await this.getRun(id))!;
   },
 
@@ -478,12 +496,12 @@ export const pgStore: Store = {
       // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
       const res = await tx`INSERT INTO responses (
-          id, run_id, prompt_id, repeat_idx, text,
+          id, run_id, prompt_id, repeat_idx, model, text,
           top_pick_brand, outcome, reason_codes, clarification_requested,
           gives_recommendation, includes_prices, includes_specs,
           total_recommendations, focus_quote, focus_interpretation
         ) VALUES (
-          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.text},
+          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.text},
           ${c?.top_pick_brand ?? null}, ${c?.outcome ?? null},
           ${c ? c.reasons.join("|") : null},
           ${c ? (c.clarification_requested ? 1 : 0) : null},
@@ -493,7 +511,7 @@ export const pgStore: Store = {
           ${c?.total_recommendations ?? null},
           ${c?.focus_quote ?? null}, ${c?.focus_interpretation ?? null}
         )
-        ON CONFLICT (run_id, prompt_id, repeat_idx) DO NOTHING`;
+        ON CONFLICT (run_id, prompt_id, repeat_idx, model) DO NOTHING`;
       if (res.count === 0) return;
       for (let i = 0; i < input.mentions.length; i++) {
         const m = input.mentions[i];

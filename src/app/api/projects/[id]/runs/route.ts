@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { store } from "@/lib/store";
 import { requireAuth, requireProject } from "@/lib/auth";
-import { apiKeyConfigured } from "@/lib/engine/providers";
+import { apiKeyConfigured, engineAvailable } from "@/lib/engine/providers";
 import { driveAndChain, runInBackground } from "@/lib/engine/runner";
 
 // Vercel: runs execute as a chain of budgeted chunks — each invocation
@@ -12,6 +12,8 @@ export const maxDuration = 300;
 
 const runSchema = z.object({
   model: z.string().trim().min(1).default("gpt-5-mini"),
+  /** Engines to sample. One answer per prompt × repeat × engine. */
+  models: z.array(z.string().trim().min(1)).min(1).max(8).optional(),
   repeats: z.number().int().min(1).max(20).default(5),
 });
 
@@ -47,9 +49,20 @@ export async function POST(
       { status: 409 }
     );
   }
+  const requested = parsed.data.models ?? [parsed.data.model];
+  const models = requested.filter((m) => engineAvailable(m));
+  if (models.length === 0) {
+    return NextResponse.json(
+      {
+        error: `No API key configured for the requested engine(s): ${requested.join(", ")}`,
+      },
+      { status: 503 }
+    );
+  }
   const run = await store.createRun({
     projectId: id,
-    model: parsed.data.model,
+    model: models[0],
+    models,
     repeats: parsed.data.repeats,
   });
   if (process.env.VERCEL) {

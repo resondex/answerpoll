@@ -1,12 +1,21 @@
-import { openaiClient } from "./providers";
+import { anthropicClient, openaiClient } from "./providers";
 import { store } from "../store";
 import { computeRunMetrics } from "./metrics";
 import { computeProjectTrend } from "./trend";
 import type { RunMetrics } from "../types";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
+/**
+ * The narrative writer. Claude Sonnet 5 when an Anthropic key is present —
+ * client-facing prose is the product here, and it holds the placeholder
+ * discipline best — falling back to the OpenAI model otherwise. Either way
+ * the gate is what makes the output safe, not the model.
+ */
+const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
+const writerIsClaude = () =>
+  Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v2";
+const INSIGHTS_VERSION = "v3";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -252,12 +261,7 @@ export async function buildRunInsights(
     facts.flatMap((f) => [...numerals(f.value), ...numerals(f.label)])
   );
 
-  const res = await openaiClient().chat.completions.create({
-    model: SUGGEST_MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
+  const systemPrompt =
           "You write the numbered insights and recommended plays for an AI-" +
           "visibility study report. Voice: plain, confident, specific — a " +
           "senior researcher speaking to a CMO. No hype words.\n\n" +
@@ -292,26 +296,53 @@ export async function buildRunInsights(
           "rate', not a subset we did not measure.\n" +
           "An insight is a claim someone could act on, not a restatement of " +
           "a table row; never write methodological filler ('these results " +
-          "derive from a sample of…').",
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          brand: project.brand,
-          category: project.category,
-          audience: project.audience,
-          facts,
-        }),
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: "insights", strict: true, schema: INSIGHTS_SCHEMA },
-    },
+          "derive from a sample of…').";
+  const userPayload = JSON.stringify({
+    brand: project.brand,
+    category: project.category,
+    audience: project.audience,
+    facts,
   });
-  const parsed = JSON.parse(
-    res.choices[0]?.message?.content ?? '{"sections":[],"plays":[]}'
-  ) as {
+
+  // Claude returns the structure through a forced tool call; OpenAI through
+  // a json_schema response format. Same contract either way.
+  let raw = '{"sections":[],"plays":[]}';
+  if (writerIsClaude()) {
+    const a = await anthropicClient();
+    const res = await a.messages.create({
+      model: WRITER_MODEL,
+      max_tokens: 4096,
+      system: systemPrompt,
+      tools: [
+        {
+          name: "emit_insights",
+          description: "Return the numbered insights and recommended plays.",
+          input_schema: INSIGHTS_SCHEMA as unknown as {
+            type: "object";
+            properties: Record<string, unknown>;
+          },
+        },
+      ],
+      tool_choice: { type: "tool", name: "emit_insights" },
+      messages: [{ role: "user", content: userPayload }],
+    });
+    const block = res.content.find((b) => b.type === "tool_use");
+    if (block && block.type === "tool_use") raw = JSON.stringify(block.input);
+  } else {
+    const res = await openaiClient().chat.completions.create({
+      model: SUGGEST_MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPayload },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "insights", strict: true, schema: INSIGHTS_SCHEMA },
+      },
+    });
+    raw = res.choices[0]?.message?.content ?? raw;
+  }
+  const parsed = JSON.parse(raw) as {
     sections: { key: string; title: string; insights: string[] }[];
     plays: {
       title: string;

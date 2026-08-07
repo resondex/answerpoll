@@ -158,6 +158,55 @@ export default function RunResults({
         />
       </section>
 
+      {metrics.engines && metrics.engines.length > 1 && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">By engine</h2>
+          <p className="text-[13px] text-ink-3 mb-4">
+            The same battery answered by each assistant. Answers come from the
+            engine; coding comes from one fixed coder, so these differences are
+            the engines, not the measurement.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+                  <th className="py-2 pr-4 font-semibold">Engine</th>
+                  <th className="py-2 pr-4 font-semibold text-right">Answers</th>
+                  <th className="py-2 pr-4 font-semibold text-right">Named</th>
+                  <th className="py-2 pr-4 font-semibold text-right">95% CI</th>
+                  <th className="py-2 pr-4 font-semibold text-right">
+                    First pick
+                  </th>
+                  <th className="py-2 font-semibold text-right">Avg position</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.engines.map((e) => (
+                  <tr key={e.model} className="border-b border-line/60">
+                    <td className="py-2 pr-4 font-medium">{e.model}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-ink-2">
+                      {e.answers}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">
+                      {pct(e.namedRate)}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
+                      {pct(e.ciLow)}–{pct(e.ciHigh)}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">
+                      {pct(e.pickRate)}
+                    </td>
+                    <td className="py-2 text-right tabular-nums text-ink-2">
+                      {e.avgPosition ? `#${e.avgPosition.toFixed(1)}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {metrics.coded && setTopPicks && setTopPicks.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Who wins instead</h2>

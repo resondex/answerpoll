@@ -17,6 +17,67 @@ export interface CompletionProvider {
   ): Promise<ExtractionResult>;
 }
 
+/**
+ * The measurement engines — the assistants whose answers we sample. Every
+ * one is a distinct "view" of the category; adding an engine adds rows to
+ * the analyses, never new analysis code. Extraction deliberately stays on
+ * ONE fixed coder across all engines (see EXTRACT_MODEL): if the coder
+ * varied by engine, coder drift would masquerade as engine differences.
+ */
+export interface Engine {
+  id: string;
+  label: string;
+  vendor: string;
+  keyEnv: string;
+  /** OpenAI-compatible endpoint; absent means the vendor's own SDK. */
+  baseURL?: string;
+  sdk?: "anthropic";
+}
+
+export const ENGINES: Engine[] = [
+  { id: "gpt-5-mini", label: "ChatGPT (default tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY" },
+  { id: "gpt-5", label: "ChatGPT (premium tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY" },
+  { id: "claude-sonnet-5", label: "Claude (Sonnet)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
+  { id: "claude-haiku-4-5-20251001", label: "Claude (Haiku)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
+  {
+    id: "gemini-2.5-pro",
+    label: "Gemini (Pro)",
+    vendor: "Google",
+    keyEnv: "GEMINI_API_KEY",
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+  },
+  {
+    id: "gemini-2.5-flash",
+    label: "Gemini (Flash)",
+    vendor: "Google",
+    keyEnv: "GEMINI_API_KEY",
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+  },
+  { id: "grok-4", label: "Grok", vendor: "xAI", keyEnv: "XAI_API_KEY", baseURL: "https://api.x.ai/v1" },
+  {
+    id: "sonar",
+    label: "Perplexity (grounded)",
+    vendor: "Perplexity",
+    keyEnv: "PERPLEXITY_API_KEY",
+    baseURL: "https://api.perplexity.ai",
+  },
+];
+
+export function getEngine(id: string): Engine | undefined {
+  return ENGINES.find((e) => e.id === id);
+}
+
+/** Engines whose vendor key is present in this environment. */
+export function availableEngines(): Engine[] {
+  return ENGINES.filter((e) => Boolean(process.env[e.keyEnv]));
+}
+
+export function engineAvailable(id: string): boolean {
+  const e = getEngine(id);
+  return Boolean(e && process.env[e.keyEnv]);
+}
+
+/** Answering + coding both need OpenAI: it is the fixed extraction coder. */
 export function apiKeyConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY);
 }
@@ -31,6 +92,64 @@ export function openaiClient(): OpenAI {
   return _client;
 }
 const client = openaiClient;
+
+const _compat = new Map<string, OpenAI>();
+function compatClient(engine: Engine): OpenAI {
+  const key = engine.baseURL ?? "default";
+  let c = _compat.get(key);
+  if (!c) {
+    c = new OpenAI({
+      apiKey: process.env[engine.keyEnv],
+      baseURL: engine.baseURL,
+    });
+    _compat.set(key, c);
+  }
+  return c;
+}
+
+let _anthropic: import("@anthropic-ai/sdk").default | null = null;
+export async function anthropicClient() {
+  if (!_anthropic) {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    _anthropic = new Anthropic();
+  }
+  return _anthropic;
+}
+
+/** Sample one answer from a named engine, the way a consumer assistant
+ * would answer it: single turn, no system prompt, fresh session. */
+export async function completeWithEngine(
+  engineId: string,
+  prompt: string
+): Promise<string> {
+  const engine = getEngine(engineId);
+  if (!engine) throw new Error(`unknown engine: ${engineId}`);
+  if (!process.env[engine.keyEnv]) {
+    throw new Error(`${engine.keyEnv} is not configured for ${engine.label}`);
+  }
+  return withRetry(async () => {
+    if (engine.sdk === "anthropic") {
+      const a = await anthropicClient();
+      const res = await a.messages.create({
+        model: engine.id,
+        max_tokens: 2048,
+        messages: [{ role: "user", content: prompt }],
+      });
+      return res.content
+        .filter((b): b is { type: "text"; text: string; citations: never } =>
+          b.type === "text"
+        )
+        .map((b) => b.text)
+        .join("\n");
+    }
+    const c = engine.baseURL ? compatClient(engine) : client();
+    const res = await c.chat.completions.create({
+      model: engine.id,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return res.choices[0]?.message?.content ?? "";
+  });
+}
 
 const EXTRACT_MODEL = process.env.EXTRACT_MODEL ?? "gpt-4o-mini";
 

@@ -406,6 +406,30 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     addNarrative(s, "parents");
   }
 
+  // ---------- 8b. by engine ----------
+  if (x.metrics.engines && x.metrics.engines.length > 1) {
+    const s = newSlide(
+      "The same question, four advisors",
+      "Each engine answered the identical battery; coding is one fixed coder, so these gaps are the engines themselves"
+    );
+    const header: PptxGenJS.TableRow = ["Engine", "Answers", "Named", "95% CI", "First pick", "Avg position"].map((h) => ({
+      text: h, options: { bold: true, color: PAPER, fill: { color: SLATE }, fontSize: 12, fontFace: FONT },
+    }));
+    const body: PptxGenJS.TableRow[] = x.metrics.engines.map((e) => [
+      { text: e.model, options: { fontSize: 12.5, color: INK, fontFace: FONT } },
+      { text: String(e.answers), options: { fontSize: 12.5, color: INK2, align: "right" as const, fontFace: FONT } },
+      { text: pct(e.namedRate), options: { fontSize: 12.5, bold: true, color: INK, align: "right" as const, fontFace: FONT } },
+      { text: `${pct(e.ciLow)}–${pct(e.ciHigh)}`, options: { fontSize: 11.5, color: INK3, align: "right" as const, fontFace: FONT } },
+      { text: pct(e.pickRate), options: { fontSize: 12.5, bold: true, color: INK, align: "right" as const, fontFace: FONT } },
+      { text: e.avgPosition ? `#${e.avgPosition.toFixed(1)}` : "—", options: { fontSize: 12.5, color: INK2, align: "right" as const, fontFace: FONT } },
+    ]);
+    s.addTable([header, ...body], { x: 0.5, y: 1.7, w: 12.3, colW: [3.4, 1.7, 1.8, 2.2, 1.8, 1.4], border: { type: "solid", color: "E5E7EB", pt: 0.5 } });
+    s.addText(
+      "Assistants are not interchangeable: the same buyer question routed to a different engine can produce a different shortlist. Coverage across engines is coverage of the market.",
+      { x: 0.5, y: 5.6, w: 12.3, h: 0.6, fontSize: 12.5, italic: true, color: INK2, fontFace: FONT }
+    );
+  }
+
   // ---------- 9. who wins instead ----------
   if (x.metrics.topPicks && x.metrics.topPicks.length > 0) {
     const s = newSlide(

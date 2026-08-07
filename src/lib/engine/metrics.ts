@@ -185,6 +185,48 @@ export async function computeRunMetrics(
   });
   brands.sort((a, b) => b.mentionRate - a.mentionRate);
 
+  // --- per-engine breakdown: the same headline questions, engine by engine ---
+  const engineIds = [
+    ...new Set(unbranded.map((r) => r.model).filter(Boolean)),
+  ].sort();
+  const engines: RunMetrics["engines"] =
+    engineIds.length > 0
+      ? engineIds.map((model) => {
+          const rows = unbranded.filter((r) => r.model === model);
+          const ids = new Set(rows.map((r) => r.id));
+          // Best (lowest) target rank per answer, from canonicalized mentions.
+          const bestRank = new Map<string, number>();
+          for (const m of mentions) {
+            if (!ids.has(m.response_id)) continue;
+            if (canon.norm(m.brand) !== targetNorm) continue;
+            const prev = bestRank.get(m.response_id);
+            if (prev === undefined || m.rank < prev) {
+              bestRank.set(m.response_id, m.rank);
+            }
+          }
+          const named = bestRank.size;
+          const picks = rows.filter(
+            (r) => r.top_pick_brand && canon.norm(r.top_pick_brand) === targetNorm
+          ).length;
+          const ci = wilson(named, rows.length);
+          const ranks = [...bestRank.values()];
+          return {
+            model,
+            answers: rows.length,
+            named,
+            namedRate: rows.length > 0 ? named / rows.length : 0,
+            ciLow: ci.low,
+            ciHigh: ci.high,
+            picks,
+            pickRate: rows.length > 0 ? picks / rows.length : 0,
+            avgPosition:
+              ranks.length > 0
+                ? ranks.reduce((a, b) => a + b, 0) / ranks.length
+                : null,
+          };
+        })
+      : null;
+
   // --- parent-company rollup (present only when parents are assigned) ---
   // A parent's rate counts distinct answers naming ANY of its brands, so
   // two siblings in one answer count once — not a sum of member rates.
@@ -518,6 +560,7 @@ export async function computeRunMetrics(
     reasonLift,
     promptGrid,
     negatives,
+    engines,
     parentRollup,
     dictionaryVersion: project.dictionary_version,
   };

@@ -16,7 +16,13 @@ import type {
   RunSchedule,
 } from "@/lib/types";
 
-const MODELS = ["gpt-5-mini", "gpt-5", "gpt-4o"];
+interface EngineOption {
+  id: string;
+  label: string;
+  vendor: string;
+  available: boolean;
+  keyEnv: string;
+}
 
 interface Detail {
   project: Project;
@@ -46,7 +52,8 @@ function ProjectDashboard() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [trend, setTrend] = useState<ProjectTrend | null>(null);
   const [dict, setDict] = useState<DictionaryEntry[]>([]);
-  const [model, setModel] = useState(MODELS[0]);
+  const [engines, setEngines] = useState<EngineOption[]>([]);
+  const [chosenEngines, setChosenEngines] = useState<string[]>([]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
   const [openModal, setOpenModal] = useState<OpenModal>(null);
@@ -119,6 +126,22 @@ function ProjectDashboard() {
     refresh();
   }, [refresh]);
 
+  // Engine roster: which assistants this deployment can actually reach.
+  useEffect(() => {
+    fetch("/api/engines")
+      .then((r) => r.json())
+      .then((d) => {
+        const list: EngineOption[] = d.engines ?? [];
+        setEngines(list);
+        setChosenEngines((prev) =>
+          prev.length > 0
+            ? prev
+            : list.filter((e) => e.available).slice(0, 1).map((e) => e.id)
+        );
+      })
+      .catch(() => {});
+  }, []);
+
   const hasActiveRun = detail?.runs.some(
     (r) => r.status === "pending" || r.status === "running"
   );
@@ -136,7 +159,11 @@ function ProjectDashboard() {
       await fetch(`/api/projects/${id}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, repeats }),
+        body: JSON.stringify({
+          model: chosenEngines[0] ?? "gpt-5-mini",
+          models: chosenEngines,
+          repeats,
+        }),
       });
       // Stay in the launching state until the refreshed run list shows the
       // active run — otherwise the button re-enables for a beat in between.
@@ -155,7 +182,9 @@ function ProjectDashboard() {
     );
   }
   const { project, prompts, runs } = detail;
-  const totalCalls = prompts.length * repeats;
+  const activePromptCount = prompts.filter((p) => p.retired === 0).length;
+  const totalCalls =
+    activePromptCount * repeats * Math.max(chosenEngines.length, 1);
   const completeRuns = runs.filter((r) => r.status === "complete");
   // Selected run must still exist and be complete; otherwise show latest.
   const shownRun =
@@ -391,19 +420,50 @@ function ProjectDashboard() {
       {openModal === "run" && (
         <Modal title="Run the battery" onClose={() => setOpenModal(null)}>
           <div className="grid gap-4">
+            <div className="grid gap-2">
+              <span className="text-sm font-medium">Engines to measure</span>
+              <p className="text-[13px] text-ink-3 -mt-1">
+                Each engine answers the same battery, so every one is a
+                comparable view of the category. Answers come from the engine;
+                coding always comes from one fixed coder, so differences here
+                are real differences.
+              </p>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {engines.map((e) => (
+                  <label
+                    key={e.id}
+                    className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
+                    title={
+                      e.available
+                        ? `${e.vendor} · ${e.id}`
+                        : `${e.keyEnv} is not configured in this deployment`
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={!e.available}
+                      checked={chosenEngines.includes(e.id)}
+                      onChange={(ev) =>
+                        setChosenEngines((prev) =>
+                          ev.target.checked
+                            ? [...prev, e.id]
+                            : prev.filter((m) => m !== e.id)
+                        )
+                      }
+                      className="h-4 w-4 accent-[var(--color-primary)]"
+                    />
+                    <span className="font-medium">{e.label}</span>
+                    <span className="text-xs text-ink-3">{e.vendor}</span>
+                    {!e.available && (
+                      <span className="text-[11px] text-ink-3">
+                        · add {e.keyEnv}
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="flex flex-wrap items-end gap-4">
-              <label className="grid gap-1.5 text-sm font-medium">
-                Model
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="input w-44"
-                >
-                  {MODELS.map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </select>
-              </label>
               <label className="grid gap-1.5 text-sm font-medium">
                 Repeats per prompt
                 <input
@@ -420,7 +480,7 @@ function ProjectDashboard() {
                   await launchRun();
                   setOpenModal(null);
                 }}
-                disabled={launching || hasActiveRun}
+                disabled={launching || hasActiveRun || chosenEngines.length === 0}
                 className="btn-primary inline-flex items-center gap-2"
               >
                 {launching && (
@@ -437,8 +497,11 @@ function ProjectDashboard() {
               </button>
             </div>
             <p className="text-[13px] text-ink-3">
-              {prompts.filter((p) => p.retired === 0).length} prompts ×{" "}
-              {repeats} repeats — more repeats, tighter confidence intervals.
+              {activePromptCount} prompts × {repeats} repeats ×{" "}
+              {chosenEngines.length || 0} engine
+              {chosenEngines.length === 1 ? "" : "s"} = {totalCalls} answers.
+              More repeats tighten the confidence intervals; more engines widen
+              the coverage.
             </p>
           </div>
         </Modal>

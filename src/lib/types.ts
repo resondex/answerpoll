@@ -44,7 +44,10 @@ export interface Prompt {
 export interface Run {
   id: string;
   project_id: string;
+  /** Primary engine — kept for display and pre-multi-engine runs. */
   model: string;
+  /** Every engine this run samples. One answer per prompt × repeat × engine. */
+  models: string[];
   repeats: number;
   status: RunStatus;
   error: string | null;
@@ -60,6 +63,8 @@ export interface ResponseRow {
   run_id: string;
   prompt_id: string;
   repeat_idx: number;
+  /** The engine that produced this answer. */
+  model: string;
   text: string;
   /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
   top_pick_brand: string | null;
@@ -220,6 +225,20 @@ export interface RunMetrics {
   negatives:
     | { promptText: string; quote: string | null; interpretation: string | null }[]
     | null;
+  /** Per-engine breakdown — one entry per engine sampled in the run. */
+  engines:
+    | {
+        model: string;
+        answers: number;
+        named: number;
+        namedRate: number;
+        ciLow: number;
+        ciHigh: number;
+        picks: number;
+        pickRate: number;
+        avgPosition: number | null;
+      }[]
+    | null;
   /** Parent-company rollup — present when any grouping has a parent. */
   parentRollup:
     | {
@@ -355,6 +374,7 @@ export interface Store {
   createRun(input: {
     projectId: string;
     model: string;
+    models?: string[];
     repeats: number;
   }): Promise<Run>;
   getRun(id: string): Promise<Run | null>;
@@ -368,6 +388,7 @@ export interface Store {
     runId: string;
     promptId: string;
     repeatIdx: number;
+    model: string;
     text: string;
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;

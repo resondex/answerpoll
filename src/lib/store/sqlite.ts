@@ -84,6 +84,7 @@ function createDb(): Database.Database {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id),
       model TEXT NOT NULL,
+      models TEXT NOT NULL DEFAULT '[]',
       repeats INTEGER NOT NULL,
       status TEXT NOT NULL,
       error TEXT,
@@ -96,6 +97,7 @@ function createDb(): Database.Database {
       run_id TEXT NOT NULL REFERENCES runs(id),
       prompt_id TEXT NOT NULL REFERENCES prompts(id),
       repeat_idx INTEGER NOT NULL,
+      model TEXT,
       text TEXT NOT NULL,
       top_pick_brand TEXT,
       outcome TEXT,
@@ -117,7 +119,6 @@ function createDb(): Database.Database {
       rank INTEGER NOT NULL,
       framing TEXT NOT NULL
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task ON responses(run_id, prompt_id, repeat_idx);
     CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project_id);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id);
@@ -195,7 +196,41 @@ function createDb(): Database.Database {
       db.exec(ddl);
     }
   }
+  // Multi-engine: a task is prompt × repeat × ENGINE. Backfill the model on
+  // pre-multi-engine rows from their run, then key the index on it.
+  if (!respCols.some((c) => c.name === "model")) {
+    db.exec("ALTER TABLE responses ADD COLUMN model TEXT");
+    db.exec(
+      "UPDATE responses SET model = (SELECT model FROM runs WHERE runs.id = responses.run_id) WHERE model IS NULL"
+    );
+  }
+  const runCols = db.prepare("PRAGMA table_info(runs)").all() as {
+    name: string;
+  }[];
+  if (!runCols.some((c) => c.name === "models")) {
+    db.exec("ALTER TABLE runs ADD COLUMN models TEXT NOT NULL DEFAULT '[]'");
+  }
+  db.exec("DROP INDEX IF EXISTS idx_responses_task");
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task_engine ON responses(run_id, prompt_id, repeat_idx, model)"
+  );
   return db;
+}
+
+/** Runs predating multi-engine have no models array — fall back to their
+ * single model so every consumer can treat runs uniformly. */
+function parseRun(row: Record<string, unknown>): Run {
+  let models: string[] = [];
+  try {
+    const v = JSON.parse((row.models as string) ?? "[]");
+    if (Array.isArray(v)) models = v;
+  } catch {
+    models = [];
+  }
+  return {
+    ...(row as unknown as Run),
+    models: models.length > 0 ? models : [row.model as string],
+  };
 }
 
 function getDb(): Database.Database {
@@ -556,26 +591,36 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO runs (id, project_id, model, repeats, status)
-         VALUES (?, ?, ?, ?, 'pending')`
+        `INSERT INTO runs (id, project_id, model, models, repeats, status)
+         VALUES (?, ?, ?, ?, ?, 'pending')`
       )
-      .run(id, input.projectId, input.model, input.repeats);
+      .run(
+        id,
+        input.projectId,
+        (input.models && input.models[0]) || input.model,
+        JSON.stringify(
+          input.models && input.models.length > 0 ? input.models : [input.model]
+        ),
+        input.repeats
+      );
     return (await this.getRun(id))!;
   },
 
   async getRun(id) {
     const row = getDb().prepare("SELECT * FROM runs WHERE id = ?").get(id) as
-      | Run
+      | Record<string, unknown>
       | undefined;
-    return row ?? null;
+    return row ? parseRun(row) : null;
   },
 
   async listRuns(projectId) {
-    return getDb()
-      .prepare(
-        "SELECT * FROM runs WHERE project_id = ? ORDER BY created_at DESC, rowid DESC"
-      )
-      .all(projectId) as Run[];
+    return (
+      getDb()
+        .prepare(
+          "SELECT * FROM runs WHERE project_id = ? ORDER BY created_at DESC, rowid DESC"
+        )
+        .all(projectId) as Record<string, unknown>[]
+    ).map(parseRun);
   },
 
   async updateRunStatus(id, status, error) {
@@ -603,17 +648,18 @@ export const sqliteStore: Store = {
       const info = db
         .prepare(
           `INSERT OR IGNORE INTO responses (
-             id, run_id, prompt_id, repeat_idx, text,
+             id, run_id, prompt_id, repeat_idx, model, text,
              top_pick_brand, outcome, reason_codes, clarification_requested,
              gives_recommendation, includes_prices, includes_specs,
              total_recommendations, focus_quote, focus_interpretation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           responseId,
           input.runId,
           input.promptId,
           input.repeatIdx,
+          input.model,
           input.text,
           c?.top_pick_brand ?? null,
           c?.outcome ?? null,
@@ -686,9 +732,11 @@ export const sqliteStore: Store = {
   },
 
   async listResponses(runId) {
-    return getDb()
-      .prepare("SELECT * FROM responses WHERE run_id = ? ORDER BY rowid")
-      .all(runId) as ResponseRow[];
+    return (
+      getDb()
+        .prepare("SELECT * FROM responses WHERE run_id = ? ORDER BY rowid")
+        .all(runId) as Record<string, unknown>[]
+    ).map((r) => ({ ...r, model: (r.model as string) ?? "" }) as ResponseRow);
   },
 
   async listMentionsForRun(runId) {

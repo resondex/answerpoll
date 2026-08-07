@@ -278,8 +278,8 @@ function addDataSheet(
       (r.reason_codes ?? "").split("|").map((c) => c.trim()).filter(Boolean)
     );
     ws.addRow([
-      `${x.promptCode(r.prompt_id)}|${r.repeat_idx + 1}`,
-      x.run.model,
+      `${x.promptCode(r.prompt_id)}|${r.repeat_idx + 1}|${r.model || x.run.model}`,
+      r.model || x.run.model,
       r.id,
       x.promptCode(r.prompt_id),
       p.theme,
@@ -368,7 +368,7 @@ function addMentionDataSheet(wb: ExcelJS.Workbook, x: WorkbookInputs): void {
       seenParent.add(parent);
       ws.addRow([
         r.id,
-        x.run.model,
+        r.model || x.run.model,
         x.promptCode(r.prompt_id),
         p.theme,
         r.repeat_idx + 1,
@@ -410,7 +410,7 @@ function computeFocusStats(
   let picks = 0;
   let n = 0;
   for (const r of x.responses) {
-    if (engine && x.run.model !== engine) continue;
+    if (engine && (r.model || x.run.model) !== engine) continue;
     const p = promptById.get(r.prompt_id)!;
     if (p.theme === "branded") continue;
     n += 1;
@@ -601,7 +601,7 @@ export async function buildScorecardWorkbook(
 
   // ----- precomputed CI lookup (the [script] register) -----
   // Text for display, numeric bounds so "read as" can compare intervals.
-  const engines = [x.run.model];
+  const engines = x.run.models.length > 0 ? x.run.models : [x.run.model];
   const ci = wb.addWorksheet("CI");
   ci.addRow(["key", "ci", "low", "high"]);
   for (const focus of options) {
@@ -987,9 +987,22 @@ export async function buildScorecardWorkbook(
     allowBlank: false,
     formulae: [`=Lists!$A$2:$A$${options.length + 1}`],
   };
-  pg.getCell("D1").value =
-    "← this sheet's focus (the Scorecard has its own; set both the same to read one story, or differ to compare two brands)";
-  pg.getCell("D1").font = { italic: true, color: { argb: "FF6B7280" } };
+  // Engine selector: the pick columns show one engine's answers at a time.
+  pg.getCell("C1").value = "Engine";
+  pg.getCell("C1").font = { bold: true };
+  pg.getCell("D1").value = engines[0];
+  pg.getCell("D1").fill = YELLOW_FILL;
+  pg.getCell("D1").font = { bold: true };
+  if (engines.length > 1) {
+    pg.getCell("D1").dataValidation = {
+      type: "list",
+      allowBlank: false,
+      formulae: [`"${engines.join(",")}"`],
+    };
+  }
+  pg.getCell("F1").value =
+    "← this sheet's focus and engine (the Scorecard has its own focus; the pick columns below show the selected engine's answers)";
+  pg.getCell("F1").font = { italic: true, color: { argb: "FF6B7280" } };
   pg.getCell("A2").value =
     "What the assistant actually picked — each row one prompt, each column one repeat of the SAME question. Disagreement across a row is measured instability in the model's answer, and instability is opportunity.";
   pg.getCell("A2").font = { italic: true, color: { argb: "FF6B7280" } };
@@ -1027,17 +1040,17 @@ export async function buildScorecardWorkbook(
     ];
     for (let r = 1; r <= R; r++) {
       values.push({
-        formula: `IFERROR(IF(INDEX(${D("top_pick")},MATCH($A${rowN}&"|${r}",${D("key")},0))=0,"· no pick ·",INDEX(${D("top_pick")},MATCH($A${rowN}&"|${r}",${D("key")},0))),"")`,
+        formula: `IFERROR(IF(INDEX(${D("top_pick")},MATCH($A${rowN}&"|${r}|"&$D$1,${D("key")},0))=0,"· no pick ·",INDEX(${D("top_pick")},MATCH($A${rowN}&"|${r}|"&$D$1,${D("key")},0))),"")`,
       });
     }
     values.push(
-      { formula: `COUNTIFS(${D("prompt_code")},$A${rowN})` },
+      { formula: `COUNTIFS(${D("prompt_code")},$A${rowN},${D("model")},$D$1)` },
       {
         formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${M("prompt_code")},$A${rowN},${M("parent")},${GRID_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("prompt_code")},$A${rowN},${M("brand")},$B$1))`,
       },
       { formula: `IFERROR(${cNamed}${rowN}/${cAnswers}${rowN},"")` },
       {
-        formula: `COUNTIFS(${D("prompt_code")},$A${rowN},${D("outcome")},"pick")`,
+        formula: `COUNTIFS(${D("prompt_code")},$A${rowN},${D("model")},$D$1,${D("outcome")},"pick")`,
       },
       {
         formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick_parent")},${GRID_PARENT}),COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick")},$B$1))`,
@@ -1046,7 +1059,7 @@ export async function buildScorecardWorkbook(
       {
         // Share of decided answers agreeing with the modal pick — a property
         // of the prompt, so it reads the same whichever focus is selected.
-        formula: `IFERROR(COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick")},${cModal}${rowN})/${cDecided}${rowN},"")`,
+        formula: `IFERROR(COUNTIFS(${D("prompt_code")},$A${rowN},${D("model")},$D$1,${D("top_pick")},${cModal}${rowN})/${cDecided}${rowN},"")`,
       },
       {
         formula: `IF(${cDecided}${rowN}=0,"No pick",IF(${cStability}${rowN}>=0.8,"Settled",IF(${cStability}${rowN}>0.5,"Leaning","Coin-flip")))`,
@@ -1531,7 +1544,7 @@ export async function buildAnalysisWorkbook(
     ]);
     styleHeader(pe);
     pe.getColumn(1).width = 16;
-    const engines = [x.run.model];
+    const engines = x.run.models.length > 0 ? x.run.models : [x.run.model];
     [...engines.map((e) => ({ label: e, crit: true })), { label: "TOTAL", crit: false }].forEach(
       (er, i) => {
         const rowN = i + 2;
