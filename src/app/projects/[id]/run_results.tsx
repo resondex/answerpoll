@@ -22,6 +22,10 @@ export default function RunResults({
   const [metrics, setMetrics] = useState<RunMetrics | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Which competitive set the brand tables show. The target always stays.
+  const [brandSet, setBrandSet] = useState<"all" | "competitors" | "discovered">(
+    "all"
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -56,21 +60,42 @@ export default function RunResults({
     return <p className="text-sm text-danger">Run results not found.</p>;
 
   const target = metrics.brands.find((b) => b.isTarget)!;
+  const inSet = (b: { isTarget: boolean; isCompetitor: boolean }) =>
+    brandSet === "all" ||
+    b.isTarget ||
+    (brandSet === "competitors" ? b.isCompetitor : !b.isCompetitor);
+  const setBrands = metrics.brands.filter(inSet);
+  const setTopPicks = metrics.topPicks?.filter(inSet) ?? null;
   // The target brand is always on the board — pinned to the bottom when it
   // sits outside the top ten, so "where you stand" is never off-screen.
-  const leaderboard = metrics.brands.slice(0, 10);
+  const leaderboard = setBrands.slice(0, 10);
   if (!leaderboard.some((b) => b.isTarget)) {
-    leaderboard[9] = target;
+    leaderboard[Math.max(leaderboard.length - 1, 0)] = target;
   }
   const maxRate = Math.max(...leaderboard.map((b) => b.mentionRate), 0.01);
-  const targetPos = metrics.brands.findIndex((b) => b.isTarget) + 1;
+  const targetPos = setBrands.findIndex((b) => b.isTarget) + 1;
 
   return (
     <div className="grid gap-8">
       <div className="flex items-baseline justify-between gap-4 flex-wrap -mb-2">
-        <p className="text-sm text-ink-2">
+        <p className="text-sm text-ink-2 flex items-center gap-3 flex-wrap">
           {metrics.model} · {metrics.unbrandedResponses} unbranded answers
           sampled
+          <label className="inline-flex items-center gap-1.5 text-[13px] text-ink-3">
+            Set:
+            <select
+              value={brandSet}
+              onChange={(e) =>
+                setBrandSet(e.target.value as typeof brandSet)
+              }
+              className="input w-auto py-1 text-[13px]"
+              title="Which brands the tables below include — your brand always stays"
+            >
+              <option value="all">all brands</option>
+              <option value="competitors">competitors + you</option>
+              <option value="discovered">discovered + you</option>
+            </select>
+          </label>
         </p>
         <p className="text-[13px] text-ink-3">
           Export:{" "}
@@ -128,12 +153,12 @@ export default function RunResults({
         <StatTile
           label="Share of voice"
           value={pct(target.shareOfVoice)}
-          detail={`#${targetPos} of ${metrics.brands.length} brands named`}
+          detail={`#${targetPos} of ${setBrands.length} brands in set`}
           hint="Your mentions as a share of all brand mentions"
         />
       </section>
 
-      {metrics.coded && metrics.topPicks && metrics.topPicks.length > 0 && (
+      {metrics.coded && setTopPicks && setTopPicks.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Who wins instead</h2>
           <p className="text-[13px] text-ink-3 mb-4">
@@ -145,7 +170,7 @@ export default function RunResults({
             .
           </p>
           <div className="grid gap-2">
-            {metrics.topPicks.slice(0, 10).map((t) => (
+            {setTopPicks.slice(0, 10).map((t) => (
               <div
                 key={t.brand}
                 className="grid grid-cols-[10rem_1fr_8rem] items-center gap-3"
@@ -165,7 +190,7 @@ export default function RunResults({
                           : "bg-neutral-bar"
                     }`}
                     style={{
-                      width: `${(t.shareOfDecided / (metrics.topPicks![0].shareOfDecided || 1)) * 100}%`,
+                      width: `${(t.shareOfDecided / (setTopPicks[0].shareOfDecided || 1)) * 100}%`,
                     }}
                   />
                 </div>
@@ -353,9 +378,7 @@ export default function RunResults({
         <h2 className="section-label mb-1">Brand summary</h2>
         <p className="text-[13px] text-ink-3 mb-4">
           Every brand named in this run, with its full metrics
-          {metrics.brands.length > 25
-            ? ` — top 25 of ${metrics.brands.length} shown`
-            : ""}
+          {setBrands.length > 25 ? ` — top 25 of ${setBrands.length} shown` : ""}
           .
         </p>
         <div className="overflow-x-auto">
@@ -381,7 +404,7 @@ export default function RunResults({
               </tr>
             </thead>
             <tbody>
-              {metrics.brands.slice(0, 25).map((b) => (
+              {setBrands.slice(0, 25).map((b) => (
                 <tr
                   key={b.brand}
                   className={`border-b border-line/60 ${

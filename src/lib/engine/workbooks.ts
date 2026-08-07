@@ -859,39 +859,65 @@ export async function buildScorecardWorkbook(
   };
   ws.getCell(`A${row}`).font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
   row += 1;
+  // Set filter: which competitive set the table shows.
+  ws.getCell(`A${row}`).value = "Set";
+  ws.getCell(`A${row}`).font = { bold: true };
+  const setCell = `$B$${row}`;
+  ws.getCell(`B${row}`).value = "All";
+  ws.getCell(`B${row}`).fill = YELLOW_FILL;
+  ws.getCell(`B${row}`).font = { bold: true };
+  ws.getCell(`B${row}`).dataValidation = {
+    type: "list",
+    allowBlank: false,
+    formulae: ['"All,Competitors,Discovered"'],
+  };
+  ws.getCell(`C${row}`).value =
+    "← tracked competitors, model-volunteered discoveries, or everyone";
+  ws.getCell(`C${row}`).font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+  row += 1;
   headerRow(ws, row, [
     "Brand",
+    "Set",
     "Named %",
     "95% CI",
     "Focus lead (pts)",
     "Read as",
   ]);
   row += 1;
-  const rivals = x.metrics.brands.slice(0, 10).map((b) => b.brand);
+  const roleOfWb = dictionaryRoles(x.dictionary, x.project, x.canon);
+  const rivals = x.metrics.brands.slice(0, 15).map((b) => b.brand);
   rivals.forEach((brand) => {
     const rowN = row;
+    // Row shows when its set matches the filter; the focus row always shows.
+    const visible = `OR(${setCell}="All",$B${rowN}="target",AND(${setCell}="Competitors",$B${rowN}="competitor"),AND(${setCell}="Discovered",$B${rowN}="emerged"))`;
     ws.getRow(rowN).values = [
       brand,
+      roleOfWb(brand),
       {
-        formula: `IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/COUNTIFS(${D("is_branded")},0),"")`,
+        formula: `IF(${visible},IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/COUNTIFS(${D("is_branded")},0),""),"")`,
       },
       {
-        formula: `IFERROR(VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,2,FALSE),"[script]")`,
+        formula: `IF(${visible},IFERROR(VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,2,FALSE),"[script]"),"")`,
       },
       {
-        formula: `IF($A${rowN}=$B$1,"",IFERROR(ROUND(($D$${totalRowN}-B${rowN})*100,1),""))`,
+        formula: `IF(OR($A${rowN}=$B$1,NOT(${visible})),"",IFERROR(ROUND(($D$${totalRowN}-C${rowN})*100,1),""))`,
       },
       {
         // Interval-aware: overlapping CIs read as parity, never as a lead.
-        formula: `IF($A${rowN}=$B$1,"— this is the focus —",IFERROR(IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,3,FALSE)>VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,4,FALSE),"real lead",IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,4,FALSE)<VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,3,FALSE),"real deficit","too close to call")),"—"))`,
+        formula: `IF(NOT(${visible}),"",IF($A${rowN}=$B$1,"— this is the focus —",IFERROR(IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,3,FALSE)>VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,4,FALSE),"real lead",IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,4,FALSE)<VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,3,FALSE),"real deficit","too close to call")),"—")))`,
       },
     ];
-    ws.getCell(`B${rowN}`).numFmt = pct1Fmt;
-    ws.getCell(`D${rowN}`).numFmt = "+0.0;-0.0;0";
+    ws.getCell(`B${rowN}`).font = { size: 10, color: { argb: "FF6B7280" } };
+    ws.getCell(`C${rowN}`).numFmt = pct1Fmt;
+    ws.getCell(`E${rowN}`).numFmt = "+0.0;-0.0;0";
     row += 1;
   });
   row = definitions(ws, row + 1, 11, [
     ["Brand", "Every other brand the answers named, most-reached first. The focus itself is included and marked."],
+    [
+      "Set",
+      "The brand's role in this study: a tracked competitor you chose (or promoted in the Brand dictionary), or a discovery the model volunteered ('emerged'). The Set dropdown above the table filters rows to one group; rows outside the selected set blank out.",
+    ],
     ["Named %", "Share of unbranded answers naming that brand — the same measure as the funnel's Named %, brand by brand."],
     ["95% CI", "That brand's Wilson interval [script]. The true rate is very likely somewhere in this range."],
     [
