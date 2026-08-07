@@ -562,6 +562,7 @@ export const pgStore: Store = {
           run_id: r.run_id,
           prompt_id: r.prompt_id,
           repeat_idx: r.repeat_idx,
+          model: r.model ?? "",
           text: r.text,
           top_pick_brand: r.top_pick_brand ?? null,
           outcome: r.outcome ?? null,
