@@ -217,6 +217,11 @@ const DATA_FIXED = [
   "top_pick_parent",
   "target_first_pick",
   "outcome",
+  "word_count",
+  "clarification_requested",
+  "gives_recommendation",
+  "includes_prices",
+  "includes_specs",
   "total_recommendations",
 ];
 
@@ -291,6 +296,11 @@ function addDataSheet(
       topPickNorm ? (parents.get(topPickNorm) ?? topPickDisplay) : null,
       topPickNorm === targetNorm ? 1 : 0,
       r.outcome ?? "",
+      r.text.split(/\s+/).length,
+      r.clarification_requested ?? "",
+      r.gives_recommendation ?? "",
+      r.includes_prices ?? "",
+      r.includes_specs ?? "",
       r.total_recommendations,
       ...codes.map((c) => (usedCodes.has(c) ? 1 : 0)),
     ]);
@@ -422,24 +432,41 @@ function computeFocusStats(
 /** Modal pick per prompt — the brand most answers crowned. Focus-independent
  * (it is a property of the prompt), so stability reads the same whichever
  * focus is selected. [script]: Excel has no clean modal-of-text formula. */
-function modalPickByPrompt(x: WorkbookInputs): Map<string, string> {
+function modalPickBy(
+  x: WorkbookInputs,
+  keyOf: (r: ResponseRow) => string | null
+): Map<string, string> {
   const tally = new Map<string, Map<string, number>>();
   for (const r of x.responses) {
     if (!r.top_pick_brand) continue;
-    const code = x.promptCode(r.prompt_id);
+    const key = keyOf(r);
+    if (key === null) continue;
     const display = x.canon.canonical(r.top_pick_brand);
-    const counts = tally.get(code) ?? new Map<string, number>();
+    const counts = tally.get(key) ?? new Map<string, number>();
     counts.set(display, (counts.get(display) ?? 0) + 1);
-    tally.set(code, counts);
+    tally.set(key, counts);
   }
   const out = new Map<string, string>();
-  for (const [code, counts] of tally) {
+  for (const [key, counts] of tally) {
     const best = [...counts.entries()].sort(
       (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
     )[0];
-    if (best) out.set(code, best[0]);
+    if (best) out.set(key, best[0]);
   }
   return out;
+}
+
+function modalPickByPrompt(x: WorkbookInputs): Map<string, string> {
+  return modalPickBy(x, (r) => x.promptCode(r.prompt_id));
+}
+
+/** Modal pick per unbranded theme — who wins each buyer stage. */
+function modalPickByTheme(x: WorkbookInputs): Map<string, string> {
+  const promptById = new Map(x.prompts.map((p) => [p.id, p]));
+  return modalPickBy(x, (r) => {
+    const p = promptById.get(r.prompt_id);
+    return p && p.theme !== "branded" ? p.theme.replace("_", " ") : null;
+  });
 }
 
 const pct1Fmt = "0.0%";
@@ -507,7 +534,7 @@ export async function buildScorecardWorkbook(
     `${x.project.brand} — AI visibility scorecard`,
     ceremonySections(
       x,
-      `How visible the focus is in AI answers for ${x.project.category} — by LLM engine and in total, for any brand or parent company via the Focus dropdown.`,
+      `This workbook answers 'Where do we stand?' — read it first. Its companion analysis workbook answers 'Who owns the category and why?'. Here: how visible the focus is in AI answers for ${x.project.category}, by LLM engine and in total, for any brand or parent company via the Focus dropdown.`,
       "the 95% confidence intervals (Wilson score), precomputed for every focus × engine on the hidden CI sheet and looked up live; the modal pick per prompt on the Prompt Grid; and the Key Insights figures, generated from the same computation as the live formulas.",
       [
         [
@@ -807,8 +834,10 @@ export async function buildScorecardWorkbook(
     "Named %",
     "First picks",
     "Pick %",
+    "Most common pick [script]",
   ]);
   row += 1;
+  const themeModal = modalPickByTheme(x);
   const themes = [...new Set(x.prompts.filter((p) => p.retired === 0 && p.theme !== "branded").map((p) => p.theme))];
   themes.forEach((theme) => {
     const rowN = row;
@@ -823,6 +852,7 @@ export async function buildScorecardWorkbook(
         formula: `IF(${SCORE_PARENT}<>"",COUNTIFS(${D("theme")},$A${rowN},${D("top_pick_parent")},${SCORE_PARENT}),COUNTIFS(${D("theme")},$A${rowN},${D("top_pick")},$B$1))`,
       },
       { formula: `IFERROR(E${rowN}/B${rowN},"")` },
+      themeModal.get(theme.replace("_", " ")) ?? "—",
     ];
     ws.getCell(`D${rowN}`).numFmt = pct1Fmt;
     ws.getCell(`F${rowN}`).numFmt = pct1Fmt;
@@ -836,6 +866,10 @@ export async function buildScorecardWorkbook(
     ["Answers", "Unbranded answers sampled for prompts of that type."],
     ["Named / Named %", "Distinct answers of that type naming the focus, and that count ÷ Answers."],
     ["First picks / Pick %", "Answers of that type crowning the focus, and that count ÷ Answers."],
+    [
+      "Most common pick",
+      "The brand crowned most often across all answers of that type [script] — who is winning this buyer stage, whoever the focus is.",
+    ],
     [
       "Why it matters",
       "Winning discovery but losing recommendation means you are known and not chosen once the buyer describes their situation — a messaging problem at a specific point in the journey, invisible in the overall rate.",
@@ -1303,15 +1337,25 @@ export async function buildAnalysisWorkbook(
     `${x.project.brand} — AI visibility analysis workbook`,
     ceremonySections(
       x,
-      `Who owns the category's AI answers, on what arguments, and where ${x.project.brand} wins or loses.`,
+      `This workbook answers 'Who owns the category and why?' — its companion scorecard answers 'Where do we stand?' and is the place to start. Here: who owns the category's AI answers, on what arguments, and where ${x.project.brand} wins or loses.`,
       "the 95% confidence intervals (Wilson score) and the per-prompt consensus badge from the dashboard; everything they summarize is recomputable from these sheets.",
       [
-        ["Leaderboard", "Every brand by reach, with intervals, average position, and share of voice."],
-        ["TopPicks", "Who actually gets crowned — first-pick counts and share of decided answers."],
-        ["ReasonLift", "Which arguments over-index in the focus brand's wins versus all answers."],
+        ["Leaderboard", "Every brand by reach, with intervals, average position, and share of voice. Set dropdown filters to competitors or discoveries."],
+        ["TopPicks", "Who actually gets crowned — first-pick counts and share of decided answers. Set dropdown as above."],
+        [
+          "ReasonLift",
+          "Which arguments travel with the focus brand's wins, which decide against it when it made the list and lost, and which mark conversations it is absent from.",
+        ],
         ["Positions", "Where the focus lands when named: #1, #2, #3, 4th-or-lower, or absent."],
+        [
+          "Personality",
+          "The style of the advisor, by engine: how often it clarifies or commits, how long it talks, how many brands it names, whether it quotes prices and specs.",
+        ],
         ["Parents", "The same reach question at parent-company grain; every independent brand is its own parent."],
-        ["Negatives", "Answers that framed the focus brand negatively, verbatim, with the coder's reading."],
+        [
+          "Quotes",
+          "Every coded verbatim about the focus brand with the coder's reading — negatives flagged in red, filterable by the framing column.",
+        ],
         ["Key Insights / Insights", "The findings worth saying out loud, and the numbered insights with plays."],
         [
           "Data",
@@ -1333,36 +1377,58 @@ export async function buildAnalysisWorkbook(
   const unbr = `COUNTIFS(${D("is_branded")},0)`;
   const totalMentions = `COUNTIFS(${M("is_branded")},0)`;
 
+  const roleOfA = dictionaryRoles(x.dictionary, x.project, x.canon);
+  const setDropdown = (ws: ExcelJS.Worksheet) => {
+    ws.getCell("A1").value = "Set";
+    ws.getCell("A1").font = { bold: true };
+    ws.getCell("B1").value = "All";
+    ws.getCell("B1").fill = YELLOW_FILL;
+    ws.getCell("B1").font = { bold: true };
+    ws.getCell("B1").dataValidation = {
+      type: "list",
+      allowBlank: false,
+      formulae: ['"All,Competitors,Discovered"'],
+    };
+    ws.getCell("C1").value =
+      "← tracked competitors, model-volunteered discoveries, or everyone; rows outside the set blank out";
+    ws.getCell("C1").font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+  };
+  const setVisible = (rowN: number) =>
+    `OR($B$1="All",$B${rowN}="target",AND($B$1="Competitors",$B${rowN}="competitor"),AND($B$1="Discovered",$B${rowN}="emerged"))`;
+
   // Leaderboard
   const lb = wb.addWorksheet("Leaderboard");
-  lb.addRow([
+  setDropdown(lb);
+  lb.getRow(2).values = [
     "brand",
-    "type",
+    "set",
     "answers_named",
     "mention_rate",
     "ci_95",
     "avg_position",
     "share_of_voice",
-  ]);
-  styleHeader(lb);
+  ];
+  styleHeader(lb, 2);
   lb.getColumn(1).width = 28;
   x.metrics.brands.slice(0, 25).forEach((b, i) => {
-    const rowN = i + 2;
-    lb.addRow([
+    const rowN = i + 3;
+    const vis = setVisible(rowN);
+    lb.getRow(rowN).values = [
       b.brand,
-      b.isTarget ? "target" : b.isCompetitor ? "competitor" : "emerged",
+      roleOfA(b.brand),
       {
-        formula: `COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})`,
+        formula: `IF(${vis},COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN}),"")`,
       },
-      { formula: `IFERROR(C${rowN}/${unbr},"")` },
-      `${Math.round(b.ciLow * 100)}%–${Math.round(b.ciHigh * 100)}%`,
+      { formula: `IF(${vis},IFERROR(C${rowN}/${unbr},""),"")` },
+      { formula: `IF(${vis},"${Math.round(b.ciLow * 100)}%–${Math.round(b.ciHigh * 100)}%","")` },
       {
-        formula: `IFERROR(AVERAGEIFS(${M("position")},${M("is_branded")},0,${M("brand")},$A${rowN}),"—")`,
+        formula: `IF(${vis},IFERROR(AVERAGEIFS(${M("position")},${M("is_branded")},0,${M("brand")},$A${rowN}),"—"),"")`,
       },
       {
-        formula: `IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/${totalMentions},"")`,
+        formula: `IF(${vis},IFERROR(COUNTIFS(${M("is_branded")},0,${M("brand")},$A${rowN})/${totalMentions},""),"")`,
       },
-    ]);
+    ];
+    lb.getCell(`B${rowN}`).font = { size: 10, color: { argb: "FF6B7280" } };
     lb.getCell(`D${rowN}`).numFmt = pct1Fmt;
     lb.getCell(`F${rowN}`).numFmt = "0.0";
     lb.getCell(`G${rowN}`).numFmt = pct1Fmt;
@@ -1371,36 +1437,46 @@ export async function buildAnalysisWorkbook(
   // TopPicks
   if (x.metrics.topPicks) {
     const tp = wb.addWorksheet("TopPicks");
-    tp.addRow(["brand", "first_picks", "share_of_decided"]);
-    styleHeader(tp);
+    setDropdown(tp);
+    tp.getRow(2).values = ["brand", "set", "first_picks", "share_of_decided"];
+    styleHeader(tp, 2);
     tp.getColumn(1).width = 28;
     const decided = `COUNTIFS(${D("is_branded")},0,${D("outcome")},"pick")`;
     x.metrics.topPicks.slice(0, 20).forEach((t, i) => {
-      const rowN = i + 2;
-      tp.addRow([
+      const rowN = i + 3;
+      const vis = setVisible(rowN);
+      tp.getRow(rowN).values = [
         t.brand,
+        roleOfA(t.brand),
         {
-          formula: `COUNTIFS(${D("is_branded")},0,${D("top_pick")},$A${rowN})`,
+          formula: `IF(${vis},COUNTIFS(${D("is_branded")},0,${D("top_pick")},$A${rowN}),"")`,
         },
-        { formula: `IFERROR(B${rowN}/${decided},"")` },
-      ]);
-      tp.getCell(`C${rowN}`).numFmt = pct1Fmt;
+        { formula: `IF(${vis},IFERROR(C${rowN}/${decided},""),"")` },
+      ];
+      tp.getCell(`B${rowN}`).font = { size: 10, color: { argb: "FF6B7280" } };
+      tp.getCell(`D${rowN}`).numFmt = pct1Fmt;
     });
   }
 
-  // ReasonLift
+  // ReasonLift — three-way: wins / considered-but-lost / absent. The middle
+  // column is the diagnostic one: arguments present when the focus made the
+  // list and still lost are the arguments deciding against it.
   if (x.metrics.reasonLift) {
     const rl = wb.addWorksheet("ReasonLift");
     rl.addRow([
       "argument",
       "answers_using",
       "share_all",
-      "share_in_target_wins",
+      "in wins",
+      "considered, lost",
+      "absent",
       "lift_points",
     ]);
     styleHeader(rl);
     rl.getColumn(1).width = 30;
     const wins = `COUNTIFS(${D("is_branded")},0,${D("target_first_pick")},1)`;
+    const consideredLost = `COUNTIFS(${D("is_branded")},0,${D("target_named")},1,${D("target_first_pick")},0)`;
+    const absent = `COUNTIFS(${D("is_branded")},0,${D("target_named")},0)`;
     x.metrics.reasonLift.forEach((r, i) => {
       const rowN = i + 2;
       const cc = codeCols.get(r.code);
@@ -1413,12 +1489,91 @@ export async function buildAnalysisWorkbook(
         {
           formula: `IFERROR(COUNTIFS(${D("is_branded")},0,${col},1,${D("target_first_pick")},1)/${wins},"")`,
         },
+        {
+          formula: `IFERROR(COUNTIFS(${D("is_branded")},0,${col},1,${D("target_named")},1,${D("target_first_pick")},0)/${consideredLost},"")`,
+        },
+        {
+          formula: `IFERROR(COUNTIFS(${D("is_branded")},0,${col},1,${D("target_named")},0)/${absent},"")`,
+        },
         { formula: `IFERROR((D${rowN}-C${rowN})*100,"")` },
       ]);
-      rl.getCell(`C${rowN}`).numFmt = pct1Fmt;
-      rl.getCell(`D${rowN}`).numFmt = pct1Fmt;
-      rl.getCell(`E${rowN}`).numFmt = "+0;-0;0";
+      for (const c of ["C", "D", "E", "F"]) rl.getCell(`${c}${rowN}`).numFmt = pct1Fmt;
+      rl.getCell(`G${rowN}`).numFmt = "+0;-0;0";
     });
+    const defStart = x.metrics.reasonLift.length + 3;
+    definitions(rl, defStart, 7, [
+      ["argument", "A reason code from the study's frozen taxonomy — the justifications assistants use."],
+      ["answers_using / share_all", "Unbranded answers using the argument, and that count as a share of all unbranded answers."],
+      ["in wins", "Share of the focus brand's first-pick wins that used the argument. High here = an argument that travels with winning."],
+      [
+        "considered, lost",
+        "Share of answers that NAMED the focus but picked someone else. Arguments high here and low in wins are the ones deciding against you when you are already on the list — the kill-shots.",
+      ],
+      ["absent", "Share of answers that never named the focus. Arguments high here define conversations you are not part of at all."],
+      ["lift_points", "in-wins share minus overall share, in percentage points."],
+    ]);
+  }
+
+  // Personality — the style of the advisor, by engine. Deterministic
+  // response-level codes; the shape their per-view table takes at n=repeats.
+  {
+    const pe = wb.addWorksheet("Personality");
+    pe.addRow([
+      "engine",
+      "answers",
+      "clarifies %",
+      "recommends %",
+      "avg words",
+      "avg brands named",
+      "avg recommendations",
+      "prices %",
+      "specs %",
+    ]);
+    styleHeader(pe);
+    pe.getColumn(1).width = 16;
+    const engines = [x.run.model];
+    [...engines.map((e) => ({ label: e, crit: true })), { label: "TOTAL", crit: false }].forEach(
+      (er, i) => {
+        const rowN = i + 2;
+        const mcrit = er.crit ? `${D("model")},$A${rowN},` : "";
+        pe.getRow(rowN).values = [
+          er.label,
+          { formula: `COUNTIFS(${mcrit}${D("is_branded")},0)` },
+          {
+            formula: `IFERROR(COUNTIFS(${mcrit}${D("is_branded")},0,${D("clarification_requested")},1)/B${rowN},"")`,
+          },
+          {
+            formula: `IFERROR(COUNTIFS(${mcrit}${D("is_branded")},0,${D("gives_recommendation")},1)/B${rowN},"")`,
+          },
+          {
+            formula: `IFERROR(AVERAGEIFS(${D("word_count")},${mcrit}${D("is_branded")},0),"")`,
+          },
+          {
+            formula: `IFERROR(AVERAGEIFS(${D("n_brands")},${mcrit}${D("is_branded")},0),"")`,
+          },
+          {
+            formula: `IFERROR(AVERAGEIFS(${D("total_recommendations")},${mcrit}${D("is_branded")},0),"")`,
+          },
+          {
+            formula: `IFERROR(COUNTIFS(${mcrit}${D("is_branded")},0,${D("includes_prices")},1)/B${rowN},"")`,
+          },
+          {
+            formula: `IFERROR(COUNTIFS(${mcrit}${D("is_branded")},0,${D("includes_specs")},1)/B${rowN},"")`,
+          },
+        ];
+        for (const c of ["C", "D", "H", "I"]) pe.getCell(`${c}${rowN}`).numFmt = pct1Fmt;
+        for (const c of ["E", "F", "G"]) pe.getCell(`${c}${rowN}`).numFmt = "0.0";
+        if (!er.crit) pe.getRow(rowN).font = { bold: true };
+      }
+    );
+    definitions(pe, engines.length + 4, 9, [
+      ["engine", "One row per LLM engine, plus TOTAL. With one engine measured they match; the shape is ready for multi-engine runs."],
+      ["clarifies %", "Share of unbranded answers that asked the user something instead of only answering."],
+      ["recommends %", "Share that committed to recommending at least one option."],
+      ["avg words / brands / recommendations", "How long the engine talks, how many brands it names, and how many it actively recommends per answer."],
+      ["prices % / specs %", "Share of answers quoting a price or concrete spec figures — how 'grounded' the advisor sounds."],
+      ["Why it matters", "This is the advisor's personality: a terse engine that names three brands is a different battlefield from a chatty one that names twelve. Style shifts here across runs can explain rate shifts before any brand work does."],
+    ]);
   }
 
   // Positions
@@ -1463,19 +1618,9 @@ export async function buildAnalysisWorkbook(
     });
   }
 
-  // Negatives (verbatim — text, not formulas)
-  if (x.metrics.negatives && x.metrics.negatives.length > 0) {
-    const ng = wb.addWorksheet("Negatives");
-    ng.addRow(["prompt", "verbatim quote", "coder's reading"]);
-    styleHeader(ng);
-    ng.getColumn(1).width = 45;
-    ng.getColumn(2).width = 60;
-    ng.getColumn(3).width = 60;
-    for (const n of x.metrics.negatives) {
-      const r = ng.addRow([n.promptText, n.quote, n.interpretation]);
-      r.alignment = { wrapText: true, vertical: "top" };
-    }
-  }
+  // Quotes replaces the old Negatives sheet: same evidence, one concept in
+  // both workbooks — every verbatim, with negatives flagged and filterable.
+  addQuotesSheet(wb, x);
 
   addKeyInsightsSheet(wb, x);
   addInsightsSheet(wb, x.insights);
