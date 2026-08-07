@@ -10,6 +10,7 @@ import { computeProjectTrend } from "./trend";
 import { apiKeyConfigured, openaiClient } from "./providers";
 import { buildRunInsights, type InsightsBundle } from "./insights";
 import { buildAnalysisWorkbook, buildScorecardWorkbook } from "./workbooks";
+import { buildStudyDeck } from "./deck";
 import type { MentionRow, Project, ResponseRow, Run } from "../types";
 
 const SUMMARY_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
@@ -309,8 +310,14 @@ export async function buildStudyBundle(
     ]);
     root.file("02_scorecard/scorecard_workbook.xlsx", scorecardWb);
     root.file("03_analysis/analysis_workbook.xlsx", analysisWb);
+    const [deck, deckBeta] = await Promise.all([
+      buildStudyDeck({ ...wbInputs, trend, variant: "standard" }),
+      buildStudyDeck({ ...wbInputs, trend, variant: "ai_beta" }),
+    ]);
+    root.file("07_summary_deck/summary_deck.pptx", deck);
+    root.file("07_summary_deck/summary_deck_ai_beta.pptx", deckBeta);
   } catch (err) {
-    console.error("workbook build failed — CSVs still ship:", err);
+    console.error("workbook/deck build failed — CSVs still ship:", err);
   }
   if (insights) {
     const insightsMd = [

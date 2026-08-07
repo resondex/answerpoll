@@ -195,13 +195,22 @@ function ProjectDashboard() {
           </p>
           <span className="flex items-center gap-4">
             {completeRuns.length > 0 && (
-              <a
-                href={`/api/projects/${id}/study`}
-                className="text-sm font-semibold text-primary hover:opacity-80"
-                title="Complete deliverable: executive summary, scorecard, analysis tables, coded dataset, response library, methodology"
-              >
-                Download study (.zip) ↓
-              </a>
+              <>
+                <a
+                  href={`/api/projects/${id}/deck`}
+                  className="text-sm font-semibold text-primary hover:opacity-80"
+                  title="The executive summary deck (.pptx). Add ?variant=ai_beta for the AI-narrative beta."
+                >
+                  Deck (.pptx) ↓
+                </a>
+                <a
+                  href={`/api/projects/${id}/study`}
+                  className="text-sm font-semibold text-primary hover:opacity-80"
+                  title="Complete deliverable: executive summary, deck, workbooks, coded dataset, response library, methodology"
+                >
+                  Study (.zip) ↓
+                </a>
+              </>
             )}
             <button
               type="button"

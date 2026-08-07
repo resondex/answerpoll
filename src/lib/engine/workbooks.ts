@@ -146,7 +146,7 @@ export interface WorkbookInputs {
   promptCode: (promptId: string) => string;
 }
 
-function parentMap(x: WorkbookInputs): Map<string, string> {
+export function parentMap(x: WorkbookInputs): Map<string, string> {
   return new Map(
     x.dictionary
       .filter((e) => e.status === "active")
@@ -157,7 +157,7 @@ function parentMap(x: WorkbookInputs): Map<string, string> {
   );
 }
 
-interface AnswerMention {
+export interface AnswerMention {
   norm: string;
   display: string;
   rank: number;
@@ -172,7 +172,7 @@ interface AnswerMention {
 /** Per-answer canonicalized mention summary, shared by every sheet builder.
  * One entry per (answer, brand): repeat mentions collapse into times/raws
  * and the brand keeps its earliest position. */
-function answerMentions(x: WorkbookInputs, r: ResponseRow): AnswerMention[] {
+export function answerMentions(x: WorkbookInputs, r: ResponseRow): AnswerMention[] {
   const perBrand = new Map<string, AnswerMention>();
   for (const m of x.mentionsByResponse.get(r.id) ?? []) {
     if (x.canon.isRejected(m.brand)) continue;
