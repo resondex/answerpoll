@@ -83,12 +83,23 @@ function addReadme(
 function ceremonySections(
   x: WorkbookInputs,
   answers: string,
-  scriptComputed: string
+  scriptComputed: string,
+  sheetGuide: [string, string][] = []
 ): [string, string][] {
   const started = (x.run.started_at ?? x.run.created_at).slice(0, 10);
   const completed = (x.run.completed_at ?? x.run.created_at).slice(0, 10);
   return [
     ["What this answers", answers],
+    ...(sheetGuide.length > 0
+      ? ([["— Sheet guide —", "What each tab in this file is for."]] as [
+          string,
+          string,
+        ][])
+      : []),
+    ...sheetGuide,
+    ...(sheetGuide.length > 0
+      ? ([["— Study conventions —", ""]] as [string, string][])
+      : []),
     [
       "Why it matters",
       "Presence gets the brand considered; the first pick decides the purchase. Both are measured with repeats, so every rate carries a real interval.",
@@ -212,6 +223,11 @@ function addDataSheet(
   ws.addRow(headers);
   styleHeader(ws);
   ws.getColumn(6).width = 50;
+  // Self-describing: a note past the last column, out of every formula range.
+  const dataNote = ws.getCell(1, headers.length + 2);
+  dataNote.value =
+    "EVIDENCE SHEET — one row per sampled answer. Every rate in this workbook is a COUNTIFS over these rows. response_id traces to the Quotes sheet and to 05_response_library in the study bundle. 'arg:' columns are 1 when the answer used that argument. Do not sort or edit: the formulas count, they do not depend on order, but edits change the numbers.";
+  dataNote.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
 
   const cols: Record<string, string> = {};
   fixed.forEach((name, i) => (cols[name] = colLetter(i + 1)));
@@ -281,6 +297,10 @@ function addMentionsSheet(
   ];
   ws.addRow(headers);
   styleHeader(ws);
+  const mentionsNote = ws.getCell(1, headers.length + 2);
+  mentionsNote.value =
+    "EVIDENCE SHEET — one row per BRAND NAMED inside an answer (Data has one row per answer; this has one row per name in it). It carries where each brand appeared (position), how it was framed, and the parent company it rolls up to. This is what lets the Focus dropdown re-compute every table for any brand or parent. first_of_brand_in_answer / first_of_parent_in_answer = 1 marks the row to count when you want DISTINCT ANSWERS rather than total mentions.";
+  mentionsNote.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
   const cols: Record<string, string> = {};
   headers.forEach((h, i) => (cols[h] = colLetter(i + 1)));
 
@@ -387,6 +407,37 @@ function noteRow(ws: ExcelJS.Worksheet, rowN: number, text: string) {
   c.font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
 }
 
+/**
+ * Metric definitions under a table — one short row per term (term in A,
+ * definition merged across the table width) so nothing wraps into a tall
+ * cell. Returns the next free row.
+ */
+function definitions(
+  ws: ExcelJS.Worksheet,
+  startRow: number,
+  lastCol: number,
+  entries: [string, string][]
+): number {
+  let row = startRow;
+  const head = ws.getCell(`A${row}`);
+  head.value = "How to read this table";
+  head.font = { bold: true, size: 10, color: { argb: "FF6B7280" } };
+  row += 1;
+  for (const [term, def] of entries) {
+    const t = ws.getCell(`A${row}`);
+    t.value = term;
+    t.font = { italic: true, size: 10, color: { argb: "FF374151" } };
+    t.alignment = { vertical: "top" };
+    ws.mergeCells(row, 2, row, lastCol);
+    const d = ws.getCell(row, 2);
+    d.value = def;
+    d.font = { size: 10, color: { argb: "FF6B7280" } };
+    d.alignment = { vertical: "top", wrapText: false };
+    row += 1;
+  }
+  return row;
+}
+
 function headerRow(ws: ExcelJS.Worksheet, rowN: number, values: string[]) {
   const r = ws.getRow(rowN);
   r.values = values;
@@ -407,7 +458,37 @@ export async function buildScorecardWorkbook(
     ceremonySections(
       x,
       `How visible the focus is in AI answers for ${x.project.category} — by LLM engine and in total, for any brand or parent company via the Focus dropdown.`,
-      "the 95% confidence intervals (Wilson score), precomputed for every focus × engine on the hidden CI sheet and looked up live; and the Key Insights figures, generated from the same computation as the live formulas."
+      "the 95% confidence intervals (Wilson score), precomputed for every focus × engine on the hidden CI sheet and looked up live; the modal pick per prompt on the Prompt Grid; and the Key Insights figures, generated from the same computation as the live formulas.",
+      [
+        [
+          "Scorecard",
+          "Start here. Four tables for the selected focus: the visibility funnel by engine, how settled each answer is, performance by buyer question type, and whether the gap to each rival is real. Every table has its own definitions block underneath.",
+        ],
+        [
+          "Prompt Grid",
+          "One row per prompt showing what the assistant actually picked on each repeat, plus how consistent those picks were. This is where you find the winnable questions.",
+        ],
+        [
+          "Key Insights",
+          "The three or four findings worth saying out loud, as paired numbers with a one-line reading.",
+        ],
+        [
+          "Quotes",
+          "Every coded verbatim about the focus brand, with the coder's reading and the response_id to trace it.",
+        ],
+        [
+          "Insights",
+          "Numbered insights and recommended plays; every figure was substituted from the study's verified fact registry, never written by hand.",
+        ],
+        [
+          "Data",
+          "The evidence layer: one row per sampled answer, with its prompt, engine, whether the focus was named and where, what the answer picked, and a 0/1 column per argument it used. Every formula in this file counts over this sheet.",
+        ],
+        [
+          "Mentions",
+          "The evidence layer at brand grain: one row per brand named in an answer, with its position and framing, plus the parent company it rolls up to. Data answers 'what did this answer do?'; Mentions answers 'who was named, where, and how?' — which is what makes the Focus dropdown able to re-compute for any brand.",
+        ],
+      ]
     )
   );
   const { cols } = addDataSheet(wb, x);
@@ -431,6 +512,14 @@ export async function buildScorecardWorkbook(
   const lists = wb.addWorksheet("Lists");
   lists.addRow(["focus options"]);
   options.forEach((o) => lists.addRow([o]));
+  // Parent helpers live here so the visible sheets stay clean. Each resolves
+  // to the parent-company name when a [Parent] focus is picked, else blank.
+  const parentIf = (cell: string) =>
+    `IF(LEFT(${cell},${PARENT_PREFIX.length})="${PARENT_PREFIX}",MID(${cell},${PARENT_PREFIX.length + 1},255),"")`;
+  lists.getCell("C1").value = { formula: parentIf("Scorecard!$B$1") };
+  lists.getCell("C2").value = { formula: parentIf("'Prompt Grid'!$B$1") };
+  const SCORE_PARENT = "Lists!$C$1";
+  const GRID_PARENT = "Lists!$C$2";
   lists.state = "hidden";
 
   // ----- precomputed CI lookup (the [script] register) -----
@@ -488,23 +577,18 @@ export async function buildScorecardWorkbook(
     formulae: [`=Lists!$A$2:$A$${options.length + 1}`],
   };
   ws.getCell("D1").value =
-    "← pick any brand or parent company; every table in this workbook re-computes for it";
+    "← pick any brand or parent company; every table on this sheet re-computes for it";
   ws.getCell("D1").font = { italic: true, color: { argb: "FF6B7280" } };
-  // Helper: parent name when a parent focus is selected, else blank.
-  ws.getCell("H1").value = {
-    formula: `IF(LEFT($B$1,${PARENT_PREFIX.length})="${PARENT_PREFIX}",MID($B$1,${PARENT_PREFIX.length + 1},255),"")`,
-  };
-  ws.getCell("H1").font = { color: { argb: "FFFFFFFF" } };
 
   // Focus-aware count fragments, reused across every section.
   const mCrit = (extra: string, modelCrit: string) =>
     `${modelCrit ? `${M("model")},${modelCrit},` : ""}${M("is_branded")},0${extra}`;
   const namedF = (modelCrit: string, extra = "") =>
-    `IF($H$1<>"",COUNTIFS(${mCrit(extra, modelCrit)},${M("parent")},$H$1,${M("first_of_parent_in_answer")},1),COUNTIFS(${mCrit(extra, modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`;
+    `IF(${SCORE_PARENT}<>"",COUNTIFS(${mCrit(extra, modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${mCrit(extra, modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`;
   const picksF = (modelCrit: string, extra = "") =>
-    `IF($H$1<>"",COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick_parent")},$H$1),COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick")},$B$1))`;
+    `IF(${SCORE_PARENT}<>"",COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick_parent")},${SCORE_PARENT}),COUNTIFS(${modelCrit ? `${D("model")},${modelCrit},` : ""}${D("is_branded")},0${extra},${D("top_pick")},$B$1))`;
   const posF = (modelCrit: string) =>
-    `IFERROR(IF($H$1<>"",AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("parent")},$H$1,${M("first_of_parent_in_answer")},1),AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1)),"—")`;
+    `IFERROR(IF(${SCORE_PARENT}<>"",AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),AVERAGEIFS(${M("position")},${mCrit("", modelCrit)},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1)),"—")`;
 
   // ===== Section 1: the persuasion funnel, by engine =====
   let row = 3;
@@ -563,12 +647,42 @@ export async function buildScorecardWorkbook(
     }
     row += 1;
   });
-  noteRow(
-    ws,
-    row,
-    "Named = distinct unbranded answers naming the focus. Top-3 = named in the first three brands. Pick % = share crowning it THE recommendation. The drop from Named to Pick is the persuasion gap; the drop from Named to Top-3 is a position problem."
-  );
-  row += 3;
+  const totalRowN = row - 1;
+  row = definitions(ws, row + 1, 11, [
+    [
+      "Engine",
+      "One row per LLM engine measured, plus TOTAL across all of them. Every engine answers the same battery.",
+    ],
+    [
+      "Answers",
+      "Unbranded answers sampled. Branded probes (which name the brand in the question) are excluded from every rate here — asking about a brand guarantees a mention.",
+    ],
+    ["Named", "Distinct answers in which the focus appears anywhere."],
+    ["Named %", "Named ÷ Answers. The reach number: how often you are in the conversation at all."],
+    [
+      "Top-3",
+      "Answers where the focus appears among the first three brands. The shortlist.",
+    ],
+    ["Top-3 %", "Top-3 ÷ Answers. A big drop from Named % is a position problem, not an awareness problem."],
+    [
+      "First picks",
+      "Answers that crown the focus as THE recommendation (not merely list it).",
+    ],
+    ["Pick %", "First picks ÷ Answers. The drop from Named % to Pick % is the persuasion gap."],
+    [
+      "Avg position",
+      "Mean rank of the focus's first appearance, across answers that name it. Lower is better; 1.0 means it always leads.",
+    ],
+    [
+      "95% CI",
+      "Wilson score interval [script]. Two rates are only different if their intervals do not overlap.",
+    ],
+    [
+      "Trace any number",
+      "Every count filters the Data or Mentions sheet; each row there carries response_id, which is the same id used in the Quotes sheet and in 05_response_library of the study bundle.",
+    ],
+  ]);
+  row += 2;
 
   // ===== Section 2: how settled the pick is (our repeats, made legible) =====
   sectionRow(ws, row, "How settled the answer is — where the category is winnable");
@@ -598,18 +712,38 @@ export async function buildScorecardWorkbook(
     ws.getRow(row).values = [
       label,
       { formula: `COUNTIF('Prompt Grid'!$${settledCol}:$${settledCol},"${key}")` },
-      meaning,
     ];
-    ws.getCell(`C${row}`).alignment = { wrapText: true, vertical: "top" };
+    // Merged across the table width so the explanation stays one line high.
+    ws.mergeCells(row, 3, row, 11);
+    const c = ws.getCell(row, 3);
+    c.value = meaning;
+    c.alignment = { vertical: "middle", wrapText: false };
     if (key === "Coin-flip") ws.getCell(`B${row}`).fill = YELLOW_FILL;
     row += 1;
   });
-  noteRow(
-    ws,
-    row,
-    "Consistency is measured across repeats of the SAME question to the SAME engine, so disagreement is instability in the model's answer — not a difference between platforms. Sort the Prompt Grid by consistency to work the coin-flips first."
-  );
-  row += 3;
+  row = definitions(ws, row + 1, 11, [
+    [
+      "Consistency",
+      "For one prompt, the share of its decided answers that picked the same brand as the prompt's most common pick (the modal pick, shown on the Prompt Grid).",
+    ],
+    [
+      "Settled",
+      "Consistency 80% or higher — the same brand wins at least 4 of 5 asks.",
+    ],
+    ["Leaning", "Consistency above 50% but under 80% — a majority winner with real disagreement underneath."],
+    ["Coin-flip", "Consistency 50% or lower — no brand holds a majority. The assistant is genuinely undecided here."],
+    ["No pick", "No answer for that prompt committed to a recommendation at all."],
+    ["Prompts", "How many prompts in the battery fall in that band."],
+    [
+      "Why this exists",
+      "Repeats are asks of the SAME question to the SAME engine, so disagreement is instability in the model's answer — not a difference between platforms. Coin-flips are the cheapest prompts to go win.",
+    ],
+    [
+      "Where to act",
+      "Open the Prompt Grid, filter the 'settled' column to Coin-flip (highlighted yellow), and read across the pick columns to see who is taking the asks you are losing.",
+    ],
+  ]);
+  row += 2;
 
   // ===== Section 3: by buyer question type =====
   sectionRow(ws, row, "By buyer question type");
@@ -630,11 +764,11 @@ export async function buildScorecardWorkbook(
       theme.replace("_", " "),
       { formula: `COUNTIFS(${D("theme")},$A${rowN},${D("is_branded")},0)` },
       {
-        formula: `IF($H$1<>"",COUNTIFS(${M("theme")},$A${rowN},${M("parent")},$H$1,${M("first_of_parent_in_answer")},1),COUNTIFS(${M("theme")},$A${rowN},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`,
+        formula: `IF(${SCORE_PARENT}<>"",COUNTIFS(${M("theme")},$A${rowN},${M("parent")},${SCORE_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("theme")},$A${rowN},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`,
       },
       { formula: `IFERROR(C${rowN}/B${rowN},"")` },
       {
-        formula: `IF($H$1<>"",COUNTIFS(${D("theme")},$A${rowN},${D("top_pick_parent")},$H$1),COUNTIFS(${D("theme")},$A${rowN},${D("top_pick")},$B$1))`,
+        formula: `IF(${SCORE_PARENT}<>"",COUNTIFS(${D("theme")},$A${rowN},${D("top_pick_parent")},${SCORE_PARENT}),COUNTIFS(${D("theme")},$A${rowN},${D("top_pick")},$B$1))`,
       },
       { formula: `IFERROR(E${rowN}/B${rowN},"")` },
     ];
@@ -642,17 +776,44 @@ export async function buildScorecardWorkbook(
     ws.getCell(`F${rowN}`).numFmt = pct1Fmt;
     row += 1;
   });
-  noteRow(
-    ws,
-    row,
-    "Themes map to where a buyer is: discovery (what exists), recommendation (what fits me), comparison (weighing options), use case (a specific constraint). Strength in one and absence in another is a buyer-journey finding, not a rounding difference."
-  );
-  row += 3;
+  row = definitions(ws, row + 1, 11, [
+    [
+      "Question type",
+      "What the buyer was doing when they asked: discovery (what exists), recommendation (what fits my situation), comparison (weighing options), use case (a specific constraint).",
+    ],
+    ["Answers", "Unbranded answers sampled for prompts of that type."],
+    ["Named / Named %", "Distinct answers of that type naming the focus, and that count ÷ Answers."],
+    ["First picks / Pick %", "Answers of that type crowning the focus, and that count ÷ Answers."],
+    [
+      "Why it matters",
+      "Winning discovery but losing recommendation means you are known and not chosen once the buyer describes their situation — a messaging problem at a specific point in the journey, invisible in the overall rate.",
+    ],
+    [
+      "Small cells",
+      "Some question types carry few prompts; read a difference as directional until a second run confirms it.",
+    ],
+  ]);
+  row += 2;
 
   // ===== Section 4: head to head, with interval-aware readings =====
-  sectionRow(ws, row, "Head to head — read the gap, not the number");
+  sectionRow(
+    ws,
+    row,
+    "Is the gap real? — the focus against every other brand"
+  );
   row += 1;
-  headerRow(ws, row, ["Brand", "Named %", "95% CI", "vs focus"]);
+  ws.getCell(`A${row}`).value = {
+    formula: `"Each row compares "&$B$1&" to one rival brand. The last column says whether the difference between them is a real lead or just sampling noise."`,
+  };
+  ws.getCell(`A${row}`).font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
+  row += 1;
+  headerRow(ws, row, [
+    "Brand",
+    "Named %",
+    "95% CI",
+    "Focus lead (pts)",
+    "Read as",
+  ]);
   row += 1;
   const rivals = x.metrics.brands.slice(0, 10).map((b) => b.brand);
   rivals.forEach((brand) => {
@@ -666,24 +827,60 @@ export async function buildScorecardWorkbook(
         formula: `IFERROR(VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,2,FALSE),"[script]")`,
       },
       {
+        formula: `IF($A${rowN}=$B$1,"",IFERROR(ROUND(($D$${totalRowN}-B${rowN})*100,1),""))`,
+      },
+      {
         // Interval-aware: overlapping CIs read as parity, never as a lead.
-        formula: `IF($A${rowN}=$B$1,"— focus —",IFERROR(IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,3,FALSE)>VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,4,FALSE),"ahead",IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,4,FALSE)<VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,3,FALSE),"behind","parity")),"—"))`,
+        formula: `IF($A${rowN}=$B$1,"— this is the focus —",IFERROR(IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,3,FALSE)>VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,4,FALSE),"real lead",IF(VLOOKUP($B$1&"|TOTAL|present",CI!$A:$D,4,FALSE)<VLOOKUP($A${rowN}&"|TOTAL|present",CI!$A:$D,3,FALSE),"real deficit","too close to call")),"—"))`,
       },
     ];
     ws.getCell(`B${rowN}`).numFmt = pct1Fmt;
+    ws.getCell(`D${rowN}`).numFmt = "+0.0;-0.0;0";
     row += 1;
   });
-  noteRow(
-    ws,
-    row,
-    'A gap only counts when the confidence intervals clear each other. "Parity" means the two brands are statistically tied at this sample size, however different the point estimates look — do not brief a parity gap as a lead.'
-  );
+  row = definitions(ws, row + 1, 11, [
+    ["Brand", "Every other brand the answers named, most-reached first. The focus itself is included and marked."],
+    ["Named %", "Share of unbranded answers naming that brand — the same measure as the funnel's Named %, brand by brand."],
+    ["95% CI", "That brand's Wilson interval [script]. The true rate is very likely somewhere in this range."],
+    [
+      "Focus lead (pts)",
+      "The focus's Named % minus this brand's, in percentage points. Positive means the focus is higher on paper.",
+    ],
+    [
+      "Read as",
+      '"real lead" / "real deficit" = the two intervals do not overlap, so the gap survives sampling. "too close to call" = the intervals overlap: at this sample size the two brands are statistically tied, however different the percentages look.',
+    ],
+    [
+      "Why this column exists",
+      "A 17-point gap can still be noise at n=60. This is the check that stops a client briefing a tie as a win — the discipline no single-shot audit can offer.",
+    ],
+    [
+      "To widen a tie",
+      "Raise repeats per prompt on the next run; intervals narrow roughly with the square root of the sample.",
+    ],
+  ]);
 
   // ----- Prompt Grid: the picks themselves, one column per repeat -----
   const pg = wb.addWorksheet("Prompt Grid");
-  pg.getCell("A1").value =
+  // This sheet carries its own Focus selector so you can drill without
+  // hopping back to the Scorecard (Excel cannot two-way-link two dropdowns
+  // without macros — set both the same for one story, or differ to compare).
+  pg.getCell("A1").value = "Focus";
+  pg.getCell("A1").font = { bold: true };
+  pg.getCell("B1").value = x.project.brand;
+  pg.getCell("B1").fill = YELLOW_FILL;
+  pg.getCell("B1").font = { bold: true };
+  pg.getCell("B1").dataValidation = {
+    type: "list",
+    allowBlank: false,
+    formulae: [`=Lists!$A$2:$A$${options.length + 1}`],
+  };
+  pg.getCell("D1").value =
+    "← this sheet's focus (the Scorecard has its own; set both the same to read one story, or differ to compare two brands)";
+  pg.getCell("D1").font = { italic: true, color: { argb: "FF6B7280" } };
+  pg.getCell("A2").value =
     "What the assistant actually picked — each row one prompt, each column one repeat of the SAME question. Disagreement across a row is measured instability in the model's answer, and instability is opportunity.";
-  pg.getCell("A1").font = { italic: true, color: { argb: "FF6B7280" } };
+  pg.getCell("A2").font = { italic: true, color: { argb: "FF6B7280" } };
   const gridHeader = [
     "code",
     "theme",
@@ -724,14 +921,14 @@ export async function buildScorecardWorkbook(
     values.push(
       { formula: `COUNTIFS(${D("prompt_code")},$A${rowN})` },
       {
-        formula: `IF(Scorecard!$H$1<>"",COUNTIFS(${M("prompt_code")},$A${rowN},${M("parent")},Scorecard!$H$1,${M("first_of_parent_in_answer")},1),COUNTIFS(${M("prompt_code")},$A${rowN},${M("brand")},Scorecard!$B$1,${M("first_of_brand_in_answer")},1))`,
+        formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${M("prompt_code")},$A${rowN},${M("parent")},${GRID_PARENT},${M("first_of_parent_in_answer")},1),COUNTIFS(${M("prompt_code")},$A${rowN},${M("brand")},$B$1,${M("first_of_brand_in_answer")},1))`,
       },
       { formula: `IFERROR(${cNamed}${rowN}/${cAnswers}${rowN},"")` },
       {
         formula: `COUNTIFS(${D("prompt_code")},$A${rowN},${D("outcome")},"pick")`,
       },
       {
-        formula: `IF(Scorecard!$H$1<>"",COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick_parent")},Scorecard!$H$1),COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick")},Scorecard!$B$1))`,
+        formula: `IF(${GRID_PARENT}<>"",COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick_parent")},${GRID_PARENT}),COUNTIFS(${D("prompt_code")},$A${rowN},${D("top_pick")},$B$1))`,
       },
       modalByPrompt.get(code) ?? null,
       {
@@ -775,7 +972,7 @@ export async function buildScorecardWorkbook(
       {
         type: "expression",
         priority: 1,
-        formulae: [`D4=Scorecard!$B$1`],
+        formulae: [`D4=$B$1`],
         style: { fill: { type: "pattern", pattern: "solid", bgColor: { argb: "FFDCE6EC" } } },
       },
     ],
@@ -922,6 +1119,7 @@ function addQuotesSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
     "One row per sampled answer that spoke about the focus brand, with the coder's reading. Quotes are coded for the study's focus brand, so this sheet does not follow the Scorecard's Focus dropdown.";
   ws.getCell("A2").font = { italic: true, size: 10, color: { argb: "FF6B7280" } };
   headerRow(ws, 4, [
+    "response_id",
     "code",
     "prompt",
     "repeat",
@@ -929,12 +1127,13 @@ function addQuotesSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
     "verbatim quote",
     "coder's reading",
   ]);
-  ws.getColumn(1).width = 8;
-  ws.getColumn(2).width = 42;
-  ws.getColumn(3).width = 8;
-  ws.getColumn(4).width = 11;
-  ws.getColumn(5).width = 66;
-  ws.getColumn(6).width = 60;
+  ws.getColumn(1).width = 38;
+  ws.getColumn(2).width = 8;
+  ws.getColumn(3).width = 42;
+  ws.getColumn(4).width = 8;
+  ws.getColumn(5).width = 11;
+  ws.getColumn(6).width = 66;
+  ws.getColumn(7).width = 60;
   ws.views = [{ state: "frozen", ySplit: 4 }];
 
   const promptById = new Map(x.prompts.map((p) => [p.id, p]));
@@ -947,6 +1146,7 @@ function addQuotesSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
       (m) => m.norm === targetNorm && m.framing === "negative"
     );
     ws.getRow(row).values = [
+      r.id,
       x.promptCode(r.prompt_id),
       p.text,
       r.repeat_idx + 1,
@@ -954,13 +1154,28 @@ function addQuotesSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
       r.focus_quote,
       r.focus_interpretation,
     ];
-    for (const c of ["B", "E", "F"]) {
+    for (const c of ["C", "F", "G"]) {
       ws.getCell(`${c}${row}`).alignment = { wrapText: true, vertical: "top" };
     }
-    if (neg) ws.getCell(`D${row}`).font = { bold: true, color: { argb: "FFB91C1C" } };
+    if (neg) ws.getCell(`E${row}`).font = { bold: true, color: { argb: "FFB91C1C" } };
     row += 1;
   }
-  if (row > 5) ws.autoFilter = { from: "A4", to: `F${row - 1}` };
+  if (row > 5) ws.autoFilter = { from: "A4", to: `G${row - 1}` };
+  const defRow = row + 1;
+  definitions(ws, defRow, 7, [
+    [
+      "response_id",
+      "The unique id of the sampled answer. The same id appears in the Data and Mentions sheets, in the study bundle's 04_master_dataset CSVs, and names the answer's file in 05_response_library — paste it anywhere to pull the full text.",
+    ],
+    ["code", "Prompt code (P01, P02…). Matches the Prompt Grid and the response library folders."],
+    ["repeat", "Which of the repeats of that prompt this answer was."],
+    [
+      "framing",
+      "How the answer positioned the focus brand: negative when it criticized or advised against it, otherwise neutral/positive.",
+    ],
+    ["verbatim quote", "The sentence the coder pulled about the focus brand, unedited."],
+    ["coder's reading", "One line on what the answer is doing to the brand — context, not a second quote."],
+  ]);
 }
 
 function addInsightsSheet(wb: ExcelJS.Workbook, insights: InsightsBundle | null) {
@@ -1008,7 +1223,24 @@ export async function buildAnalysisWorkbook(
     ceremonySections(
       x,
       `Who owns the category's AI answers, on what arguments, and where ${x.project.brand} wins or loses.`,
-      "the 95% confidence intervals (Wilson score) and the per-prompt consensus badge from the dashboard; everything they summarize is recomputable from these sheets."
+      "the 95% confidence intervals (Wilson score) and the per-prompt consensus badge from the dashboard; everything they summarize is recomputable from these sheets.",
+      [
+        ["Leaderboard", "Every brand by reach, with intervals, average position, and share of voice."],
+        ["TopPicks", "Who actually gets crowned — first-pick counts and share of decided answers."],
+        ["ReasonLift", "Which arguments over-index in the focus brand's wins versus all answers."],
+        ["Positions", "Where the focus lands when named: #1, #2, #3, 4th-or-lower, or absent."],
+        ["Parents", "The same reach question at parent-company grain; every independent brand is its own parent."],
+        ["Negatives", "Answers that framed the focus brand negatively, verbatim, with the coder's reading."],
+        ["Key Insights / Insights", "The findings worth saying out loud, and the numbered insights with plays."],
+        [
+          "Data",
+          "One row per sampled answer — the evidence every formula counts over.",
+        ],
+        [
+          "Mentions",
+          "One row per brand named in an answer, with position, framing, and parent company. This is what lets brand-level and parent-level tables be computed from the same evidence.",
+        ],
+      ]
     )
   );
   const { cols, codeCols } = addDataSheet(wb, x);
