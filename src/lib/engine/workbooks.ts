@@ -594,7 +594,6 @@ export async function buildScorecardWorkbook(
   let row = 3;
   sectionRow(ws, row, "Visibility funnel — named, shortlisted, chosen");
   row += 1;
-  const funnelHeaderRow = row;
   headerRow(ws, row, [
     "Engine",
     "Answers",
@@ -608,7 +607,10 @@ export async function buildScorecardWorkbook(
     "95% CI",
     "Avg position",
   ]);
-  ws.views = [{ state: "frozen", ySplit: funnelHeaderRow }];
+  // Freeze only the Focus row: it drives every table below, and the sheet
+  // stacks several tables with their own headers, so pinning one table's
+  // header would be wrong everywhere else.
+  ws.views = [{ state: "frozen", ySplit: 1 }];
   row += 1;
   const engineRows = [
     ...engines.map((e) => ({ label: e, useCrit: true })),
