@@ -40,14 +40,14 @@ export const ENGINES: Engine[] = [
   { id: "claude-sonnet-5", label: "Claude (Sonnet)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
   { id: "claude-haiku-4-5-20251001", label: "Claude (Haiku)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
   {
-    id: "gemini-2.5-pro",
+    id: "gemini-pro-latest",
     label: "Gemini (Pro)",
     vendor: "Google",
     keyEnv: "GEMINI_API_KEY",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
   },
   {
-    id: "gemini-2.5-flash",
+    id: "gemini-flash-latest",
     label: "Gemini (Flash)",
     vendor: "Google",
     keyEnv: "GEMINI_API_KEY",
