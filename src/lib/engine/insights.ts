@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v4";
+const INSIGHTS_VERSION = "v5";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -155,11 +155,10 @@ function buildFacts(
     }
   }
   if (metrics.engines && metrics.engines.length > 1) {
+    // One figure per fact — compound values read badly when substituted.
     for (const e of metrics.engines) {
-      add(
-        `${e.model} — ${brandName} named / first pick`,
-        `named in ${pct(e.namedRate)} of its ${e.answers} answers, first pick in ${pct(e.pickRate)}`
-      );
+      add(`${e.model}: share of its answers naming ${brandName}`, pct(e.namedRate));
+      add(`${e.model}: share of its answers picking ${brandName} first`, pct(e.pickRate));
     }
   }
   if (metrics.promptGrid) {
