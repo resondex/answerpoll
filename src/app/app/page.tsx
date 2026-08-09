@@ -28,6 +28,7 @@ export default function AppHomePage() {
   const [brand, setBrand] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [category, setCategory] = useState("");
+  const [studyName, setStudyName] = useState("");
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [compDraft, setCompDraft] = useState("");
   const [audience, setAudience] = useState("");
@@ -102,6 +103,7 @@ export default function AppHomePage() {
     e.preventDefault();
     if (!brand.trim()) return;
     setCategory("");
+    setStudyName("");
     setCompetitors([]);
     setCompDraft("");
     setAudience("");
@@ -224,6 +226,7 @@ export default function AppHomePage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        name: studyName.trim() || undefined,
         brand,
         category,
         audience: audience || undefined,
@@ -250,6 +253,7 @@ export default function AppHomePage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        name: studyName.trim() || undefined,
         brand,
         category,
         audience: audience || undefined,
@@ -435,6 +439,19 @@ export default function AppHomePage() {
               </div>
             ) : (
               <>
+                <label className="grid gap-1.5 text-sm font-medium">
+                  Study name{" "}
+                  <span className="font-normal text-ink-3">
+                    (optional — the client / target brand stays {brand})
+                  </span>
+                  <input
+                    className="input w-full"
+                    value={studyName}
+                    onChange={(e) => setStudyName(e.target.value)}
+                    placeholder={`e.g. ${brand} AI visibility — Q3`}
+                  />
+                </label>
+
                 <label className="grid gap-1.5 text-sm font-medium">
                   Category
                   <input
