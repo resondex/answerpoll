@@ -1,4 +1,5 @@
 import { store } from "../store";
+import { engineMode } from "./providers";
 import type {
   BrandStats,
   DictionaryEntry,
@@ -233,8 +234,10 @@ export async function computeRunMetrics(
           ).length;
           const ci = wilson(named, rows.length);
           const ranks = [...bestRank.values()];
+          const reported = rows.filter((r) => r.search_count !== null);
           return {
             model,
+            mode: engineMode(model),
             answers: rows.length,
             named,
             namedRate: rows.length > 0 ? named / rows.length : 0,
@@ -246,13 +249,73 @@ export async function computeRunMetrics(
               ranks.length > 0
                 ? ranks.reduce((a, b) => a + b, 0) / ranks.length
                 : null,
+            searchRate:
+              reported.length > 0
+                ? reported.filter((r) => (r.search_count ?? 0) > 0).length /
+                  reported.length
+                : null,
+            citedAnswers: rows.filter((r) => r.citations && r.citations.length > 0).length,
           };
         })
       : null;
 
+  // --- instinct vs search: the same questions, split by instrument ---
+  // Search engines may retrieve mid-answer (consumer-app behavior, carries
+  // citations); instinct engines answer from trained knowledge alone. The
+  // gap between the two rows is itself a finding: visibility the live web
+  // grants or withholds relative to the model's priors.
+  let modes: RunMetrics["modes"] = null;
+  if (engineIds.length > 0) {
+    modes = (["instinct", "search"] as const).flatMap((mode) => {
+      const modelIds = engineIds.filter((m) => engineMode(m) === mode);
+      if (modelIds.length === 0) return [];
+      const rows = allUnbranded.filter((r) => engineMode(r.model) === mode);
+      const ids = new Set(rows.map((r) => r.id));
+      const bestRank = new Map<string, number>();
+      for (const m of mentions) {
+        if (!ids.has(m.response_id)) continue;
+        if (canon.norm(m.brand) !== targetNorm) continue;
+        const prev = bestRank.get(m.response_id);
+        if (prev === undefined || m.rank < prev) bestRank.set(m.response_id, m.rank);
+      }
+      const named = bestRank.size;
+      const picks = rows.filter(
+        (r) => r.top_pick_brand && canon.norm(r.top_pick_brand) === targetNorm
+      ).length;
+      const ci = wilson(named, rows.length);
+      const ranks = [...bestRank.values()];
+      const reported = rows.filter((r) => r.search_count !== null);
+      return [{
+        mode,
+        engines: modelIds,
+        answers: rows.length,
+        named,
+        namedRate: rows.length > 0 ? named / rows.length : 0,
+        ciLow: ci.low,
+        ciHigh: ci.high,
+        picks,
+        pickRate: rows.length > 0 ? picks / rows.length : 0,
+        avgPosition:
+          ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null,
+        searchedAnswers:
+          reported.length > 0
+            ? reported.filter((r) => (r.search_count ?? 0) > 0).length
+            : null,
+        searchRate:
+          reported.length > 0
+            ? reported.filter((r) => (r.search_count ?? 0) > 0).length /
+              reported.length
+            : null,
+        citedAnswers: rows.filter((r) => r.citations && r.citations.length > 0).length,
+      }];
+    });
+    if (modes.length === 0) modes = null;
+  }
+
   // --- source landscape: where grounded answers got their facts ---
-  // Only citation-bearing engines (Perplexity) contribute; domains ranked by
-  // DISTINCT citing answers so one answer's ten citations count once each.
+  // Any citation-bearing answer contributes (Perplexity always; search-mode
+  // engines when they chose to retrieve); domains ranked by DISTINCT citing
+  // answers so one answer's ten citations count once each.
   let sources: RunMetrics["sources"] = null;
   {
     const cited = unbranded.filter(
@@ -640,6 +703,7 @@ export async function computeRunMetrics(
     coreModels: [...coreSet],
     bonusModels,
     engines,
+    modes,
     parentRollup,
     dictionaryVersion: project.dictionary_version,
   };

@@ -24,6 +24,8 @@ export interface CompletionProvider {
  * ONE fixed coder across all engines (see EXTRACT_MODEL): if the coder
  * varied by engine, coder drift would masquerade as engine differences.
  */
+export type EngineMode = "instinct" | "search";
+
 export interface Engine {
   id: string;
   label: string;
@@ -32,19 +34,33 @@ export interface Engine {
   /** OpenAI-compatible endpoint; absent means the vendor's own SDK. */
   baseURL?: string;
   sdk?: "anthropic";
+  /**
+   * Instinct = the model answers from its trained knowledge, no retrieval —
+   * the stable baseline. Search = the assistant may search the web
+   * mid-answer, the way the consumer apps behave; answers carry citations
+   * and a per-answer search count. Same underlying model, two instruments.
+   */
+  mode: EngineMode;
+  /** Model id sent to the vendor when it differs from our registry id
+   * (search variants share the base model). */
+  apiModel?: string;
 }
 
 export const ENGINES: Engine[] = [
-  { id: "gpt-5-mini", label: "ChatGPT (default tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY" },
-  { id: "gpt-5", label: "ChatGPT (premium tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY" },
-  { id: "claude-sonnet-5", label: "Claude (Sonnet)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude (Haiku)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic" },
+  { id: "gpt-5-mini", label: "ChatGPT (default tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY", mode: "instinct" },
+  { id: "gpt-5-mini-search", label: "ChatGPT (default tier) + search", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY", mode: "search", apiModel: "gpt-5-mini" },
+  { id: "gpt-5", label: "ChatGPT (premium tier)", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY", mode: "instinct" },
+  { id: "gpt-5-search", label: "ChatGPT (premium tier) + search", vendor: "OpenAI", keyEnv: "OPENAI_API_KEY", mode: "search", apiModel: "gpt-5" },
+  { id: "claude-sonnet-5", label: "Claude (Sonnet)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic", mode: "instinct" },
+  { id: "claude-sonnet-5-search", label: "Claude (Sonnet) + search", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic", mode: "search", apiModel: "claude-sonnet-5" },
+  { id: "claude-haiku-4-5-20251001", label: "Claude (Haiku)", vendor: "Anthropic", keyEnv: "ANTHROPIC_API_KEY", sdk: "anthropic", mode: "instinct" },
   {
     id: "gemini-pro-latest",
     label: "Gemini (Pro)",
     vendor: "Google",
     keyEnv: "GEMINI_API_KEY",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    mode: "instinct",
   },
   {
     id: "gemini-flash-latest",
@@ -52,16 +68,24 @@ export const ENGINES: Engine[] = [
     vendor: "Google",
     keyEnv: "GEMINI_API_KEY",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    mode: "instinct",
   },
-  { id: "grok-4", label: "Grok", vendor: "xAI", keyEnv: "XAI_API_KEY", baseURL: "https://api.x.ai/v1" },
+  { id: "grok-4", label: "Grok", vendor: "xAI", keyEnv: "XAI_API_KEY", baseURL: "https://api.x.ai/v1", mode: "instinct" },
   {
+    // Perplexity has no instinct mode — retrieval IS the product.
     id: "sonar",
     label: "Perplexity (grounded)",
     vendor: "Perplexity",
     keyEnv: "PERPLEXITY_API_KEY",
     baseURL: "https://api.perplexity.ai",
+    mode: "search",
   },
 ];
+
+/** Which mode an engine id measures; unknown ids read as instinct. */
+export function engineMode(id: string): EngineMode {
+  return getEngine(id)?.mode ?? "instinct";
+}
 
 export function getEngine(id: string): Engine | undefined {
   return ENGINES.find((e) => e.id === id);
@@ -118,43 +142,101 @@ export async function anthropicClient() {
 
 /** Sample one answer from a named engine, the way a consumer assistant
  * would answer it: single turn, no system prompt, fresh session. The finish
- * reason is recorded so truncation is a stored fact, not a guess. */
+ * reason is recorded so truncation is a stored fact, not a guess. Search
+ * engines may retrieve mid-answer; how often they chose to is recorded as
+ * searchCount (null = the vendor doesn't report it). */
 export async function completeWithEngine(
   engineId: string,
   prompt: string
 ): Promise<{
   text: string;
   finishReason: string | null;
-  /** Source URLs for grounded engines (Perplexity); null when ungrounded. */
+  /** Source URLs for grounded/search answers; null when ungrounded. */
   citations: string[] | null;
+  /** Web searches the model chose to run for this answer; 0 = had the tool
+   * but answered from weights; null = not reported (instinct engines, and
+   * always-grounded vendors like Perplexity). */
+  searchCount: number | null;
 }> {
   const engine = getEngine(engineId);
   if (!engine) throw new Error(`unknown engine: ${engineId}`);
   if (!process.env[engine.keyEnv]) {
     throw new Error(`${engine.keyEnv} is not configured for ${engine.label}`);
   }
+  const model = engine.apiModel ?? engine.id;
   return withRetry(async () => {
     if (engine.sdk === "anthropic") {
       const a = await anthropicClient();
       const res = await a.messages.create({
-        model: engine.id,
+        model,
         max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
+        ...(engine.mode === "search"
+          ? {
+              tools: [
+                // Server-side web search — the model decides per answer
+                // whether to use it, mirroring claude.ai's default.
+                { type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 3 },
+              ],
+            }
+          : {}),
       });
+      const urls = new Set<string>();
+      for (const b of res.content) {
+        if (b.type !== "text") continue;
+        const cites = (b as { citations?: { url?: string }[] }).citations;
+        for (const c of cites ?? []) if (c.url) urls.add(c.url);
+      }
+      const usage = res.usage as unknown as {
+        server_tool_use?: { web_search_requests?: number };
+      };
       return {
         text: res.content
-          .filter((b): b is { type: "text"; text: string; citations: never } =>
-            b.type === "text"
-          )
+          .filter((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
           .join("\n"),
         finishReason: res.stop_reason ?? null,
-        citations: null,
+        citations: urls.size > 0 ? [...urls] : null,
+        searchCount:
+          engine.mode === "search"
+            ? usage.server_tool_use?.web_search_requests ?? 0
+            : null,
+      };
+    }
+    if (engine.mode === "search" && !engine.baseURL) {
+      // OpenAI search variants go through the Responses API — web search is
+      // a first-class tool there, with each search recorded in the output.
+      const res = await client().responses.create({
+        model,
+        input: prompt,
+        tools: [{ type: "web_search" }],
+      } as Parameters<ReturnType<typeof client>["responses"]["create"]>[0]);
+      const output = (res as unknown as { output?: { type: string; content?: { type: string; annotations?: { type: string; url?: string }[] }[] }[] }).output ?? [];
+      const searches = output.filter((i) => i.type === "web_search_call").length;
+      const urls = new Set<string>();
+      for (const item of output) {
+        for (const part of item.content ?? []) {
+          for (const ann of part.annotations ?? []) {
+            if (ann.type === "url_citation" && ann.url) urls.add(ann.url);
+          }
+        }
+      }
+      const r = res as unknown as {
+        output_text?: string;
+        status?: string;
+        incomplete_details?: { reason?: string };
+      };
+      return {
+        text: r.output_text ?? "",
+        finishReason:
+          r.incomplete_details?.reason ?? (r.status === "completed" ? "stop" : r.status ?? null),
+        citations: urls.size > 0 ? [...urls] : null,
+        searchCount: searches,
       };
     }
     const c = engine.baseURL ? compatClient(engine) : client();
     const res = await c.chat.completions.create({
-      model: engine.id,
+      model,
       messages: [{ role: "user", content: prompt }],
     });
     // Perplexity attaches the grounded source list as non-standard fields.
@@ -172,6 +254,7 @@ export async function completeWithEngine(
       text: res.choices[0]?.message?.content ?? "",
       finishReason: res.choices[0]?.finish_reason ?? null,
       citations: citations && citations.length > 0 ? citations : null,
+      searchCount: null,
     };
   });
 }

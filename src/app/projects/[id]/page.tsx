@@ -7,6 +7,10 @@ import TrendChart from "./trend_chart";
 import RunResults from "./run_results";
 import IdentifyTab from "./identify_tab";
 import ParentsTab from "./parents_tab";
+import {
+  EnginePicker,
+  type EngineOption,
+} from "@/app/components/engine_picker";
 import type {
   DictionaryEntry,
   Project,
@@ -15,14 +19,6 @@ import type {
   Run,
   RunSchedule,
 } from "@/lib/types";
-
-interface EngineOption {
-  id: string;
-  label: string;
-  vendor: string;
-  available: boolean;
-  keyEnv: string;
-}
 
 interface Detail {
   project: Project;
@@ -447,45 +443,25 @@ function ProjectDashboard() {
                 — shown in the by-engine table, kept out of the headline so
                 the trend stays comparable.
               </p>
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                {engines.map((e) => (
-                  <label
-                    key={e.id}
-                    className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
-                    title={
-                      e.available
-                        ? `${e.vendor} · ${e.id}`
-                        : `${e.keyEnv} is not configured in this deployment`
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      disabled={!e.available}
-                      checked={chosenEngines.includes(e.id)}
-                      onChange={(ev) =>
-                        setChosenEngines((prev) =>
-                          ev.target.checked
-                            ? [...prev, e.id]
-                            : prev.filter((m) => m !== e.id)
-                        )
-                      }
-                      className="h-4 w-4 accent-[var(--color-primary)]"
-                    />
-                    <span className="font-medium">{e.label}</span>
-                    <span className="text-xs text-ink-3">{e.vendor}</span>
-                    {(detail?.project.engine_set ?? []).includes(e.id) && (
-                      <span className="rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                        core
-                      </span>
-                    )}
-                    {!e.available && (
-                      <span className="text-[11px] text-ink-3">
-                        · add {e.keyEnv}
-                      </span>
-                    )}
-                  </label>
-                ))}
-              </div>
+              <EnginePicker
+                options={engines}
+                selected={chosenEngines}
+                onToggle={(engId, checked) =>
+                  setChosenEngines((prev) =>
+                    checked
+                      ? [...prev, engId]
+                      : prev.filter((m) => m !== engId)
+                  )
+                }
+                onPreset={(list) => setChosenEngines(list)}
+                badge={(engId) =>
+                  (detail?.project.engine_set ?? []).includes(engId) ? (
+                    <span className="rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                      core
+                    </span>
+                  ) : null
+                }
+              />
             </div>
             <div className="flex flex-wrap items-end gap-4">
               <label className="grid gap-1.5 text-sm font-medium">
@@ -560,45 +536,27 @@ function ProjectDashboard() {
                 trend compute over exactly these. Changing it starts a new
                 trend epoch — earlier runs stay, but the line breaks there.
               </p>
-              <div className="grid gap-1 sm:grid-cols-2">
-                {engines.map((e) => (
-                  <label
-                    key={e.id}
-                    className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      disabled={!e.available}
-                      checked={(project.engine_set ?? []).includes(e.id)}
-                      onChange={async (ev) => {
-                        const next = ev.target.checked
-                          ? [...(project.engine_set ?? []), e.id]
-                          : (project.engine_set ?? []).filter(
-                              (m) => m !== e.id
-                            );
-                        if (next.length === 0) return;
-                        setDetail((d) =>
-                          d
-                            ? {
-                                ...d,
-                                project: { ...d.project, engine_set: next },
-                              }
-                            : d
-                        );
-                        setChosenEngines(next);
-                        await fetch(`/api/projects/${id}`, {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ engines: next }),
-                        });
-                      }}
-                      className="h-4 w-4 accent-[var(--color-primary)]"
-                    />
-                    <span>{e.label}</span>
-                    <span className="text-xs text-ink-3">{e.vendor}</span>
-                  </label>
-                ))}
-              </div>
+              <EnginePicker
+                options={engines}
+                selected={project.engine_set ?? []}
+                onToggle={async (engId, checked) => {
+                  const next = checked
+                    ? [...(project.engine_set ?? []), engId]
+                    : (project.engine_set ?? []).filter((m) => m !== engId);
+                  if (next.length === 0) return;
+                  setDetail((d) =>
+                    d
+                      ? { ...d, project: { ...d.project, engine_set: next } }
+                      : d
+                  );
+                  setChosenEngines(next);
+                  await fetch(`/api/projects/${id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ engines: next }),
+                  });
+                }}
+              />
             </div>
           </div>
         </Modal>

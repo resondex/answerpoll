@@ -7,7 +7,7 @@ import {
   wilson,
 } from "./metrics";
 import { computeProjectTrend } from "./trend";
-import { apiKeyConfigured, openaiClient } from "./providers";
+import { apiKeyConfigured, engineMode, openaiClient } from "./providers";
 import { buildRunInsights, type InsightsBundle } from "./insights";
 import { buildAnalysisWorkbook, buildScorecardWorkbook } from "./workbooks";
 import { buildStudyDeck } from "./deck";
@@ -217,8 +217,8 @@ export async function buildStudyBundle(
 
   // ---------- 04: master coded dataset ----------
   const masterRows: (string | number | null)[][] = [[
-    "response_id", "run_id", "run_date", "model", "finish_reason", "coder_model",
-    "n_citations", "prompt_code", "theme", "prompt_text",
+    "response_id", "run_id", "run_date", "model", "mode", "finish_reason", "coder_model",
+    "n_citations", "n_searches", "prompt_code", "theme", "prompt_text",
     "repeat_idx", "word_count", "target_present", "target_first_named", "target_position",
     "first_brand", "n_brands", "brands_in_order", "recommended_brands", "negative_brands",
     "top_pick_brand", "top_pick_canonical", "outcome", "reason_codes",
@@ -231,8 +231,9 @@ export async function buildStudyBundle(
     const ms = mentionsByResponse.get(r.id) ?? [];
     const tm = ms.find((m) => m.brand_norm === targetNorm);
     masterRows.push([
-      r.id, run.id, stamp, r.model || run.model, r.finish_reason,
-      r.coder_model, r.citations?.length ?? 0, promptCode(p.idx), p.theme, p.text,
+      r.id, run.id, stamp, r.model || run.model, engineMode(r.model || run.model),
+      r.finish_reason,
+      r.coder_model, r.citations?.length ?? 0, r.search_count, promptCode(p.idx), p.theme, p.text,
       r.repeat_idx, r.text.split(/\s+/).length,
       tm ? 1 : 0, ms[0]?.brand_norm === targetNorm ? 1 : 0, tm?.rank ?? null,
       ms[0]?.brand ?? null, ms.length, ms.map((m) => m.brand).join("|"),

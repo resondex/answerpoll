@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { buildCanonicalizer } from "./metrics";
 import type { InsightsBundle } from "./insights";
+import { engineMode } from "./providers";
 
 /**
  * Live-formula Excel workbooks — the trust feature: every aggregate is a
@@ -219,6 +220,8 @@ const DATA_FIXED = [
   "outcome",
   "finish_reason",
   "n_citations",
+  "mode",
+  "n_searches",
   "word_count",
   "clarification_requested",
   "gives_recommendation",
@@ -300,6 +303,8 @@ function addDataSheet(
       r.outcome ?? "",
       r.finish_reason ?? "",
       r.citations?.length ?? 0,
+      engineMode(r.model || x.run.model),
+      r.search_count,
       r.text.split(/\s+/).length,
       r.clarification_requested ?? "",
       r.gives_recommendation ?? "",
@@ -1633,6 +1638,51 @@ export async function buildAnalysisWorkbook(
       pr.getCell(`D${rowN}`).numFmt = pct1Fmt;
       pr.getCell(`E${rowN}`).numFmt = pct1Fmt;
     });
+  }
+
+  // Modes: instinct vs search-enabled — the same headline questions split
+  // by whether engines could retrieve. Live formulas over Data.
+  if (x.metrics.modes && x.metrics.modes.length > 1) {
+    const mo = wb.addWorksheet("Modes");
+    mo.addRow([
+      "mode",
+      "engines",
+      "answers",
+      "target named",
+      "named rate",
+      "target first picks",
+      "pick rate",
+      "answers that searched",
+      "with citations",
+    ]);
+    styleHeader(mo);
+    mo.getColumn(1).width = 14;
+    mo.getColumn(2).width = 44;
+    x.metrics.modes.forEach((m, i) => {
+      const rowN = i + 2;
+      const crit = `${D("mode")},$A${rowN},${D("is_branded")},0`;
+      mo.getRow(rowN).values = [
+        m.mode,
+        m.engines.join(", "),
+        { formula: `COUNTIFS(${crit})` },
+        { formula: `COUNTIFS(${crit},${D("target_named")},1)` },
+        { formula: `IFERROR(D${rowN}/C${rowN},"")` },
+        { formula: `COUNTIFS(${crit},${D("target_first_pick")},1)` },
+        { formula: `IFERROR(F${rowN}/C${rowN},"")` },
+        m.searchedAnswers === null
+          ? "not reported"
+          : { formula: `COUNTIFS(${crit},${D("n_searches")},">0")` },
+        { formula: `COUNTIFS(${crit},${D("n_citations")},">0")` },
+      ];
+      mo.getCell(`E${rowN}`).numFmt = pct1Fmt;
+      mo.getCell(`G${rowN}`).numFmt = pct1Fmt;
+    });
+    definitions(mo, x.metrics.modes.length + 3, 9, [
+      ["instinct", "Engines answering from trained knowledge only — no retrieval. The stable baseline: what the AI believes about the category on its own."],
+      ["search", "Engines allowed to search the web mid-answer, the way consumer apps behave. Answers move with the live web and carry citations — the surface content work can change."],
+      ["answers that searched", "Answers where the engine actually chose to retrieve (vendor-reported per answer). The search rate on buyer questions is itself a finding."],
+      ["reading the gap", "Instinct vs search on the same battery separates brand equity in the model from visibility the live web grants or withholds. Overlapping intervals read as parity."],
+    ]);
   }
 
   // Sources: where grounded answers got their facts. Only present when a

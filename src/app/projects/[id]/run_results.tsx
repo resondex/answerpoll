@@ -177,13 +177,23 @@ export default function RunResults({
                   <th className="py-2 pr-4 font-semibold text-right">
                     First pick
                   </th>
-                  <th className="py-2 font-semibold text-right">Avg position</th>
+                  <th className="py-2 pr-4 font-semibold text-right">
+                    Avg position
+                  </th>
+                  <th className="py-2 font-semibold text-right">Searched</th>
                 </tr>
               </thead>
               <tbody>
                 {metrics.engines.map((e) => (
                   <tr key={e.model} className="border-b border-line/60">
-                    <td className="py-2 pr-4 font-medium">{e.model}</td>
+                    <td className="py-2 pr-4 font-medium">
+                      {e.model}
+                      {e.mode === "search" && (
+                        <span className="ml-1.5 rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                          search
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2 pr-4 text-right tabular-nums text-ink-2">
                       {e.answers}
                     </td>
@@ -196,13 +206,87 @@ export default function RunResults({
                     <td className="py-2 pr-4 text-right tabular-nums">
                       {pct(e.pickRate)}
                     </td>
-                    <td className="py-2 text-right tabular-nums text-ink-2">
+                    <td className="py-2 pr-4 text-right tabular-nums text-ink-2">
                       {e.avgPosition ? `#${e.avgPosition.toFixed(1)}` : "—"}
+                    </td>
+                    <td className="py-2 text-right tabular-nums text-ink-2">
+                      {e.mode === "search"
+                        ? e.searchRate !== null
+                          ? pct(e.searchRate)
+                          : e.citedAnswers > 0
+                            ? "always"
+                            : "—"
+                        : "—"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+      )}
+
+      {metrics.modes && metrics.modes.length > 1 && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">Instinct vs search-enabled</h2>
+          <p className="text-[13px] text-ink-3 mb-4">
+            The same battery, two instruments: instinct engines answer from
+            trained knowledge alone; search-enabled engines may retrieve like
+            the consumer apps. The gap is visibility the live web grants or
+            withholds relative to the model&apos;s priors.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {metrics.modes.map((m) => (
+              <div
+                key={m.mode}
+                className="rounded-xl border border-line p-4 grid gap-2"
+              >
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-semibold capitalize">
+                    {m.mode === "search" ? "Search-enabled" : "Instinct"}
+                  </span>
+                  <span className="text-[11px] text-ink-3">
+                    {m.answers} answers · {m.engines.length} engine
+                    {m.engines.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-1">
+                  <div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {pct(m.namedRate)}
+                    </div>
+                    <div className="text-[11px] text-ink-3">
+                      named · CI {pct(m.ciLow)}–{pct(m.ciHigh)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {pct(m.pickRate)}
+                    </div>
+                    <div className="text-[11px] text-ink-3">first pick</div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-semibold tabular-nums">
+                      {m.avgPosition ? `#${m.avgPosition.toFixed(1)}` : "—"}
+                    </div>
+                    <div className="text-[11px] text-ink-3">avg position</div>
+                  </div>
+                </div>
+                <div className="text-[12px] text-ink-2">
+                  {m.mode === "search" ? (
+                    <>
+                      {m.searchRate !== null
+                        ? `Searched on ${pct(m.searchRate)} of answers`
+                        : "Always grounded"}
+                      {" · "}
+                      {m.citedAnswers} answers carried citations
+                    </>
+                  ) : (
+                    "No retrieval — the stable baseline"
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}

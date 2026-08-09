@@ -13,6 +13,7 @@ export async function GET() {
       vendor: e.vendor,
       available: Boolean(process.env[e.keyEnv]),
       keyEnv: e.keyEnv,
+      mode: e.mode,
     })),
   });
 }

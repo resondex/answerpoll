@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v6";
+const INSIGHTS_VERSION = "v7";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -123,6 +123,24 @@ function buildFacts(
         `share of answers using the argument "${r.code}" — in ${brandName} wins vs overall`,
         `${pct(r.shareWins)} of wins vs ${pct(r.shareAll)} of all answers (${r.lift >= 0 ? "+" : ""}${Math.round(r.lift * 100)} pts)`
       );
+    }
+  }
+  if (metrics.modes && metrics.modes.length > 1) {
+    for (const m of metrics.modes) {
+      add(
+        `${m.mode === "search" ? "search-enabled engines (may retrieve like consumer apps)" : "instinct engines (trained knowledge only)"}: share of answers naming ${brandName}`,
+        `${pct(m.namedRate)} (95% CI ${pct(m.ciLow)}–${pct(m.ciHigh)})`
+      );
+      add(
+        `${m.mode} engines: share of answers picking ${brandName} first`,
+        pct(m.pickRate)
+      );
+      if (m.searchRate !== null) {
+        add(
+          "share of search-enabled answers where the engine actually searched",
+          pct(m.searchRate)
+        );
+      }
     }
   }
   if (metrics.sources && metrics.sources.domains.length > 0) {
@@ -329,7 +347,10 @@ export async function buildRunInsights(
           "that decide it'; prompts 'Prompt battery'; negatives 'Negative " +
           "framings' (only if negatives exist); parents 'Parent companies' " +
           "(only if parent facts exist); trend 'Trend' (only if a trend fact " +
-          "exists); sources 'Where grounded answers get their facts' (only " +
+          "exists); modes 'Instinct vs search' (only if mode facts exist — " +
+          "instinct is the model's trained knowledge, search mirrors consumer " +
+          "apps; read the gap between them and the search rate); " +
+          "sources 'Where grounded answers get their facts' (only " +
           "if cited-domain facts exist — say which sites feed the AI's " +
           "answers and whether they are brand-owned or earned/third-party); " +
           "engines 'The same question, different advisors' (only " +

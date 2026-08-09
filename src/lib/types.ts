@@ -92,6 +92,9 @@ export interface ResponseRow {
   citations: string[] | null;
   /** Which extraction model coded this answer — per-response provenance. */
   coder_model: string | null;
+  /** Web searches the engine chose to run for this answer. 0 = had the
+   * search tool but answered from weights; null = not reported. */
+  search_count: number | null;
   text: string;
   /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
   top_pick_brand: string | null;
@@ -273,6 +276,8 @@ export interface RunMetrics {
   engines:
     | {
         model: string;
+        /** Instinct (trained knowledge) vs search (may retrieve mid-answer). */
+        mode: "instinct" | "search";
         answers: number;
         named: number;
         namedRate: number;
@@ -281,6 +286,30 @@ export interface RunMetrics {
         picks: number;
         pickRate: number;
         avgPosition: number | null;
+        /** Share of answers where the engine chose to search; null when the
+         * vendor doesn't report search counts (e.g. Perplexity). */
+        searchRate: number | null;
+        citedAnswers: number;
+      }[]
+    | null;
+  /** The instinct-vs-search cut: the same headline questions, split by
+   * whether engines could retrieve. Two rows when a run samples both. */
+  modes:
+    | {
+        mode: "instinct" | "search";
+        engines: string[];
+        answers: number;
+        named: number;
+        namedRate: number;
+        ciLow: number;
+        ciHigh: number;
+        picks: number;
+        pickRate: number;
+        avgPosition: number | null;
+        /** Answers where the engine actually searched (reported only). */
+        searchedAnswers: number | null;
+        searchRate: number | null;
+        citedAnswers: number;
       }[]
     | null;
   /** Parent-company rollup — present when any grouping has a parent. */
@@ -452,6 +481,7 @@ export interface Store {
     finishReason?: string | null;
     citations?: string[] | null;
     coderModel?: string | null;
+    searchCount?: number | null;
     text: string;
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;

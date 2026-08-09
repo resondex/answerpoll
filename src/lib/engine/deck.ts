@@ -409,7 +409,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
   // ---------- 8b. by engine ----------
   if (x.metrics.engines && x.metrics.engines.length > 1) {
     const s = newSlide(
-      "The same question, four advisors",
+      `The same question, ${x.metrics.engines.length} advisors`,
       "Each engine answered the identical battery; coding is one fixed coder, so these gaps are the engines themselves"
     );
     const header: PptxGenJS.TableRow = ["Engine", "Answers", "Named", "95% CI", "First pick", "Avg position"].map((h) => ({

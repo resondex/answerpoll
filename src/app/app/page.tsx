@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Project, PromptTheme, Run, SetupDraft } from "@/lib/types";
+import {
+  EnginePicker,
+  defaultEnginesFor,
+  type EngineOption,
+} from "@/app/components/engine_picker";
 
 type ProjectWithRun = Project & { latestRun: Run | null };
 
@@ -32,9 +37,7 @@ export default function AppHomePage() {
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [compDraft, setCompDraft] = useState("");
   const [audience, setAudience] = useState("");
-  const [engineOptions, setEngineOptions] = useState<
-    { id: string; label: string; vendor: string; available: boolean }[]
-  >([]);
+  const [engineOptions, setEngineOptions] = useState<EngineOption[]>([]);
   const [engineSet, setEngineSet] = useState<string[]>([]);
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
   // Snapshot of the details the current battery was generated from — when the
@@ -68,19 +71,10 @@ export default function AppHomePage() {
     fetch("/api/engines")
       .then((r) => r.json())
       .then((d) => {
-        const list = (d.engines ?? []) as {
-          id: string;
-          label: string;
-          vendor: string;
-          available: boolean;
-        }[];
+        const list = (d.engines ?? []) as EngineOption[];
         setEngineOptions(list);
-        // Default core panel: one default-tier engine per vendor, of those
-        // this deployment can reach.
-        const defaults = ["gpt-5-mini", "claude-sonnet-5", "gemini-flash-latest", "sonar"];
-        setEngineSet(
-          defaults.filter((id) => list.some((e) => e.id === id && e.available))
-        );
+        // Default: both modes — instinct baseline + consumer-real search.
+        setEngineSet(defaultEnginesFor("both", list));
       })
       .catch(() => {});
   }, []);
@@ -524,30 +518,18 @@ export default function AppHomePage() {
                       measure these)
                     </span>
                   </span>
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    {engineOptions.map((e) => (
-                      <label
-                        key={e.id}
-                        className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={!e.available}
-                          checked={engineSet.includes(e.id)}
-                          onChange={(ev) =>
-                            setEngineSet((prev) =>
-                              ev.target.checked
-                                ? [...prev, e.id]
-                                : prev.filter((m) => m !== e.id)
-                            )
-                          }
-                          className="h-4 w-4 accent-[var(--color-primary)]"
-                        />
-                        <span>{e.label}</span>
-                        <span className="text-xs text-ink-3">{e.vendor}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <EnginePicker
+                    options={engineOptions}
+                    selected={engineSet}
+                    onToggle={(engId, checked) =>
+                      setEngineSet((prev) =>
+                        checked
+                          ? [...prev, engId]
+                          : prev.filter((m) => m !== engId)
+                      )
+                    }
+                    onPreset={(list) => setEngineSet(list)}
+                  />
                 </div>
 
                 {prompts === null ? (
