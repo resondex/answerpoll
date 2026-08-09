@@ -348,7 +348,7 @@ export const pgStore: Store = {
     const rows =
       userId === undefined
         ? await sql`SELECT * FROM projects ORDER BY created_at DESC`
-        : await sql`SELECT * FROM projects WHERE user_id = ${userId} ORDER BY created_at DESC`;
+        : await sql`SELECT * FROM projects WHERE user_id = ${userId} OR user_id IS NULL ORDER BY created_at DESC`;
     return rows.map(rowToProject);
   },
 

@@ -468,7 +468,7 @@ export const sqliteStore: Store = {
             .all()
         : getDb()
             .prepare(
-              "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC"
+              "SELECT * FROM projects WHERE user_id = ? OR user_id IS NULL ORDER BY created_at DESC"
             )
             .all(userId)
     ) as ProjectRaw[];
