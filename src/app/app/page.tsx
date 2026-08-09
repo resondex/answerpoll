@@ -45,6 +45,7 @@ export default function AppHomePage() {
   } | null>(null);
 
   const [drafts, setDrafts] = useState<SetupDraft[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -59,6 +60,7 @@ export default function AppHomePage() {
       .then((d) => setProjects(d.projects ?? []))
       .finally(() => setLoaded(true));
     void refreshDrafts();
+    fetch("/api/admin").then((r) => setIsAdmin(r.ok)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -273,9 +275,19 @@ export default function AppHomePage() {
   return (
     <div className="grid gap-10 max-w-2xl">
       <section>
-        <h1 className="text-2xl font-semibold tracking-tight mb-2">
-          Your trackers
-        </h1>
+        <div className="flex items-baseline justify-between">
+          <h1 className="text-2xl font-semibold tracking-tight mb-2">
+            Your trackers
+          </h1>
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="text-sm font-medium text-primary hover:opacity-80"
+            >
+              Admin →
+            </Link>
+          )}
+        </div>
         <p className="text-[15px] text-ink-2 mb-8 leading-relaxed max-w-lg">
           One tracker per brand and category — every run samples the questions
           your buyers ask and scores who gets named.

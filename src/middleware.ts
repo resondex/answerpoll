@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PROTECTED_PREFIXES = ["/app", "/projects"];
+const PROTECTED_PREFIXES = ["/app", "/projects", "/admin"];
 
 export async function middleware(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -42,5 +42,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/app/:path*", "/app", "/projects/:path*", "/login", "/auth/:path*"],
+  matcher: ["/app/:path*", "/app", "/projects/:path*", "/admin", "/login", "/auth/:path*"],
 };

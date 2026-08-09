@@ -34,7 +34,7 @@ export async function DELETE(
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
   const { id } = await params;
-  const loaded = await requireRun(id, auth);
+  const loaded = await requireRun(id, auth, { write: true });
   if (loaded instanceof NextResponse) return loaded;
   if (loaded.run.status === "running" || loaded.run.status === "pending") {
     return NextResponse.json(

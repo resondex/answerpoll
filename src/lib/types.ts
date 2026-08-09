@@ -13,6 +13,21 @@ export type RunSchedule = "none" | "weekly" | "monthly";
 
 export type Plan = "free" | "pro" | "enterprise";
 
+export type OrgRole = "admin" | "editor" | "viewer";
+
+export interface Org {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface OrgMember {
+  org_id: string;
+  email: string; // lowercase
+  role: OrgRole;
+  created_at: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -22,6 +37,8 @@ export interface Project {
   audience: string | null;
   schedule: RunSchedule;
   user_id: string | null;
+  /** Owning organization; null = personal/legacy tracker. */
+  org_id: string | null;
   /** Closed reason-code taxonomy, generated at setup and frozen. */
   reason_taxonomy: string[];
   /** The core engine panel — part of the frozen instrument. Scheduled runs
@@ -356,6 +373,20 @@ export interface Store {
     entryId: string,
     role: "competitor" | "emerged"
   ): Promise<void>;
+  // --- orgs, membership, staff ---
+  createOrg(name: string): Promise<Org>;
+  listOrgs(): Promise<Org[]>;
+  listOrgMembers(orgId: string): Promise<OrgMember[]>;
+  upsertOrgMember(orgId: string, email: string, role: OrgRole): Promise<void>;
+  removeOrgMember(orgId: string, email: string): Promise<void>;
+  /** Org memberships for a user's email → [{org_id, role}]. */
+  listMembershipsForEmail(email: string): Promise<OrgMember[]>;
+  setProjectOrg(projectId: string, orgId: string | null): Promise<void>;
+  listProjectsByOrgIds(orgIds: string[]): Promise<Project[]>;
+  isStaffEmail(email: string): Promise<boolean>;
+  listStaff(): Promise<string[]>;
+  addStaff(email: string): Promise<void>;
+  removeStaff(email: string): Promise<void>;
   /** Mark names (normalized) as user-confirmed on whichever entry owns them. */
   confirmDictionaryNames(projectId: string, names: string[]): Promise<void>;
   /** Assign (or clear, with null) an entry's parent-company label. */

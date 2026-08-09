@@ -30,7 +30,7 @@ export async function POST(
       { status: 503 }
     );
   }
-  const project = await requireProject(id, auth);
+  const project = await requireProject(id, auth, { write: true });
   if (project instanceof NextResponse) return project;
   const body = await req.json().catch(() => ({}));
   const parsed = runSchema.safeParse(body);

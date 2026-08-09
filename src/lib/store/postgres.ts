@@ -52,6 +52,23 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS reason_taxonomy TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS dictionary_version INTEGER NOT NULL DEFAULT 1`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS engine_set TEXT NOT NULL DEFAULT '[]'`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT`;
+      await sql`CREATE TABLE IF NOT EXISTS orgs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS org_members (
+        org_id TEXT NOT NULL REFERENCES orgs(id),
+        email TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (org_id, email)
+      )`;
+      await sql`CREATE TABLE IF NOT EXISTS staff_users (
+        email TEXT PRIMARY KEY
+      )`;
+      await sql`INSERT INTO staff_users (email) VALUES (${"tyler@resondex.com"}) ON CONFLICT DO NOTHING`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS top_pick_brand TEXT`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS outcome TEXT`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS reason_codes TEXT`;
@@ -174,6 +191,7 @@ function rowToProject(r: Record<string, unknown>): Project {
     audience: (r.audience as string | null) ?? null,
     schedule: (r.schedule as Project["schedule"]) ?? "none",
     user_id: (r.user_id as string | null) ?? null,
+    org_id: (r.org_id as string | null) ?? null,
     reason_taxonomy: JSON.parse((r.reason_taxonomy as string) ?? "[]"),
     engine_set: JSON.parse((r.engine_set as string) ?? "[]"),
     dictionary_version: (r.dictionary_version as number) ?? 1,
@@ -256,6 +274,77 @@ export const pgStore: Store = {
   async renameDictionaryParent(projectId, from, to) {
     const sql = await db();
     await sql`UPDATE dictionary_entries SET parent = ${to} WHERE project_id = ${projectId} AND parent = ${from}`;
+  },
+
+  async createOrg(name) {
+    const sql = await db();
+    const id = crypto.randomUUID();
+    await sql`INSERT INTO orgs (id, name) VALUES (${id}, ${name})`;
+    const [row] = await sql`SELECT * FROM orgs WHERE id = ${id}`;
+    return { id: row.id, name: row.name, created_at: iso(row.created_at)! };
+  },
+
+  async listOrgs() {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM orgs ORDER BY name`;
+    return rows.map((r) => ({ id: r.id, name: r.name, created_at: iso(r.created_at)! }));
+  },
+
+  async listOrgMembers(orgId) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM org_members WHERE org_id = ${orgId} ORDER BY email`;
+    return rows.map((r) => ({ org_id: r.org_id, email: r.email, role: r.role, created_at: iso(r.created_at)! }));
+  },
+
+  async upsertOrgMember(orgId, email, role) {
+    const sql = await db();
+    await sql`INSERT INTO org_members (org_id, email, role) VALUES (${orgId}, ${email.toLowerCase()}, ${role})
+      ON CONFLICT (org_id, email) DO UPDATE SET role = ${role}`;
+  },
+
+  async removeOrgMember(orgId, email) {
+    const sql = await db();
+    await sql`DELETE FROM org_members WHERE org_id = ${orgId} AND email = ${email.toLowerCase()}`;
+  },
+
+  async listMembershipsForEmail(email) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM org_members WHERE email = ${email.toLowerCase()}`;
+    return rows.map((r) => ({ org_id: r.org_id, email: r.email, role: r.role, created_at: iso(r.created_at)! }));
+  },
+
+  async setProjectOrg(projectId, orgId) {
+    const sql = await db();
+    await sql`UPDATE projects SET org_id = ${orgId} WHERE id = ${projectId}`;
+  },
+
+  async listProjectsByOrgIds(orgIds) {
+    if (orgIds.length === 0) return [];
+    const sql = await db();
+    const rows = await sql`SELECT * FROM projects WHERE org_id = ANY(${orgIds}) ORDER BY created_at DESC`;
+    return rows.map(rowToProject);
+  },
+
+  async isStaffEmail(email) {
+    const sql = await db();
+    const rows = await sql`SELECT 1 FROM staff_users WHERE email = ${email.toLowerCase()}`;
+    return rows.length > 0;
+  },
+
+  async listStaff() {
+    const sql = await db();
+    const rows = await sql`SELECT email FROM staff_users ORDER BY email`;
+    return rows.map((r) => r.email as string);
+  },
+
+  async addStaff(email) {
+    const sql = await db();
+    await sql`INSERT INTO staff_users (email) VALUES (${email.toLowerCase()}) ON CONFLICT DO NOTHING`;
+  },
+
+  async removeStaff(email) {
+    const sql = await db();
+    await sql`DELETE FROM staff_users WHERE email = ${email.toLowerCase()}`;
   },
 
   async confirmDictionaryNames(projectId, names) {

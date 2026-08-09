@@ -21,7 +21,7 @@ export async function POST(
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
   const { id } = await params;
-  const project = await requireProject(id, auth);
+  const project = await requireProject(id, auth, { write: true });
   if (project instanceof NextResponse) return project;
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {

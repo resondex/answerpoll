@@ -54,11 +54,62 @@ export async function getAuth(): Promise<AuthContext | null> {
   return { userId: user.id, email: user.email ?? null };
 }
 
+/** Answerpoll staff — god tier. Backed by the staff_users table plus an
+ * env escape hatch (STAFF_EMAILS, comma-separated). */
+export async function isStaff(auth: AuthContext): Promise<boolean> {
+  if (!auth.email) return false;
+  const email = auth.email.toLowerCase();
+  const envList = (process.env.STAFF_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (envList.includes(email)) return true;
+  return store.isStaffEmail(email);
+}
+
+export type ProjectAccess =
+  | "staff"
+  | "owner"
+  | "admin"
+  | "editor"
+  | "viewer"
+  | null;
+
+/**
+ * The caller's relationship to a project. Staff see everything; org
+ * projects resolve through org_members by email; personal/legacy projects
+ * keep the original owner-or-ownerless rule.
+ */
+export async function projectAccess(
+  project: Project,
+  auth: AuthContext
+): Promise<ProjectAccess> {
+  if (auth.userId === null) return "owner"; // auth disabled: dev mode
+  if (await isStaff(auth)) return "staff";
+  if (project.org_id) {
+    if (!auth.email) return null;
+    const memberships = await store.listMembershipsForEmail(auth.email);
+    const m = memberships.find((x) => x.org_id === project.org_id);
+    return m ? m.role : null;
+  }
+  // Unowned (legacy) projects stay reachable.
+  if (project.user_id === null || project.user_id === auth.userId) {
+    return "owner";
+  }
+  return null;
+}
+
+const WRITE_ROLES: ProjectAccess[] = ["staff", "owner", "admin", "editor"];
+
+export function canWrite(access: ProjectAccess): boolean {
+  return WRITE_ROLES.includes(access);
+}
+
 export function canAccessProject(
   project: Project,
   auth: AuthContext
 ): boolean {
-  // Unowned (legacy) projects stay reachable; claim them via SQL.
+  // Legacy sync check used by non-org paths; org projects use projectAccess.
   return (
     auth.userId === null ||
     project.user_id === null ||
@@ -68,6 +119,7 @@ export function canAccessProject(
 
 export async function getPlanFor(auth: AuthContext): Promise<Plan> {
   if (auth.userId === null) return "enterprise"; // dev mode: no limits
+  if (await isStaff(auth)) return "enterprise"; // staff: no limits
   return store.getPlan(auth.userId);
 }
 
@@ -86,14 +138,26 @@ export async function requireAuth(): Promise<AuthContext | NextResponse> {
   return auth;
 }
 
-/** Load a project the caller may access, or a 404 (no existence leaks). */
+/** Load a project the caller may access, or a 404 (no existence leaks).
+ * Pass {write:true} for mutating routes — read-only members get a 403. */
 export async function requireProject(
   id: string,
-  auth: AuthContext
+  auth: AuthContext,
+  opts: { write?: boolean } = {}
 ): Promise<Project | NextResponse> {
   const project = await store.getProject(id);
-  if (!project || !canAccessProject(project, auth)) {
+  if (!project) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  const access = await projectAccess(project, auth);
+  if (!access) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  if (opts.write && !canWrite(access)) {
+    return NextResponse.json(
+      { error: "read-only access — ask an org admin for editor rights" },
+      { status: 403 }
+    );
   }
   return project;
 }
@@ -101,11 +165,12 @@ export async function requireProject(
 /** Load a run whose project the caller may access, or a 404. */
 export async function requireRun(
   id: string,
-  auth: AuthContext
+  auth: AuthContext,
+  opts: { write?: boolean } = {}
 ): Promise<{ run: Run; project: Project } | NextResponse> {
   const run = await store.getRun(id);
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const project = await requireProject(run.project_id, auth);
+  const project = await requireProject(run.project_id, auth, opts);
   if (project instanceof NextResponse) return project;
   return { run, project };
 }

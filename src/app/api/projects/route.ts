@@ -3,6 +3,7 @@ import { z } from "zod";
 import { store } from "@/lib/store";
 import {
   getPlanFor,
+  isStaff,
   PLAN_TRACKER_LIMITS,
   requireAuth,
 } from "@/lib/auth";
@@ -41,7 +42,21 @@ const createSchema = z.object({
 export async function GET() {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
-  const projects = await store.listProjects(auth.userId ?? undefined);
+  // Staff see every tracker; members also see their orgs' trackers.
+  let projects;
+  if (auth.userId !== null && (await isStaff(auth))) {
+    projects = await store.listProjects();
+  } else {
+    projects = await store.listProjects(auth.userId ?? undefined);
+    if (auth.email) {
+      const memberships = await store.listMembershipsForEmail(auth.email);
+      const orgProjects = await store.listProjectsByOrgIds(
+        memberships.map((m) => m.org_id)
+      );
+      const seen = new Set(projects.map((p) => p.id));
+      projects = [...projects, ...orgProjects.filter((p) => !seen.has(p.id))];
+    }
+  }
   const withRuns = await Promise.all(
     projects.map(async (p) => ({
       ...p,

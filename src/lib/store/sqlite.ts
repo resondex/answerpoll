@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import type {
   DictionaryEntry,
+  Org,
+  OrgMember,
   Project,
   Prompt,
   Run,
@@ -36,6 +38,7 @@ function createDb(): Database.Database {
       user_id TEXT,
       reason_taxonomy TEXT NOT NULL DEFAULT '[]',
       engine_set TEXT NOT NULL DEFAULT '[]',
+      org_id TEXT,
       dictionary_version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -114,6 +117,21 @@ function createDb(): Database.Database {
       focus_interpretation TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS orgs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS org_members (
+      org_id TEXT NOT NULL REFERENCES orgs(id),
+      email TEXT NOT NULL,
+      role TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (org_id, email)
+    );
+    CREATE TABLE IF NOT EXISTS staff_users (
+      email TEXT PRIMARY KEY
+    );
     CREATE TABLE IF NOT EXISTS mentions (
       id TEXT PRIMARY KEY,
       response_id TEXT NOT NULL REFERENCES responses(id),
@@ -138,6 +156,9 @@ function createDb(): Database.Database {
   }
   if (!cols.some((c) => c.name === "user_id")) {
     db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT");
+  }
+  if (!cols.some((c) => c.name === "org_id")) {
+    db.exec("ALTER TABLE projects ADD COLUMN org_id TEXT");
   }
   if (!cols.some((c) => c.name === "engine_set")) {
     db.exec(
@@ -224,6 +245,9 @@ function createDb(): Database.Database {
   if (!runCols.some((c) => c.name === "models")) {
     db.exec("ALTER TABLE runs ADD COLUMN models TEXT NOT NULL DEFAULT '[]'");
   }
+  db.exec(
+    "INSERT OR IGNORE INTO staff_users (email) VALUES ('tyler@resondex.com')"
+  );
   db.exec("DROP INDEX IF EXISTS idx_responses_task");
   db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_responses_task_engine ON responses(run_id, prompt_id, repeat_idx, model)"
@@ -345,6 +369,89 @@ export const sqliteStore: Store = {
         "UPDATE dictionary_entries SET parent = ? WHERE project_id = ? AND parent = ?"
       )
       .run(to, projectId, from);
+  },
+
+  async createOrg(name) {
+    const id = crypto.randomUUID();
+    getDb().prepare("INSERT INTO orgs (id, name) VALUES (?, ?)").run(id, name);
+    return getDb().prepare("SELECT * FROM orgs WHERE id = ?").get(id) as Org;
+  },
+
+  async listOrgs() {
+    return getDb().prepare("SELECT * FROM orgs ORDER BY name").all() as Org[];
+  },
+
+  async listOrgMembers(orgId) {
+    return getDb()
+      .prepare("SELECT * FROM org_members WHERE org_id = ? ORDER BY email")
+      .all(orgId) as OrgMember[];
+  },
+
+  async upsertOrgMember(orgId, email, role) {
+    getDb()
+      .prepare(
+        `INSERT INTO org_members (org_id, email, role) VALUES (?, ?, ?)
+         ON CONFLICT(org_id, email) DO UPDATE SET role = excluded.role`
+      )
+      .run(orgId, email.toLowerCase(), role);
+  },
+
+  async removeOrgMember(orgId, email) {
+    getDb()
+      .prepare("DELETE FROM org_members WHERE org_id = ? AND email = ?")
+      .run(orgId, email.toLowerCase());
+  },
+
+  async listMembershipsForEmail(email) {
+    return getDb()
+      .prepare("SELECT * FROM org_members WHERE email = ?")
+      .all(email.toLowerCase()) as OrgMember[];
+  },
+
+  async setProjectOrg(projectId, orgId) {
+    getDb()
+      .prepare("UPDATE projects SET org_id = ? WHERE id = ?")
+      .run(orgId, projectId);
+  },
+
+  async listProjectsByOrgIds(orgIds) {
+    if (orgIds.length === 0) return [];
+    const marks = orgIds.map(() => "?").join(",");
+    return (
+      getDb()
+        .prepare(
+          `SELECT * FROM projects WHERE org_id IN (${marks}) ORDER BY created_at DESC`
+        )
+        .all(...orgIds) as ProjectRaw[]
+    ).map(parseProject);
+  },
+
+  async isStaffEmail(email) {
+    return Boolean(
+      getDb()
+        .prepare("SELECT 1 FROM staff_users WHERE email = ?")
+        .get(email.toLowerCase())
+    );
+  },
+
+  async listStaff() {
+    return (
+      getDb().prepare("SELECT email FROM staff_users ORDER BY email").all() as {
+        email: string;
+      }[]
+    ).map((r) => r.email);
+  },
+
+  async addStaff(email) {
+    getDb()
+      .prepare("INSERT OR IGNORE INTO staff_users (email) VALUES (?)")
+      .run(email.toLowerCase());
+  },
+
+  async removeStaff(email) {
+    getDb()
+      .prepare("DELETE FROM staff_users WHERE email = ?")
+      .run(email.toLowerCase());
   },
 
   async confirmDictionaryNames(projectId, names) {
