@@ -31,6 +31,10 @@ export default function AppHomePage() {
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [compDraft, setCompDraft] = useState("");
   const [audience, setAudience] = useState("");
+  const [engineOptions, setEngineOptions] = useState<
+    { id: string; label: string; vendor: string; available: boolean }[]
+  >([]);
+  const [engineSet, setEngineSet] = useState<string[]>([]);
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
   // Snapshot of the details the current battery was generated from — when the
   // live fields drift from it, we offer regeneration; when they match, we don't.
@@ -55,6 +59,27 @@ export default function AppHomePage() {
       .then((d) => setProjects(d.projects ?? []))
       .finally(() => setLoaded(true));
     void refreshDrafts();
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/engines")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = (d.engines ?? []) as {
+          id: string;
+          label: string;
+          vendor: string;
+          available: boolean;
+        }[];
+        setEngineOptions(list);
+        // Default core panel: one default-tier engine per vendor, of those
+        // this deployment can reach.
+        const defaults = ["gpt-5-mini", "claude-sonnet-5", "gemini-flash-latest", "sonar"];
+        setEngineSet(
+          defaults.filter((id) => list.some((e) => e.id === id && e.available))
+        );
+      })
+      .catch(() => {});
   }, []);
 
   async function refreshDrafts() {
@@ -227,6 +252,7 @@ export default function AppHomePage() {
         category,
         audience: audience || undefined,
         competitors: allCompetitors(),
+        engines: engineSet,
         prompts: prompts.filter((p) => p.text.trim().length > 0),
       }),
     });
@@ -460,6 +486,40 @@ export default function AppHomePage() {
                     placeholder="e.g. mid-market CPG brands"
                   />
                 </label>
+
+                <div className="grid gap-1.5">
+                  <span className="text-sm font-medium">
+                    AI engines{" "}
+                    <span className="font-normal text-ink-3">
+                      (the tracker&apos;s core panel — every run and the trend
+                      measure these)
+                    </span>
+                  </span>
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    {engineOptions.map((e) => (
+                      <label
+                        key={e.id}
+                        className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={!e.available}
+                          checked={engineSet.includes(e.id)}
+                          onChange={(ev) =>
+                            setEngineSet((prev) =>
+                              ev.target.checked
+                                ? [...prev, e.id]
+                                : prev.filter((m) => m !== e.id)
+                            )
+                          }
+                          className="h-4 w-4 accent-[var(--color-primary)]"
+                        />
+                        <span>{e.label}</span>
+                        <span className="text-xs text-ink-3">{e.vendor}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
                 {prompts === null ? (
                   <button

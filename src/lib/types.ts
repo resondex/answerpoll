@@ -24,6 +24,10 @@ export interface Project {
   user_id: string | null;
   /** Closed reason-code taxonomy, generated at setup and frozen. */
   reason_taxonomy: string[];
+  /** The core engine panel — part of the frozen instrument. Scheduled runs
+   * always use it; headline metrics and the trend compute over it. Engines
+   * beyond it in a run are bonus views. */
+  engine_set: string[];
   dictionary_version: number;
   created_at: string;
 }
@@ -225,6 +229,10 @@ export interface RunMetrics {
   negatives:
     | { promptText: string; quote: string | null; interpretation: string | null }[]
     | null;
+  /** The engine panel headline numbers were computed over, and any bonus
+   * engines sampled beyond it (shown per-engine, excluded from headlines). */
+  coreModels: string[];
+  bonusModels: string[];
   /** Per-engine breakdown — one entry per engine sampled in the run. */
   engines:
     | {
@@ -304,6 +312,7 @@ export interface Store {
     audience: string | null;
     userId: string | null;
     reasonTaxonomy: string[];
+    engineSet: string[];
   }): Promise<Project>;
   getDictionary(projectId: string): Promise<DictionaryEntry[]>;
   upsertDictionaryEntry(input: {
@@ -345,6 +354,7 @@ export interface Store {
   /** All projects when userId is omitted (cron); the user's own otherwise. */
   listProjects(userId?: string): Promise<Project[]>;
   updateProjectSchedule(id: string, schedule: RunSchedule): Promise<void>;
+  updateProjectEngineSet(id: string, engineSet: string[]): Promise<void>;
   getPlan(userId: string): Promise<Plan>;
   /** Cached value no older than maxAgeMs, else null. */
   cacheGet(key: string, maxAgeMs: number): Promise<string | null>;

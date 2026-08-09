@@ -126,9 +126,29 @@ export async function computeRunMetrics(
   const brandedPromptIds = new Set(
     prompts.filter((p) => p.theme === "branded").map((p) => p.id)
   );
+  // The core engine panel: the project's declared set, falling back to the
+  // run's own engines for pre-engine-set projects. Headline rates compute
+  // over core engines only — engines beyond the core are bonus views, shown
+  // per-engine but excluded from pooled numbers so the trend stays a trend.
+  const sampledModels = [
+    ...new Set(responses.map((r) => r.model).filter(Boolean)),
+  ];
+  const coreModels =
+    project.engine_set.length > 0
+      ? project.engine_set.filter(
+          (m) => sampledModels.includes(m) || sampledModels.length === 0
+        )
+      : sampledModels;
+  const coreSet = new Set(coreModels.length > 0 ? coreModels : sampledModels);
+  const bonusModels = sampledModels.filter((m) => !coreSet.has(m));
+  const inCore = (r: ResponseRow) =>
+    !r.model || coreSet.size === 0 || coreSet.has(r.model);
+
   // Headline rates use unbranded prompts only — asking about the brand by
   // name trivially guarantees a mention.
-  const unbranded = responses.filter((r) => !brandedPromptIds.has(r.prompt_id));
+  const unbranded = responses.filter(
+    (r) => !brandedPromptIds.has(r.prompt_id) && inCore(r)
+  );
   const unbrandedIds = new Set(unbranded.map((r) => r.id));
 
   const targetNorm = canon.norm(project.brand);
@@ -186,13 +206,16 @@ export async function computeRunMetrics(
   brands.sort((a, b) => b.mentionRate - a.mentionRate);
 
   // --- per-engine breakdown: the same headline questions, engine by engine ---
+  const allUnbranded = responses.filter(
+    (r) => !brandedPromptIds.has(r.prompt_id)
+  );
   const engineIds = [
-    ...new Set(unbranded.map((r) => r.model).filter(Boolean)),
+    ...new Set(allUnbranded.map((r) => r.model).filter(Boolean)),
   ].sort();
   const engines: RunMetrics["engines"] =
     engineIds.length > 0
       ? engineIds.map((model) => {
-          const rows = unbranded.filter((r) => r.model === model);
+          const rows = allUnbranded.filter((r) => r.model === model);
           const ids = new Set(rows.map((r) => r.id));
           // Best (lowest) target rank per answer, from canonicalized mentions.
           const bestRank = new Map<string, number>();
@@ -560,6 +583,8 @@ export async function computeRunMetrics(
     reasonLift,
     promptGrid,
     negatives,
+    coreModels: [...coreSet],
+    bonusModels,
     engines,
     parentRollup,
     dictionaryVersion: project.dictionary_version,

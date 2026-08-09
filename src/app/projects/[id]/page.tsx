@@ -96,6 +96,10 @@ function ProjectDashboard() {
     }
     const dr = await fetch(`/api/projects/${id}/dictionary`);
     if (dr.ok) setDict((await dr.json()).entries ?? []);
+    // Runs default to the tracker's core engine panel.
+    setChosenEngines((prev) =>
+      prev.length > 0 ? prev : (d.project.engine_set ?? [])
+    );
   }, [id]);
 
   async function refreshDict() {
@@ -133,11 +137,6 @@ function ProjectDashboard() {
       .then((d) => {
         const list: EngineOption[] = d.engines ?? [];
         setEngines(list);
-        setChosenEngines((prev) =>
-          prev.length > 0
-            ? prev
-            : list.filter((e) => e.available).slice(0, 1).map((e) => e.id)
-        );
       })
       .catch(() => {});
   }, []);
@@ -423,10 +422,11 @@ function ProjectDashboard() {
             <div className="grid gap-2">
               <span className="text-sm font-medium">Engines to measure</span>
               <p className="text-[13px] text-ink-3 -mt-1">
-                Each engine answers the same battery, so every one is a
-                comparable view of the category. Answers come from the engine;
-                coding always comes from one fixed coder, so differences here
-                are real differences.
+                Pre-checked = the tracker&apos;s core panel: headline numbers
+                and the trend always compute over it, and scheduled runs
+                sample exactly it. Extra engines you add here are bonus views
+                — shown in the by-engine table, kept out of the headline so
+                the trend stays comparable.
               </p>
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {engines.map((e) => (
@@ -454,6 +454,11 @@ function ProjectDashboard() {
                     />
                     <span className="font-medium">{e.label}</span>
                     <span className="text-xs text-ink-3">{e.vendor}</span>
+                    {(detail?.project.engine_set ?? []).includes(e.id) && (
+                      <span className="rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                        core
+                      </span>
+                    )}
                     {!e.available && (
                       <span className="text-[11px] text-ink-3">
                         · add {e.keyEnv}
@@ -526,9 +531,56 @@ function ProjectDashboard() {
               {project.schedule === "none"
                 ? "Off — runs only fire when you launch them."
                 : `Automatic ${project.schedule} runs fire at the daily 06:00 UTC check, using the latest battery and 5 repeats.`}{" "}
-              Scheduled runs build the trend line — same prompts, same
-              dictionary, comparable over time.
+              Scheduled runs sample the core engine panel below — same
+              prompts, same engines, comparable over time.
             </p>
+            <div className="border-t border-line pt-4 grid gap-2">
+              <span className="text-sm font-medium">Core engine panel</span>
+              <p className="text-[13px] text-ink-3 -mt-1">
+                The instrument&apos;s engine set: headline numbers and the
+                trend compute over exactly these. Changing it starts a new
+                trend epoch — earlier runs stay, but the line breaks there.
+              </p>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {engines.map((e) => (
+                  <label
+                    key={e.id}
+                    className={`flex items-center gap-2 text-sm ${e.available ? "cursor-pointer" : "opacity-50"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={!e.available}
+                      checked={(project.engine_set ?? []).includes(e.id)}
+                      onChange={async (ev) => {
+                        const next = ev.target.checked
+                          ? [...(project.engine_set ?? []), e.id]
+                          : (project.engine_set ?? []).filter(
+                              (m) => m !== e.id
+                            );
+                        if (next.length === 0) return;
+                        setDetail((d) =>
+                          d
+                            ? {
+                                ...d,
+                                project: { ...d.project, engine_set: next },
+                              }
+                            : d
+                        );
+                        setChosenEngines(next);
+                        await fetch(`/api/projects/${id}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ engines: next }),
+                        });
+                      }}
+                      className="h-4 w-4 accent-[var(--color-primary)]"
+                    />
+                    <span>{e.label}</span>
+                    <span className="text-xs text-ink-3">{e.vendor}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         </Modal>
       )}

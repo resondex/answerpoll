@@ -8,7 +8,7 @@ import {
 } from "@/lib/auth";
 import { generatePromptBattery } from "@/lib/engine/prompts";
 import { getReasonTaxonomy, seedDictionary } from "@/lib/engine/suggest";
-import { apiKeyConfigured } from "@/lib/engine/providers";
+import { apiKeyConfigured, availableEngines, getEngine } from "@/lib/engine/providers";
 
 const createSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -16,6 +16,9 @@ const createSchema = z.object({
   competitors: z.array(z.string().trim().min(1)).max(12).default([]),
   category: z.string().trim().min(1),
   audience: z.string().trim().optional(),
+  /** The tracker's core engine panel — scheduled runs and headline metrics
+   * use exactly this set. Defaults to the default-tier engine per vendor. */
+  engines: z.array(z.string().trim().min(1)).max(8).optional(),
   // User-reviewed battery from /api/prompts/generate; templates when absent.
   prompts: z
     .array(
@@ -83,6 +86,15 @@ export async function POST(req: Request) {
       console.error("taxonomy generation failed:", err);
     }
   }
+  const requestedEngines = (parsed.data.engines ?? []).filter((m) =>
+    getEngine(m)
+  );
+  const engineSet =
+    requestedEngines.length > 0
+      ? requestedEngines
+      : availableEngines()
+          .slice(0, 1)
+          .map((e) => e.id);
   const project = await store.createProject({
     name: parsed.data.name ?? brand,
     brand,
@@ -91,6 +103,7 @@ export async function POST(req: Request) {
     audience,
     userId: auth.userId,
     reasonTaxonomy,
+    engineSet,
   });
   await store.insertPrompts(
     project.id,

@@ -51,6 +51,7 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS user_id TEXT`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS reason_taxonomy TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS dictionary_version INTEGER NOT NULL DEFAULT 1`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS engine_set TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS top_pick_brand TEXT`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS outcome TEXT`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS reason_codes TEXT`;
@@ -172,6 +173,7 @@ function rowToProject(r: Record<string, unknown>): Project {
     schedule: (r.schedule as Project["schedule"]) ?? "none",
     user_id: (r.user_id as string | null) ?? null,
     reason_taxonomy: JSON.parse((r.reason_taxonomy as string) ?? "[]"),
+    engine_set: JSON.parse((r.engine_set as string) ?? "[]"),
     dictionary_version: (r.dictionary_version as number) ?? 1,
     created_at: iso(r.created_at)!,
   };
@@ -232,8 +234,8 @@ export const pgStore: Store = {
   async createProject(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy)
-      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId}, ${JSON.stringify(input.reasonTaxonomy)})`;
+    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set)
+      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId}, ${JSON.stringify(input.reasonTaxonomy)}, ${JSON.stringify(input.engineSet)})`;
     return (await this.getProject(id))!;
   },
 
@@ -407,6 +409,11 @@ export const pgStore: Store = {
   async updateProjectSchedule(id, schedule) {
     const sql = await db();
     await sql`UPDATE projects SET schedule = ${schedule} WHERE id = ${id}`;
+  },
+
+  async updateProjectEngineSet(id, engineSet) {
+    const sql = await db();
+    await sql`UPDATE projects SET engine_set = ${JSON.stringify(engineSet)} WHERE id = ${id}`;
   },
 
   async insertPrompts(projectId, prompts) {

@@ -38,7 +38,9 @@ export async function DELETE(
 }
 
 const patchSchema = z.object({
-  schedule: z.enum(["none", "weekly", "monthly"]),
+  schedule: z.enum(["none", "weekly", "monthly"]).optional(),
+  /** Editing the core engine panel is an epoch change for the trend. */
+  engines: z.array(z.string().trim().min(1)).min(1).max(8).optional(),
 });
 
 export async function PATCH(
@@ -55,7 +57,7 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid schedule" }, { status: 400 });
   }
-  if (parsed.data.schedule !== "none") {
+  if (parsed.data.schedule && parsed.data.schedule !== "none") {
     const plan = await getPlanFor(auth);
     if (plan === "free") {
       return NextResponse.json(
@@ -64,6 +66,11 @@ export async function PATCH(
       );
     }
   }
-  await store.updateProjectSchedule(id, parsed.data.schedule);
-  return NextResponse.json({ ok: true, schedule: parsed.data.schedule });
+  if (parsed.data.schedule) {
+    await store.updateProjectSchedule(id, parsed.data.schedule);
+  }
+  if (parsed.data.engines) {
+    await store.updateProjectEngineSet(id, parsed.data.engines);
+  }
+  return NextResponse.json({ ok: true });
 }

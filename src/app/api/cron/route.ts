@@ -55,9 +55,14 @@ export async function GET(req: Request) {
     if (latest && toUtcMs(latest.created_at) > dueSince) {
       continue;
     }
+    // Scheduled runs always sample the tracker's core engine panel — that
+    // consistency is what makes the trend line a trend.
+    const engineSet =
+      project.engine_set.length > 0 ? project.engine_set : [CRON_MODEL];
     const run = await store.createRun({
       projectId: project.id,
-      model: CRON_MODEL,
+      model: engineSet[0],
+      models: engineSet,
       repeats: CRON_REPEATS,
     });
     if (process.env.VERCEL) {

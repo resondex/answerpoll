@@ -35,6 +35,7 @@ function createDb(): Database.Database {
       schedule TEXT NOT NULL DEFAULT 'none',
       user_id TEXT,
       reason_taxonomy TEXT NOT NULL DEFAULT '[]',
+      engine_set TEXT NOT NULL DEFAULT '[]',
       dictionary_version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -135,6 +136,11 @@ function createDb(): Database.Database {
   }
   if (!cols.some((c) => c.name === "user_id")) {
     db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT");
+  }
+  if (!cols.some((c) => c.name === "engine_set")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN engine_set TEXT NOT NULL DEFAULT '[]'"
+    );
   }
   if (!cols.some((c) => c.name === "reason_taxonomy")) {
     db.exec(
@@ -248,6 +254,7 @@ function parseProject(row: ProjectRaw): Project {
   return {
     ...row,
     competitors: JSON.parse(row.competitors),
+    engine_set: JSON.parse((row as unknown as { engine_set?: string }).engine_set ?? "[]"),
     schedule: row.schedule ?? "none",
     reason_taxonomy: JSON.parse(
       (row as unknown as { reason_taxonomy?: string }).reason_taxonomy ?? "[]"
@@ -291,8 +298,8 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -302,7 +309,8 @@ export const sqliteStore: Store = {
         input.category,
         input.audience,
         input.userId,
-        JSON.stringify(input.reasonTaxonomy)
+        JSON.stringify(input.reasonTaxonomy),
+        JSON.stringify(input.engineSet)
       );
     return (await this.getProject(id))!;
   },
@@ -542,6 +550,12 @@ export const sqliteStore: Store = {
     getDb()
       .prepare("UPDATE projects SET schedule = ? WHERE id = ?")
       .run(schedule, id);
+  },
+
+  async updateProjectEngineSet(id, engineSet) {
+    getDb()
+      .prepare("UPDATE projects SET engine_set = ? WHERE id = ?")
+      .run(JSON.stringify(engineSet), id);
   },
 
   async insertPrompts(projectId, prompts) {
