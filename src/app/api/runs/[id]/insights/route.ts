@@ -16,6 +16,14 @@ export async function GET(
   const { id } = await params;
   const loaded = await requireRun(id, auth);
   if (loaded instanceof NextResponse) return loaded;
+  // Never build (and cache) insights off a partial run — the cache key is
+  // run-scoped, so a mid-run build would fossilize incomplete numbers.
+  if (loaded.run.status !== "complete") {
+    return NextResponse.json(
+      { error: "run not complete yet" },
+      { status: 425 }
+    );
+  }
   if (!apiKeyConfigured()) {
     return NextResponse.json(
       { error: "OPENAI_API_KEY is not configured" },

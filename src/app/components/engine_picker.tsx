@@ -75,7 +75,7 @@ function ModeInfoDot({ mode }: { mode: "instinct" | "search" }) {
       >
         i
       </span>
-      <span className="pointer-events-none absolute left-1/2 top-5 z-30 hidden w-72 -translate-x-1/2 rounded-lg border border-line bg-surface p-3 text-left shadow-lg group-hover:block">
+      <span className="pointer-events-none absolute left-1/2 top-5 z-30 hidden w-72 -translate-x-1/2 rounded-lg border border-line bg-surface p-3 text-left normal-case tracking-normal shadow-lg group-hover:block">
         <span className="block text-[13px] font-semibold">{info.title}</span>
         <span className="mt-1 block text-[12px] font-normal leading-snug text-ink-2">
           {info.blurb}

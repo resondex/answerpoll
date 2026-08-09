@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
+import type { InsightsBundle } from "@/lib/engine/insights";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
@@ -21,6 +22,9 @@ export default function RunResults({
 }) {
   const [metrics, setMetrics] = useState<RunMetrics | null>(null);
   const [project, setProject] = useState<Project | null>(null);
+  // The verified narrative — the same gate-checked bundle the workbooks and
+  // deck carry, so every written insight is discoverable here too.
+  const [insights, setInsights] = useState<InsightsBundle | null>(null);
   const [loaded, setLoaded] = useState(false);
   // Which competitive set the brand tables show. The target always stays.
   const [brandSet, setBrandSet] = useState<"all" | "competitors" | "discovered">(
@@ -39,6 +43,19 @@ export default function RunResults({
       .finally(() => {
         if (!cancelled) setLoaded(true);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, refreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/runs/${runId}/insights`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled) setInsights(d?.insights ?? null);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -74,6 +91,8 @@ export default function RunResults({
   }
   const maxRate = Math.max(...leaderboard.map((b) => b.mentionRate), 0.01);
   const targetPos = setBrands.findIndex((b) => b.isTarget) + 1;
+  const notesFor = (key: string) =>
+    insights?.sections.find((sec) => sec.key === key)?.insights ?? [];
 
   return (
     <div className="grid gap-8">
@@ -121,6 +140,59 @@ export default function RunResults({
         </p>
       </div>
 
+      {insights && insights.sections.length > 0 && (
+        <section className="card p-6 border-l-4 border-l-[var(--color-primary)]">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+            <h2 className="section-label">Key takeaways</h2>
+            <VerifiedChip figures={insights.verification.figuresSupplied} />
+          </div>
+          <ol className="grid gap-2">
+            {[
+              ...notesFor("scorecard"),
+              ...notesFor("trend"),
+            ].map((t, i) => (
+              <li key={i} className="flex gap-2.5 text-sm text-ink-2">
+                <span className="font-semibold text-primary tabular-nums">
+                  {i + 1}
+                </span>
+                <span>{t}</span>
+              </li>
+            ))}
+          </ol>
+          {insights.plays.length > 0 && (
+            <details className="mt-4 group">
+              <summary className="cursor-pointer text-sm font-semibold text-primary list-none">
+                <span className="group-open:hidden">
+                  ▸ What to do next — {insights.plays.length} recommended plays
+                </span>
+                <span className="hidden group-open:inline">
+                  ▾ What to do next — {insights.plays.length} recommended plays
+                </span>
+              </summary>
+              <div className="mt-3 grid gap-3 lg:grid-cols-3 sm:grid-cols-2">
+                {insights.plays.map((pl) => (
+                  <div
+                    key={pl.title}
+                    className="rounded-xl border border-line p-4 grid gap-1.5 content-start"
+                  >
+                    <span className="text-sm font-semibold">{pl.title}</span>
+                    <span className="text-[12px] text-ink-3">{pl.gap}</span>
+                    <span className="text-[13px] text-ink-2">{pl.play}</span>
+                    <span className="text-[12px] text-ink-3">
+                      Graded by: {pl.measuredBy} — today {pl.today}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          <p className="text-[11px] text-ink-3 mt-3">
+            The same verified narrative ships in the workbooks and deck —
+            nothing here exists only on this screen.
+          </p>
+        </section>
+      )}
+
       <section
         className={`grid gap-3 sm:grid-cols-2 ${metrics.coded ? "lg:grid-cols-4" : "sm:grid-cols-3"}`}
       >
@@ -161,6 +233,7 @@ export default function RunResults({
       {metrics.engines && metrics.engines.length > 1 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">By engine</h2>
+          <InsightNote sentences={notesFor("engines")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery answered by each assistant. Answers come from the
             engine; coding comes from one fixed coder, so these differences are
@@ -229,6 +302,7 @@ export default function RunResults({
       {metrics.modes && metrics.modes.length > 1 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Instinct vs search-enabled</h2>
+          <InsightNote sentences={notesFor("modes")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery, two instruments: instinct engines answer from
             trained knowledge alone; search-enabled engines may retrieve like
@@ -294,6 +368,7 @@ export default function RunResults({
       {metrics.coded && setTopPicks && setTopPicks.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Who wins instead</h2>
+          <InsightNote sentences={notesFor("top_picks")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The brand each answer actually crowned - over the{" "}
             {metrics.outcomes?.pick ?? 0} answers that committed to a pick
@@ -343,6 +418,7 @@ export default function RunResults({
       {metrics.coded && metrics.reasonLift && metrics.reasonLift.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">The arguments that decide it</h2>
+          <InsightNote sentences={notesFor("arguments")} />
           <p className="text-[13px] text-ink-3 mb-4">
             Which arguments travel with your wins - share of answers using each
             argument, in your first-pick wins vs overall. Positive lift =
@@ -394,6 +470,7 @@ export default function RunResults({
 
       <section className="card p-6">
         <h2 className="section-label mb-1">Brand leaderboard</h2>
+          <InsightNote sentences={notesFor("leaderboard")} />
         <p className="text-[13px] text-ink-3 mb-5">
           Mention rate across unbranded answers — named competitors and brands
           the model volunteered on its own.
@@ -447,6 +524,7 @@ export default function RunResults({
       {metrics.parentRollup && metrics.parentRollup.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">By parent company</h2>
+          <InsightNote sentences={notesFor("parents")} />
           <p className="text-[13px] text-ink-3 mb-5">
             Combined footprint at parent grain — every independent brand is
             its own parent company. An answer naming any of a parent&apos;s
@@ -507,9 +585,15 @@ export default function RunResults({
         </section>
       )}
 
-      <section className="card p-6">
-        <h2 className="section-label mb-1">Brand summary</h2>
-        <p className="text-[13px] text-ink-3 mb-4">
+      <details className="card p-6">
+        <summary className="cursor-pointer list-none">
+          <h2 className="section-label mb-1 inline">Full brand table</h2>
+          <span className="ml-2 text-[13px] text-ink-3">
+            every brand with full metrics — for reference; the workbook
+            carries the live version ▸
+          </span>
+        </summary>
+        <p className="text-[13px] text-ink-3 mb-4 mt-3">
           Every brand named in this run, with its full metrics
           {setBrands.length > 25 ? ` — top 25 of ${setBrands.length} shown` : ""}
           .
@@ -581,7 +665,7 @@ export default function RunResults({
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
 
       <section className="card p-6">
         <h2 className="section-label mb-1">Where you show up — by topic</h2>
@@ -626,6 +710,7 @@ export default function RunResults({
 
       <section className="card p-6">
         <h2 className="section-label mb-4">Where you show up — by prompt</h2>
+          <InsightNote sentences={notesFor("prompts")} />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -704,6 +789,7 @@ export default function RunResults({
           <h2 className="section-label mb-1">
             Where grounded answers get their facts
           </h2>
+          <InsightNote sentences={notesFor("sources")} />
           <p className="text-[13px] text-ink-3 mb-4">
             Domains cited by the {metrics.sources.citedAnswers} answers from
             citation-grounded engines — each domain counted once per answer.
@@ -748,6 +834,7 @@ export default function RunResults({
       {metrics.negatives && metrics.negatives.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Where the answers push back</h2>
+          <InsightNote sentences={notesFor("negatives")} />
           <p className="text-[13px] text-ink-3 mb-4">
             {metrics.negatives.length} answer
             {metrics.negatives.length === 1 ? "" : "s"} framed {project.brand}{" "}
@@ -840,5 +927,34 @@ function LegendSwatch({ color, label }: { color: string; label: string }) {
       <span className={`inline-block h-2.5 w-2.5 rounded-[3px] ${color}`} />
       {label}
     </span>
+  );
+}
+
+/** "Verified" chip explaining the placeholder gate in one hover. */
+function VerifiedChip({ figures }: { figures: number }) {
+  return (
+    <span
+      className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary cursor-help"
+      title={`AI-written, gate-verified: every figure was substituted from the run's registry of ${figures} computed facts, and any sentence carrying an unsourced number was deleted before display. The prose cannot disagree with the data.`}
+    >
+      AI · verified
+    </span>
+  );
+}
+
+/** A section's verified reading — the deck-caption pattern, in the app. */
+function InsightNote({ sentences }: { sentences: string[] }) {
+  if (sentences.length === 0) return null;
+  return (
+    <div className="my-3 rounded-lg bg-primary-soft/40 px-3.5 py-2.5 grid gap-1">
+      {sentences.map((t, i) => (
+        <p key={i} className="text-[13px] leading-snug text-ink-2">
+          <span className="font-semibold text-primary">
+            {i === 0 ? "AI reading (verified): " : ""}
+          </span>
+          {t}
+        </p>
+      ))}
+    </div>
   );
 }
