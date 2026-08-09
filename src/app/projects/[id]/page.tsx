@@ -144,12 +144,31 @@ function ProjectDashboard() {
   const hasActiveRun = detail?.runs.some(
     (r) => r.status === "pending" || r.status === "running"
   );
+  const activeRunId =
+    detail?.runs.find((r) => r.status === "pending" || r.status === "running")
+      ?.id ?? null;
 
+  // Live progress is a LIGHT poll: one tiny request for the counter. The
+  // heavy refresh (dictionary included) runs on load, on completion, and
+  // after edits — never on the tick, so an open Identify board can't have
+  // its in-progress layout reset by background polling.
   useEffect(() => {
-    if (!hasActiveRun) return;
-    const t = setInterval(refresh, 2500);
+    if (!activeRunId) return;
+    const t = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/runs/${activeRunId}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        setProgress({ completed: d.completed, total: d.total });
+        if (d.run.status !== "pending" && d.run.status !== "running") {
+          await refresh();
+        }
+      } catch {
+        // transient network noise — the next tick retries
+      }
+    }, 2500);
     return () => clearInterval(t);
-  }, [hasActiveRun, refresh]);
+  }, [activeRunId, refresh]);
 
   async function launchRun() {
     if (launching || hasActiveRun) return;

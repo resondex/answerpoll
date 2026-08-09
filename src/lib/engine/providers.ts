@@ -117,11 +117,12 @@ export async function anthropicClient() {
 }
 
 /** Sample one answer from a named engine, the way a consumer assistant
- * would answer it: single turn, no system prompt, fresh session. */
+ * would answer it: single turn, no system prompt, fresh session. The finish
+ * reason is recorded so truncation is a stored fact, not a guess. */
 export async function completeWithEngine(
   engineId: string,
   prompt: string
-): Promise<string> {
+): Promise<{ text: string; finishReason: string | null }> {
   const engine = getEngine(engineId);
   if (!engine) throw new Error(`unknown engine: ${engineId}`);
   if (!process.env[engine.keyEnv]) {
@@ -132,22 +133,28 @@ export async function completeWithEngine(
       const a = await anthropicClient();
       const res = await a.messages.create({
         model: engine.id,
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [{ role: "user", content: prompt }],
       });
-      return res.content
-        .filter((b): b is { type: "text"; text: string; citations: never } =>
-          b.type === "text"
-        )
-        .map((b) => b.text)
-        .join("\n");
+      return {
+        text: res.content
+          .filter((b): b is { type: "text"; text: string; citations: never } =>
+            b.type === "text"
+          )
+          .map((b) => b.text)
+          .join("\n"),
+        finishReason: res.stop_reason ?? null,
+      };
     }
     const c = engine.baseURL ? compatClient(engine) : client();
     const res = await c.chat.completions.create({
       model: engine.id,
       messages: [{ role: "user", content: prompt }],
     });
-    return res.choices[0]?.message?.content ?? "";
+    return {
+      text: res.choices[0]?.message?.content ?? "",
+      finishReason: res.choices[0]?.finish_reason ?? null,
+    };
   });
 }
 
@@ -285,8 +292,16 @@ const openaiProvider: CompletionProvider = {
       });
       const raw = res.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as ExtractionResult;
+      // Structured outputs guarantee the TYPE, not the semantics: the model
+      // occasionally writes the string "null" where it means no pick.
+      const pick =
+        parsed.top_pick_brand &&
+        !/^(null|none|n\/a|no pick|no_pick)$/i.test(parsed.top_pick_brand.trim())
+          ? parsed.top_pick_brand
+          : null;
       return {
         ...parsed,
+        top_pick_brand: pick,
         mentions: dedupeMentions(parsed.mentions ?? []),
         reasons: [...new Set(parsed.reasons ?? [])],
       };

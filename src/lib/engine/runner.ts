@@ -98,13 +98,17 @@ export async function driveRunChunk(
     while (cursor < pending.length && Date.now() < deadline) {
       const task = pending[cursor++];
       try {
-        const text = await completeWithEngine(task.model, task.promptText);
+        const { text, finishReason } = await completeWithEngine(
+          task.model,
+          task.promptText
+        );
         const coding = await provider.extractCoding(text, extractionCtx);
         await store.insertResponse({
           runId,
           promptId: task.promptId,
           repeatIdx: task.repeatIdx,
           model: task.model,
+          finishReason,
           text,
           mentions: coding.mentions,
           coding,

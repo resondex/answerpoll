@@ -69,6 +69,8 @@ export interface ResponseRow {
   repeat_idx: number;
   /** The engine that produced this answer. */
   model: string;
+  /** Vendor-reported stop reason — 'length'/'max_tokens' = truncated. */
+  finish_reason: string | null;
   text: string;
   /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
   top_pick_brand: string | null;
@@ -399,6 +401,7 @@ export interface Store {
     promptId: string;
     repeatIdx: number;
     model: string;
+    finishReason?: string | null;
     text: string;
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;

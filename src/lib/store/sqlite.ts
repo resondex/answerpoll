@@ -99,6 +99,7 @@ function createDb(): Database.Database {
       prompt_id TEXT NOT NULL REFERENCES prompts(id),
       repeat_idx INTEGER NOT NULL,
       model TEXT,
+      finish_reason TEXT,
       text TEXT NOT NULL,
       top_pick_brand TEXT,
       outcome TEXT,
@@ -204,6 +205,9 @@ function createDb(): Database.Database {
   }
   // Multi-engine: a task is prompt × repeat × ENGINE. Backfill the model on
   // pre-multi-engine rows from their run, then key the index on it.
+  if (!respCols.some((c) => c.name === "finish_reason")) {
+    db.exec("ALTER TABLE responses ADD COLUMN finish_reason TEXT");
+  }
   if (!respCols.some((c) => c.name === "model")) {
     db.exec("ALTER TABLE responses ADD COLUMN model TEXT");
     db.exec(
@@ -662,11 +666,11 @@ export const sqliteStore: Store = {
       const info = db
         .prepare(
           `INSERT OR IGNORE INTO responses (
-             id, run_id, prompt_id, repeat_idx, model, text,
+             id, run_id, prompt_id, repeat_idx, model, finish_reason, text,
              top_pick_brand, outcome, reason_codes, clarification_requested,
              gives_recommendation, includes_prices, includes_specs,
              total_recommendations, focus_quote, focus_interpretation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           responseId,
@@ -674,6 +678,7 @@ export const sqliteStore: Store = {
           input.promptId,
           input.repeatIdx,
           input.model,
+          input.finishReason ?? null,
           input.text,
           c?.top_pick_brand ?? null,
           c?.outcome ?? null,
@@ -750,7 +755,14 @@ export const sqliteStore: Store = {
       getDb()
         .prepare("SELECT * FROM responses WHERE run_id = ? ORDER BY rowid")
         .all(runId) as Record<string, unknown>[]
-    ).map((r) => ({ ...r, model: (r.model as string) ?? "" }) as ResponseRow);
+    ).map(
+      (r) =>
+        ({
+          ...r,
+          model: (r.model as string) ?? "",
+          finish_reason: (r.finish_reason as string | null) ?? null,
+        }) as ResponseRow
+    );
   },
 
   async listMentionsForRun(runId) {

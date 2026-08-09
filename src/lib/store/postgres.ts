@@ -138,6 +138,7 @@ function ensureSchema(): Promise<void> {
       // on pre-multi-engine rows from their run, then re-key the index.
       await sql`ALTER TABLE runs ADD COLUMN IF NOT EXISTS models TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS model TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS finish_reason TEXT`;
       await sql`UPDATE responses r SET model = ru.model FROM runs ru
         WHERE r.run_id = ru.id AND (r.model IS NULL OR r.model = '')`;
       await sql`DROP INDEX IF EXISTS idx_responses_task`;
@@ -503,12 +504,12 @@ export const pgStore: Store = {
       // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
       const res = await tx`INSERT INTO responses (
-          id, run_id, prompt_id, repeat_idx, model, text,
+          id, run_id, prompt_id, repeat_idx, model, finish_reason, text,
           top_pick_brand, outcome, reason_codes, clarification_requested,
           gives_recommendation, includes_prices, includes_specs,
           total_recommendations, focus_quote, focus_interpretation
         ) VALUES (
-          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.text},
+          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.finishReason ?? null}, ${input.text},
           ${c?.top_pick_brand ?? null}, ${c?.outcome ?? null},
           ${c ? c.reasons.join("|") : null},
           ${c ? (c.clarification_requested ? 1 : 0) : null},
@@ -570,6 +571,7 @@ export const pgStore: Store = {
           prompt_id: r.prompt_id,
           repeat_idx: r.repeat_idx,
           model: r.model ?? "",
+          finish_reason: r.finish_reason ?? null,
           text: r.text,
           top_pick_brand: r.top_pick_brand ?? null,
           outcome: r.outcome ?? null,
