@@ -250,6 +250,59 @@ export async function computeRunMetrics(
         })
       : null;
 
+  // --- source landscape: where grounded answers got their facts ---
+  // Only citation-bearing engines (Perplexity) contribute; domains ranked by
+  // DISTINCT citing answers so one answer's ten citations count once each.
+  let sources: RunMetrics["sources"] = null;
+  {
+    const cited = unbranded.filter(
+      (r) => r.citations && r.citations.length > 0
+    );
+    if (cited.length > 0) {
+      const activeBrands = dictionary.filter((e) => e.status === "active");
+      const brandForDomain = (domain: string): string | null => {
+        const bare = domain.replace(/^www\./, "").split(".")[0];
+        for (const e of activeBrands) {
+          const label = (e.display_name ?? e.canonical).toLowerCase();
+          const compact = label.replace(/[^a-z0-9]/g, "");
+          if (
+            compact.length >= 4 &&
+            (bare === compact || bare.includes(compact) || compact.includes(bare))
+          ) {
+            return e.display_name ?? e.canonical;
+          }
+        }
+        return null;
+      };
+      const byDomain = new Map<string, Set<string>>();
+      for (const r of cited) {
+        for (const url of r.citations!) {
+          let domain: string;
+          try {
+            domain = new URL(url).hostname.replace(/^www\./, "");
+          } catch {
+            continue;
+          }
+          const set = byDomain.get(domain) ?? new Set<string>();
+          set.add(r.id);
+          byDomain.set(domain, set);
+        }
+      }
+      sources = {
+        citedAnswers: cited.length,
+        domains: [...byDomain.entries()]
+          .map(([domain, ids]) => ({
+            domain,
+            answers: ids.size,
+            share: ids.size / cited.length,
+            brand: brandForDomain(domain),
+          }))
+          .sort((a, b) => b.answers - a.answers)
+          .slice(0, 30),
+      };
+    }
+  }
+
   // --- parent-company rollup (present only when parents are assigned) ---
   // A parent's rate counts distinct answers naming ANY of its brands, so
   // two siblings in one answer count once — not a sum of member rates.
@@ -583,6 +636,7 @@ export async function computeRunMetrics(
     reasonLift,
     promptGrid,
     negatives,
+    sources,
     coreModels: [...coreSet],
     bonusModels,
     engines,

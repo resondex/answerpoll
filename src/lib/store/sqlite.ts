@@ -100,6 +100,7 @@ function createDb(): Database.Database {
       repeat_idx INTEGER NOT NULL,
       model TEXT,
       finish_reason TEXT,
+      citations TEXT,
       text TEXT NOT NULL,
       top_pick_brand TEXT,
       outcome TEXT,
@@ -207,6 +208,9 @@ function createDb(): Database.Database {
   // pre-multi-engine rows from their run, then key the index on it.
   if (!respCols.some((c) => c.name === "finish_reason")) {
     db.exec("ALTER TABLE responses ADD COLUMN finish_reason TEXT");
+  }
+  if (!respCols.some((c) => c.name === "citations")) {
+    db.exec("ALTER TABLE responses ADD COLUMN citations TEXT");
   }
   if (!respCols.some((c) => c.name === "model")) {
     db.exec("ALTER TABLE responses ADD COLUMN model TEXT");
@@ -666,11 +670,11 @@ export const sqliteStore: Store = {
       const info = db
         .prepare(
           `INSERT OR IGNORE INTO responses (
-             id, run_id, prompt_id, repeat_idx, model, finish_reason, text,
+             id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, text,
              top_pick_brand, outcome, reason_codes, clarification_requested,
              gives_recommendation, includes_prices, includes_specs,
              total_recommendations, focus_quote, focus_interpretation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           responseId,
@@ -679,6 +683,7 @@ export const sqliteStore: Store = {
           input.repeatIdx,
           input.model,
           input.finishReason ?? null,
+          input.citations ? JSON.stringify(input.citations) : null,
           input.text,
           c?.top_pick_brand ?? null,
           c?.outcome ?? null,
@@ -761,6 +766,7 @@ export const sqliteStore: Store = {
           ...r,
           model: (r.model as string) ?? "",
           finish_reason: (r.finish_reason as string | null) ?? null,
+          citations: r.citations ? JSON.parse(r.citations as string) : null,
         }) as ResponseRow
     );
   },

@@ -139,6 +139,7 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE runs ADD COLUMN IF NOT EXISTS models TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS model TEXT`;
       await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS finish_reason TEXT`;
+      await sql`ALTER TABLE responses ADD COLUMN IF NOT EXISTS citations TEXT`;
       await sql`UPDATE responses r SET model = ru.model FROM runs ru
         WHERE r.run_id = ru.id AND (r.model IS NULL OR r.model = '')`;
       await sql`DROP INDEX IF EXISTS idx_responses_task`;
@@ -504,12 +505,12 @@ export const pgStore: Store = {
       // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
       const res = await tx`INSERT INTO responses (
-          id, run_id, prompt_id, repeat_idx, model, finish_reason, text,
+          id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, text,
           top_pick_brand, outcome, reason_codes, clarification_requested,
           gives_recommendation, includes_prices, includes_specs,
           total_recommendations, focus_quote, focus_interpretation
         ) VALUES (
-          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.finishReason ?? null}, ${input.text},
+          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.finishReason ?? null}, ${input.citations ? JSON.stringify(input.citations) : null}, ${input.text},
           ${c?.top_pick_brand ?? null}, ${c?.outcome ?? null},
           ${c ? c.reasons.join("|") : null},
           ${c ? (c.clarification_requested ? 1 : 0) : null},
@@ -572,6 +573,7 @@ export const pgStore: Store = {
           repeat_idx: r.repeat_idx,
           model: r.model ?? "",
           finish_reason: r.finish_reason ?? null,
+          citations: r.citations ? JSON.parse(r.citations) : null,
           text: r.text,
           top_pick_brand: r.top_pick_brand ?? null,
           outcome: r.outcome ?? null,

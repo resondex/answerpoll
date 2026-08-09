@@ -71,6 +71,8 @@ export interface ResponseRow {
   model: string;
   /** Vendor-reported stop reason — 'length'/'max_tokens' = truncated. */
   finish_reason: string | null;
+  /** Grounded engines' source URLs (Perplexity), JSON-parsed. */
+  citations: string[] | null;
   text: string;
   /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
   top_pick_brand: string | null;
@@ -230,6 +232,19 @@ export interface RunMetrics {
     | null;
   negatives:
     | { promptText: string; quote: string | null; interpretation: string | null }[]
+    | null;
+  /** Where grounded answers got their facts — present when any sampled
+   * engine returned citations. Domains ranked by distinct citing answers. */
+  sources:
+    | {
+        citedAnswers: number;
+        domains: {
+          domain: string;
+          answers: number;
+          share: number;
+          brand: string | null;
+        }[];
+      }
     | null;
   /** The engine panel headline numbers were computed over, and any bonus
    * engines sampled beyond it (shown per-engine, excluded from headlines). */
@@ -402,6 +417,7 @@ export interface Store {
     repeatIdx: number;
     model: string;
     finishReason?: string | null;
+    citations?: string[] | null;
     text: string;
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;

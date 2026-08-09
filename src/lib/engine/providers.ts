@@ -122,7 +122,12 @@ export async function anthropicClient() {
 export async function completeWithEngine(
   engineId: string,
   prompt: string
-): Promise<{ text: string; finishReason: string | null }> {
+): Promise<{
+  text: string;
+  finishReason: string | null;
+  /** Source URLs for grounded engines (Perplexity); null when ungrounded. */
+  citations: string[] | null;
+}> {
   const engine = getEngine(engineId);
   if (!engine) throw new Error(`unknown engine: ${engineId}`);
   if (!process.env[engine.keyEnv]) {
@@ -144,6 +149,7 @@ export async function completeWithEngine(
           .map((b) => b.text)
           .join("\n"),
         finishReason: res.stop_reason ?? null,
+        citations: null,
       };
     }
     const c = engine.baseURL ? compatClient(engine) : client();
@@ -151,9 +157,21 @@ export async function completeWithEngine(
       model: engine.id,
       messages: [{ role: "user", content: prompt }],
     });
+    // Perplexity attaches the grounded source list as non-standard fields.
+    const extra = res as unknown as {
+      citations?: string[];
+      search_results?: { url?: string }[];
+    };
+    const citations =
+      extra.citations ??
+      extra.search_results
+        ?.map((r) => r.url)
+        .filter((u): u is string => Boolean(u)) ??
+      null;
     return {
       text: res.choices[0]?.message?.content ?? "",
       finishReason: res.choices[0]?.finish_reason ?? null,
+      citations: citations && citations.length > 0 ? citations : null,
     };
   });
 }

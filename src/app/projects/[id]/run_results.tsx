@@ -615,6 +615,52 @@ export default function RunResults({
         </div>
       </section>
 
+      {metrics.sources && metrics.sources.domains.length > 0 && (
+        <section className="card p-6">
+          <h2 className="section-label mb-1">
+            Where grounded answers get their facts
+          </h2>
+          <p className="text-[13px] text-ink-3 mb-4">
+            Domains cited by the {metrics.sources.citedAnswers} answers from
+            citation-grounded engines — each domain counted once per answer.
+            These sites are writing the AI&apos;s script for your category.
+          </p>
+          <div className="grid gap-2">
+            {metrics.sources.domains.slice(0, 12).map((d) => (
+              <div
+                key={d.domain}
+                className="grid grid-cols-[14rem_1fr_9rem] items-center gap-3"
+              >
+                <span
+                  className={`truncate text-sm text-right ${d.brand ? "font-semibold text-primary" : "text-ink-2"}`}
+                  title={d.brand ? `Owned/operated by ${d.brand}` : undefined}
+                >
+                  {d.domain}
+                  {d.brand ? " ●" : ""}
+                </span>
+                <div className="h-4 relative">
+                  <div
+                    className={`absolute inset-y-0 left-0 rounded-r-[4px] ${d.brand ? "bg-primary" : "bg-neutral-bar"}`}
+                    style={{
+                      width: `${(d.share / (metrics.sources!.domains[0].share || 1)) * 100}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-sm tabular-nums text-ink-2">
+                  {d.answers} answers
+                  <span className="text-xs text-ink-3"> · {pct(d.share)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-ink-3 mt-4">
+            ● = domain matches a tracked brand (owned media). Everything else
+            is earned/editorial — the influence surface where content work
+            pays off.
+          </p>
+        </section>
+      )}
+
       {metrics.negatives && metrics.negatives.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Where the answers push back</h2>

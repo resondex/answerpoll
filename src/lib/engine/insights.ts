@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v3";
+const INSIGHTS_VERSION = "v4";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -32,6 +32,9 @@ export interface InsightsBundle {
     measuredBy: string;
     today: string;
   }[];
+  /** Per-prompt lever lines (AI-beta surface): what to do to win each
+   * prompt, written under the same placeholder gate as everything else. */
+  levers: { code: string; lever: string }[];
   /** The fact registry every figure was drawn from — the traceability spine. */
   facts: { id: string; label: string; value: string }[];
   /** Self-check gate results: every numeral in every sentence was asserted
@@ -151,6 +154,23 @@ function buildFacts(
       );
     }
   }
+  if (metrics.engines && metrics.engines.length > 1) {
+    for (const e of metrics.engines) {
+      add(
+        `${e.model} — ${brandName} named / first pick`,
+        `named in ${pct(e.namedRate)} of its ${e.answers} answers, first pick in ${pct(e.pickRate)}`
+      );
+    }
+  }
+  if (metrics.promptGrid) {
+    metrics.promptGrid.forEach((g, i) => {
+      const codeLabel = g.text.length > 60 ? g.text.slice(0, 60) + "…" : g.text;
+      add(
+        `prompt L${i + 1} (${g.badge.toUpperCase()}): "${codeLabel}"`,
+        `${brandName} named in ${g.targetNamed} of ${g.answers} answers, picked in ${g.targetPicks} of ${g.decided} decided${g.modalPick ? `; most common pick ${g.modalPick}` : ""}`
+      );
+    });
+  }
   if (trendDelta) add(`${brandName} trend vs previous run`, trendDelta);
   return facts;
 }
@@ -187,8 +207,20 @@ const INSIGHTS_SCHEMA = {
         required: ["title", "gap", "play", "measured_by", "today"],
       },
     },
+    levers: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          prompt_code: { type: "string" },
+          lever: { type: "string" },
+        },
+        required: ["prompt_code", "lever"],
+      },
+    },
   },
-  required: ["sections", "plays"],
+  required: ["sections", "plays", "levers"],
 } as const;
 
 /** Substitute {F#} placeholders; count how many resolved. */
@@ -286,7 +318,14 @@ export async function buildRunInsights(
           "that decide it'; prompts 'Prompt battery'; negatives 'Negative " +
           "framings' (only if negatives exist); parents 'Parent companies' " +
           "(only if parent facts exist); trend 'Trend' (only if a trend fact " +
-          "exists).\n" +
+          "exists); engines 'The same question, different advisors' (only " +
+          "if per-engine facts exist — name which engines favor the brand " +
+          "and which favor a rival; this is usually the sharpest finding).\n" +
+          "- levers: for each prompt fact labeled 'prompt L#', ONE sentence " +
+          "on what would most plausibly move that specific prompt — grounded " +
+          "in its outcome (who wins it, how contested it is). prompt_code " +
+          "must be exactly that L# code. Practical, no hype, placeholders " +
+          "for any figure.\n" +
           "- plays: 3 to 5 recommendations. Each names the measured gap " +
           "(gap), the action (play), the exact metric that will grade it " +
           "(measured_by), and today's baseline (today — a single {F#} " +
@@ -351,6 +390,7 @@ export async function buildRunInsights(
       measured_by: string;
       today: string;
     }[];
+    levers?: { prompt_code: string; lever: string }[];
   };
 
   const counter = { n: 0 };
@@ -386,9 +426,22 @@ export async function buildRunInsights(
       return ok;
     });
 
+  const levers = (parsed.levers ?? [])
+    .map((l) => ({
+      code: l.prompt_code.trim(),
+      lever: substitute(l.lever, factById, counter),
+    }))
+    .filter(
+      (l) =>
+        l.lever.trim().length > 0 &&
+        passesGate(l.lever, allowed) &&
+        !l.lever.includes("[unknown figure")
+    );
+
   const bundle: InsightsBundle = {
     sections,
     plays,
+    levers,
     facts,
     verification: {
       figuresSupplied: facts.length,

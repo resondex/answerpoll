@@ -625,6 +625,26 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
       ],
       { x: 0.5, y: 5.6, w: 12.3, h: 0.7, fontSize: 13, fontFace: FONT, valign: "top" }
     );
+    // AI-beta: the gate-verified lever line for this prompt, when written.
+    if (isBeta && insights) {
+      const gridIdx = (x.metrics.promptGrid ?? []).findIndex(
+        (g) => g.text === p.text
+      );
+      const lever =
+        gridIdx >= 0
+          ? insights.levers?.find((l) => l.code === `L${gridIdx + 1}`)
+          : undefined;
+      if (lever) {
+        s.addShape("rect", { x: 0.5, y: 6.35, w: 12.33, h: 0.6, fill: { color: SOFT } });
+        s.addText(
+          [
+            { text: "AI lever (verified): ", options: { bold: true, color: SLATE } },
+            { text: lever.lever, options: { color: INK2 } },
+          ],
+          { x: 0.7, y: 6.38, w: 12.0, h: 0.54, fontSize: 11.5, fontFace: FONT, valign: "middle" }
+        );
+      }
+    }
   }
 
   // ---------- negatives ----------

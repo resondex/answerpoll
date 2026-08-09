@@ -98,7 +98,7 @@ export async function driveRunChunk(
     while (cursor < pending.length && Date.now() < deadline) {
       const task = pending[cursor++];
       try {
-        const { text, finishReason } = await completeWithEngine(
+        const { text, finishReason, citations } = await completeWithEngine(
           task.model,
           task.promptText
         );
@@ -109,6 +109,7 @@ export async function driveRunChunk(
           repeatIdx: task.repeatIdx,
           model: task.model,
           finishReason,
+          citations,
           text,
           mentions: coding.mentions,
           coding,
