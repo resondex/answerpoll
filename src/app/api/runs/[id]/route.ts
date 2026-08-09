@@ -19,7 +19,10 @@ export async function GET(
   return NextResponse.json({
     run,
     completed,
-    total: prompts.filter((p) => !p.retired).length * run.repeats,
+    total:
+      prompts.filter((p) => !p.retired).length *
+      run.repeats *
+      Math.max(run.models.length, 1),
   });
 }
 
