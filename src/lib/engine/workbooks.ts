@@ -217,6 +217,8 @@ const DATA_FIXED = [
   "top_pick_parent",
   "target_first_pick",
   "outcome",
+  "finish_reason",
+  "n_citations",
   "word_count",
   "clarification_requested",
   "gives_recommendation",
@@ -296,6 +298,8 @@ function addDataSheet(
       topPickNorm ? (parents.get(topPickNorm) ?? topPickDisplay) : null,
       topPickNorm === targetNorm ? 1 : 0,
       r.outcome ?? "",
+      r.finish_reason ?? "",
+      r.citations?.length ?? 0,
       r.text.split(/\s+/).length,
       r.clarification_requested ?? "",
       r.gives_recommendation ?? "",
@@ -1629,6 +1633,119 @@ export async function buildAnalysisWorkbook(
       pr.getCell(`D${rowN}`).numFmt = pct1Fmt;
       pr.getCell(`E${rowN}`).numFmt = pct1Fmt;
     });
+  }
+
+  // Sources: where grounded answers got their facts. Only present when a
+  // citation-bearing engine ran; the Citations sheet is the evidence layer.
+  if (x.metrics.sources && x.metrics.sources.domains.length > 0) {
+    const cs = wb.addWorksheet("Citations");
+    cs.addRow([
+      "response_id",
+      "model",
+      "prompt_code",
+      "domain",
+      "url",
+      "owned_by_brand [script]",
+      "first_for_domain",
+    ]);
+    styleHeader(cs);
+    cs.getColumn(5).width = 70;
+    const ownedBy = new Map(
+      x.metrics.sources.domains.map((d) => [d.domain, d.brand])
+    );
+    const seen = new Map<string, Set<string>>();
+    // Match the dashboard/metrics frame: unbranded answers only, so the
+    // Sources counts reconcile with the app's source-landscape section.
+    const promptById = new Map(x.prompts.map((pr) => [pr.id, pr]));
+    for (const r of x.responses) {
+      if (!r.citations) continue;
+      if (promptById.get(r.prompt_id)?.theme === "branded") continue;
+      for (const url of r.citations) {
+        let domain: string;
+        try {
+          domain = new URL(url).hostname.replace(/^www\./, "");
+        } catch {
+          continue;
+        }
+        const set = seen.get(domain) ?? new Set<string>();
+        const first = !set.has(r.id);
+        set.add(r.id);
+        seen.set(domain, set);
+        cs.addRow([
+          r.id,
+          r.model,
+          x.promptCode(r.prompt_id),
+          domain,
+          url,
+          ownedBy.get(domain) ?? "",
+          first ? 1 : 0,
+        ]);
+      }
+    }
+    const so = wb.addWorksheet("Sources");
+    so.addRow(["domain", "owned by [script]", "citing_answers", "share_of_cited_answers"]);
+    styleHeader(so);
+    so.getColumn(1).width = 34;
+    const citedAnswers = `COUNTIFS(${D("n_citations")},">0",${D("is_branded")},0)`;
+    x.metrics.sources.domains.forEach((d, i) => {
+      const rowN = i + 2;
+      so.addRow([
+        d.domain,
+        d.brand ?? "",
+        {
+          formula: `COUNTIFS(Citations!D:D,$A${rowN},Citations!G:G,1)`,
+        },
+        { formula: `IFERROR(C${rowN}/${citedAnswers},"")` },
+      ]);
+      so.getCell(`D${rowN}`).numFmt = pct1Fmt;
+    });
+    definitions(so, x.metrics.sources.domains.length + 3, 4, [
+      ["domain", "A site cited by grounded answers (engines that return sources — Perplexity today)."],
+      ["owned by", "Non-empty when the domain matches a tracked brand [script heuristic] — owned media. Blank = earned/editorial, the surface where content work pays off."],
+      ["citing_answers", "Distinct answers citing the domain at least once (first_for_domain=1 rows on the Citations sheet)."],
+      ["share_of_cited_answers", "Citing answers ÷ all citation-bearing answers. These sites are writing the AI's script for the category."],
+    ]);
+  }
+
+  // Run health — the honesty table: what was asked for, what came back,
+  // and how every answer terminated. Truncation is a recorded fact here.
+  {
+    const rh = wb.addWorksheet("Run health");
+    rh.addRow([
+      "engine",
+      "answers stored",
+      "natural stops",
+      "truncated (length cap)",
+      "unreported",
+      "with citations",
+    ]);
+    styleHeader(rh);
+    rh.getColumn(1).width = 22;
+    const engines = x.run.models.length > 0 ? x.run.models : [x.run.model];
+    engines.forEach((m, i) => {
+      const rowN = i + 2;
+      rh.getRow(rowN).values = [
+        m,
+        { formula: `COUNTIFS(${D("model")},$A${rowN})` },
+        {
+          formula: `COUNTIFS(${D("model")},$A${rowN},${D("finish_reason")},"stop")+COUNTIFS(${D("model")},$A${rowN},${D("finish_reason")},"end_turn")`,
+        },
+        {
+          formula: `COUNTIFS(${D("model")},$A${rowN},${D("finish_reason")},"length")+COUNTIFS(${D("model")},$A${rowN},${D("finish_reason")},"max_tokens")`,
+        },
+        {
+          formula: `B${rowN}-C${rowN}-D${rowN}`,
+        },
+        { formula: `COUNTIFS(${D("model")},$A${rowN},${D("n_citations")},">0")` },
+      ];
+    });
+    const meta = engines.length + 3;
+    definitions(rh, meta, 6, [
+      ["answers stored", "Rows in Data for the engine. Expected = active prompts × repeats; a shortfall means tasks failed after retries."],
+      ["natural stops / truncated", "The vendor's own finish reason per answer. 'Truncated' answers hit a length cap and may lose their final verdict — treat their picks with care."],
+      ["unreported", "Answers collected before finish-reason capture (2026-08-09) or vendors omitting the field."],
+      ["coder", `Every answer in this run was coded by a single fixed extraction model — per-response provenance is the coder_model column in the master dataset. Dictionary v${x.metrics.dictionaryVersion}, run ${x.run.id.slice(0, 8)}, data lock ${x.run.completed_at ?? x.run.created_at}.`],
+    ]);
   }
 
   // Quotes replaces the old Negatives sheet: same evidence, one concept in

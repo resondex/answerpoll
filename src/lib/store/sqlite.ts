@@ -104,6 +104,7 @@ function createDb(): Database.Database {
       model TEXT,
       finish_reason TEXT,
       citations TEXT,
+      coder_model TEXT,
       text TEXT NOT NULL,
       top_pick_brand TEXT,
       outcome TEXT,
@@ -232,6 +233,9 @@ function createDb(): Database.Database {
   }
   if (!respCols.some((c) => c.name === "citations")) {
     db.exec("ALTER TABLE responses ADD COLUMN citations TEXT");
+  }
+  if (!respCols.some((c) => c.name === "coder_model")) {
+    db.exec("ALTER TABLE responses ADD COLUMN coder_model TEXT");
   }
   if (!respCols.some((c) => c.name === "model")) {
     db.exec("ALTER TABLE responses ADD COLUMN model TEXT");
@@ -777,11 +781,11 @@ export const sqliteStore: Store = {
       const info = db
         .prepare(
           `INSERT OR IGNORE INTO responses (
-             id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, text,
+             id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, coder_model, text,
              top_pick_brand, outcome, reason_codes, clarification_requested,
              gives_recommendation, includes_prices, includes_specs,
              total_recommendations, focus_quote, focus_interpretation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           responseId,
@@ -791,6 +795,7 @@ export const sqliteStore: Store = {
           input.model,
           input.finishReason ?? null,
           input.citations ? JSON.stringify(input.citations) : null,
+          input.coderModel ?? null,
           input.text,
           c?.top_pick_brand ?? null,
           c?.outcome ?? null,
@@ -874,6 +879,7 @@ export const sqliteStore: Store = {
           model: (r.model as string) ?? "",
           finish_reason: (r.finish_reason as string | null) ?? null,
           citations: r.citations ? JSON.parse(r.citations as string) : null,
+          coder_model: (r.coder_model as string | null) ?? null,
         }) as ResponseRow
     );
   },

@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v5";
+const INSIGHTS_VERSION = "v6";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -122,6 +122,18 @@ function buildFacts(
       add(
         `share of answers using the argument "${r.code}" — in ${brandName} wins vs overall`,
         `${pct(r.shareWins)} of wins vs ${pct(r.shareAll)} of all answers (${r.lift >= 0 ? "+" : ""}${Math.round(r.lift * 100)} pts)`
+      );
+    }
+  }
+  if (metrics.sources && metrics.sources.domains.length > 0) {
+    add(
+      "answers carrying source citations (grounded engines)",
+      String(metrics.sources.citedAnswers)
+    );
+    for (const d of metrics.sources.domains.slice(0, 3)) {
+      add(
+        `cited domain ${d.domain}${d.brand ? ` (owned by ${d.brand})` : " (third-party/earned)"}: share of cited answers referencing it`,
+        pct(d.share)
       );
     }
   }
@@ -317,7 +329,10 @@ export async function buildRunInsights(
           "that decide it'; prompts 'Prompt battery'; negatives 'Negative " +
           "framings' (only if negatives exist); parents 'Parent companies' " +
           "(only if parent facts exist); trend 'Trend' (only if a trend fact " +
-          "exists); engines 'The same question, different advisors' (only " +
+          "exists); sources 'Where grounded answers get their facts' (only " +
+          "if cited-domain facts exist — say which sites feed the AI's " +
+          "answers and whether they are brand-owned or earned/third-party); " +
+          "engines 'The same question, different advisors' (only " +
           "if per-engine facts exist — name which engines favor the brand " +
           "and which favor a rival; this is usually the sharpest finding).\n" +
           "- levers: for each prompt fact labeled 'prompt L#', ONE sentence " +

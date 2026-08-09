@@ -430,6 +430,38 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     );
   }
 
+  // ---------- 8c. source landscape ----------
+  if (x.metrics.sources && x.metrics.sources.domains.length > 0) {
+    const src = x.metrics.sources;
+    const s = newSlide(
+      "Where grounded answers get their facts",
+      `Grounded engines cite their sources - ${src.citedAnswers} answers carried citations. These sites are writing the AI's script.`
+    );
+    const top = src.domains.slice(0, 10);
+    s.addChart("bar", [
+      {
+        name: "Citing answers",
+        labels: top.map((d) => (d.brand ? `${d.domain} (owned: ${d.brand})` : d.domain)),
+        values: top.map((d) => d.answers),
+      },
+    ], {
+      x: 0.5, y: 1.55, w: 12.3, h: 4.3,
+      barDir: "bar",
+      chartColors: top.map((d) => (d.brand ? SLATE : "C3CFD8")),
+      showValue: true,
+      dataLabelFontSize: 10,
+      valAxisHidden: true,
+      catAxisLabelFontSize: 10.5,
+      catAxisLabelFontFace: FONT,
+      dataLabelFontFace: FONT,
+    });
+    s.addText(
+      "Dark bars are brand-owned domains (owned media); light bars are third-party sites - reviews, comparisons, communities - the earned surface where content work changes what the AI says. Full domain table and per-answer evidence in the analysis workbook.",
+      { x: 0.5, y: 6.0, w: 12.3, h: 0.7, fontSize: 12, italic: true, color: INK2, fontFace: FONT }
+    );
+    addNarrative(s, "sources");
+  }
+
   // ---------- 9. who wins instead ----------
   if (x.metrics.topPicks && x.metrics.topPicks.length > 0) {
     const s = newSlide(

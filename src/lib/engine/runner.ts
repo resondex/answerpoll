@@ -1,5 +1,5 @@
 import { store } from "../store";
-import { completeWithEngine, engineAvailable, getProvider } from "./providers";
+import { completeWithEngine, engineAvailable, extractModelId, getProvider } from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
 import { getDictionarySuggestions } from "./dict_suggest";
@@ -110,6 +110,7 @@ export async function driveRunChunk(
           model: task.model,
           finishReason,
           citations,
+          coderModel: extractModelId(),
           text,
           mentions: coding.mentions,
           coding,

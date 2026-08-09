@@ -11,6 +11,7 @@ import { apiKeyConfigured, openaiClient } from "./providers";
 import { buildRunInsights, type InsightsBundle } from "./insights";
 import { buildAnalysisWorkbook, buildScorecardWorkbook } from "./workbooks";
 import { buildStudyDeck } from "./deck";
+import { seededShuffle, verifyStudy, type StudyVerification } from "./verify";
 import type { MentionRow, Project, ResponseRow, Run } from "../types";
 
 const SUMMARY_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
@@ -216,7 +217,8 @@ export async function buildStudyBundle(
 
   // ---------- 04: master coded dataset ----------
   const masterRows: (string | number | null)[][] = [[
-    "response_id", "run_id", "run_date", "model", "prompt_code", "theme", "prompt_text",
+    "response_id", "run_id", "run_date", "model", "finish_reason", "coder_model",
+    "n_citations", "prompt_code", "theme", "prompt_text",
     "repeat_idx", "word_count", "target_present", "target_first_named", "target_position",
     "first_brand", "n_brands", "brands_in_order", "recommended_brands", "negative_brands",
     "top_pick_brand", "top_pick_canonical", "outcome", "reason_codes",
@@ -229,7 +231,8 @@ export async function buildStudyBundle(
     const ms = mentionsByResponse.get(r.id) ?? [];
     const tm = ms.find((m) => m.brand_norm === targetNorm);
     masterRows.push([
-      r.id, run.id, stamp, run.model, promptCode(p.idx), p.theme, p.text,
+      r.id, run.id, stamp, r.model || run.model, r.finish_reason,
+      r.coder_model, r.citations?.length ?? 0, promptCode(p.idx), p.theme, p.text,
       r.repeat_idx, r.text.split(/\s+/).length,
       tm ? 1 : 0, ms[0]?.brand_norm === targetNorm ? 1 : 0, tm?.rank ?? null,
       ms[0]?.brand ?? null, ms.length, ms.map((m) => m.brand).join("|"),
@@ -253,6 +256,34 @@ export async function buildStudyBundle(
       ]);
     }),
   ]));
+  // Citations: one row per (answer, source URL) from grounded engines —
+  // the evidence layer behind the source-landscape analysis.
+  if (responses.some((r) => r.citations && r.citations.length > 0)) {
+    root.file("04_master_dataset/citations.csv", toCsv([
+      ["response_id", "model", "prompt_code", "theme", "domain", "url"],
+      ...responses.flatMap((r) => {
+        if (!r.citations) return [];
+        const p = promptById.get(r.prompt_id)!;
+        return r.citations.flatMap((url) => {
+          let domain: string;
+          try {
+            domain = new URL(url).hostname.replace(/^www\./, "");
+          } catch {
+            return [];
+          }
+          return [[r.id, r.model || run.model, promptCode(p.idx), p.theme, domain, url]];
+        });
+      }),
+    ]));
+  }
+  if (metrics.sources && metrics.sources.domains.length > 0) {
+    root.file("03_analysis/source_landscape.csv", toCsv([
+      ["domain", "owned_by_brand", "citing_answers", "share_of_cited_answers"],
+      ...metrics.sources.domains.map((d) => [
+        d.domain, d.brand, d.answers, d.share.toFixed(4),
+      ]),
+    ]));
+  }
   if (dictionary.length > 0) {
     root.file("04_master_dataset/dictionary.csv", toCsv([
       ["canonical", "aliases", "status", "entry_version"],
@@ -273,7 +304,7 @@ export async function buildStudyBundle(
         `# ${promptCode(info.idx)} - repeat ${r.repeat_idx + 1}`,
         "",
         `**Prompt (${p.theme}):** ${p.text}`,
-        `**Model:** ${run.model} | **Captured:** ${r.created_at} | **Response:** ${r.id}`,
+        `**Model:** ${r.model || run.model} | **Captured:** ${r.created_at} | **Response:** ${r.id}`,
         "",
         "## Brands named, in order",
         ms.length
@@ -357,8 +388,47 @@ export async function buildStudyBundle(
   });
   root.file("01_executive_summary/executive_summary.md", `# Executive summary\n\n${header}\n\n${summary}\n`);
 
-  // ---------- 06: methodology ----------
+  // ---------- 06: methodology, verification, validation sample ----------
   root.file("06_methodology/methodology.md", methodologyDoc(project, run, metrics, prompts.length));
+
+  const verification = verifyStudy({
+    project, run, prompts, responses, mentions, metrics, canon,
+  });
+  if (!verification.allPassed) {
+    console.error(
+      "study verification FAILED:",
+      verification.checks.filter((c) => !c.pass)
+    );
+  }
+  root.file(
+    "06_methodology/verification.md",
+    verificationDoc(project, run, metrics, verification, insights)
+  );
+
+  // Human-validation sample: a reproducible draw of coded answers with blank
+  // grading columns, so anyone can audit the coder by hand. Same run, same
+  // sample — the draw is seeded by the run id.
+  const codedPool = responses.filter((r) => r.outcome !== null);
+  if (codedPool.length > 0) {
+    const nSample = Math.min(codedPool.length, Math.max(12, Math.ceil(codedPool.length * 0.05)));
+    const drawn = seededShuffle(codedPool, run.id).slice(0, nSample);
+    root.file("06_methodology/validation_sample.csv", toCsv([
+      [
+        "response_id", "model", "prompt_code", "prompt_text", "repeat_idx",
+        "coded_top_pick", "coded_outcome", "coded_brands_in_order", "answer_text",
+        "human_top_pick", "human_outcome", "human_agrees_1_0", "notes",
+      ],
+      ...drawn.map((r) => {
+        const p = promptById.get(r.prompt_id)!;
+        const ms = mentionsByResponse.get(r.id) ?? [];
+        return [
+          r.id, r.model || run.model, promptCode(p.idx), p.text, r.repeat_idx,
+          r.top_pick_brand, r.outcome, ms.map((m) => m.brand).join("|"),
+          r.text, null, null, null, null,
+        ];
+      }),
+    ]));
+  }
 
   // ---------- 00: README & index ----------
   root.file("00_README.md", readmeDoc(project, run, metrics, {
@@ -469,7 +539,7 @@ ${project.brand} AI Visibility Study | Answerpoll by Resondex
 This study measures how an AI assistant recommends ${project.category}, with
 ${project.brand} as the focus brand. Every measurement follows the same
 design: a calibrated battery of ${nPrompts} prompts, each sampled
-${run.repeats} times against ${run.model} through its API, for
+${run.repeats} times against ${run.models.length > 1 ? `each of ${run.models.length} assistants (${run.models.join(", ")})` : run.model} through its API, for
 ${metrics.totalResponses} coded answers in this run.
 
 Sampling is the core of the method. LLM answers vary from ask to ask - a
@@ -506,12 +576,17 @@ trend measurement.
 
 ## Coding
 
-Every answer is parsed by a structured extraction model that records each
-brand named, in order of first appearance, with a framing code
-(recommended / mentioned / negative). Emergent brands - competitors the
-model volunteers that the study didn't name - are captured with the same
-treatment. The full coded dataset ships in 04_master_dataset; every number
-in this study can be recomputed from it.
+Every answer is parsed by ONE fixed structured extraction model - the same
+coder across every engine, recorded per answer in the coder_model column -
+so differences between engines are differences in their answers, never in
+the coding. The coder records each brand named, in order of first
+appearance, with a framing code (recommended / mentioned / negative).
+Emergent brands - competitors the model volunteers that the study didn't
+name - are captured with the same treatment. Grounded engines' source URLs
+are stored verbatim per answer (04_master_dataset/citations.csv). The full
+coded dataset ships in 04_master_dataset; every number in this study can be
+recomputed from it. See verification.md for the independent recount, the
+per-engine run-health table, and the human validation sample.
 
 ## Metrics
 
@@ -523,14 +598,97 @@ in this study can be recomputed from it.
 
 ## Limitations - stated openly
 
-- One assistant per run (${run.model}); cross-assistant coverage is a
-  roadmap item, and results describe this model's behavior specifically.
-- API collection measures the model's default text answers; it does not
-  capture platform-side ad units or retrieval citations on assistants that
-  add them in consumer apps.
+- Results describe the sampled engines specifically
+  (${run.models.length > 0 ? run.models.join(", ") : run.model}); other
+  assistants, and the same assistants inside consumer apps with
+  personalization, may differ.
+- API collection measures each model's default text answers; it does not
+  capture platform-side ad units. Source citations are captured where the
+  API returns them (grounded engines such as Perplexity); ungrounded models
+  answer from training and have no sources to report.
 - Confidence intervals reflect sampling variation at n=${run.repeats} per
   prompt; differences smaller than the interval widths should be read as
   parity.
+`;
+}
+
+function verificationDoc(
+  project: Project,
+  run: Run,
+  metrics: NonNullable<Awaited<ReturnType<typeof computeRunMetrics>>>,
+  v: StudyVerification,
+  insights: InsightsBundle | null
+): string {
+  const engines = run.models.length > 0 ? run.models : [run.model];
+  const coders = [...new Set(v.engineHealth.flatMap((e) => e.coders))];
+  const checkRows = v.checks
+    .map((c) => `| ${c.name} | ${c.expected} | ${c.actual} | ${c.pass ? "pass" : "**FAIL**"} |`)
+    .join("\n");
+  const healthRows = v.engineHealth
+    .map((e) =>
+      `| ${e.engine} | ${e.stored} | ${e.naturalStops} | ${e.truncated} | ${e.unreported} | ${e.citedAnswers} |`
+    )
+    .join("\n");
+  return `# Verification & data lock
+
+${project.brand} AI Visibility Study | Answerpoll by Resondex
+
+## Data lock
+
+| | |
+|---|---|
+| Run | ${run.id} |
+| Collected | ${run.started_at ?? run.created_at} to ${run.completed_at ?? "-"} |
+| Engines sampled | ${engines.join(", ")} |
+| Extraction coder | ${coders.length > 0 ? coders.join(", ") : "recorded per answer from 2026-08-09 onward"} - one fixed model codes every engine's answers, so engine differences are differences in the answers, never in the coder |
+| Dictionary version | v${metrics.dictionaryVersion} |
+| Answers in this study | ${metrics.totalResponses} |
+
+Raw answers, the coded dataset, and the dictionary all ship in this package.
+Every figure can be recomputed from 04_master_dataset alone.
+
+## Independent recount
+
+Before this package shipped, every headline figure was recounted from the
+raw response and mention rows by a second code path that shares nothing
+with the metrics engine except the frame definitions. The dashboard, the
+workbooks, and the decks all render the same metrics object, so one
+confirmed recount vouches for every surface at once.
+
+| Figure | Reported | Recounted | Check |
+|---|---|---|---|
+${checkRows}
+
+${v.allPassed ? "All checks passed." : "**One or more checks FAILED - treat the affected figures with caution and contact Resondex.**"}
+
+## Run health - how every answer terminated
+
+Expected answers per engine: ${v.expectedPerEngine} (active prompts x repeats).
+${v.balanced ? "Every engine returned a full, balanced sample." : "**Engines returned unequal answer counts - per-engine comparisons may be affected.**"}
+
+| Engine | Stored | Natural stops | Truncated | Unreported | With citations |
+|---|---|---|---|---|---|
+${healthRows}
+
+'Truncated' answers hit a vendor length cap and may lose their final verdict;
+'unreported' answers predate finish-reason capture (2026-08-09) or the vendor
+omitted the field. Truncation counts are recorded facts here, never guesses.
+
+${insights ? `## Written-insight verification
+
+Narrative insights are written by a language model that may only cite
+figures as placeholders; every number is substituted server-side from a
+registry of ${insights.verification.figuresSupplied} pre-computed facts, and
+any sentence carrying an unsourced number is deleted before you see it. The
+prose cannot disagree with the workbooks.
+
+` : ""}## Human validation sample
+
+validation_sample.csv holds a reproducible random draw of coded answers
+(seeded by the run id - the same run always nominates the same answers) with
+the machine coding alongside blank human-grading columns. To audit the coder:
+read each answer, fill human_top_pick / human_outcome, and mark
+human_agrees_1_0. Disagreement above ~5% is worth a conversation with us.
 `;
 }
 
@@ -547,7 +705,7 @@ ${project.category} | Answerpoll by Resondex | ${x.stamp}
 
 ## What this is
 
-A sampled measurement of how ${run.model} recommends ${project.category},
+A sampled measurement of how ${run.models.length > 1 ? `${run.models.length} AI assistants (${run.models.join(", ")}) recommend` : `${run.model} recommends`} ${project.category},
 with ${project.brand} as the focus brand. ${metrics.totalResponses} answers
 were collected and coded - every prompt asked ${run.repeats} times, so every
 rate below carries a confidence interval instead of resting on a single
@@ -572,7 +730,7 @@ response.
 | 03_analysis | Live-formula workbook + CSVs: leaderboard, top picks, argument lift, positions, parents${x.hasTrend ? ", trend across runs" : ""} |
 | 04_master_dataset | Every coded answer and every brand mention - recompute anything |
 | 05_response_library | The full text of every sampled answer, filed by prompt |
-| 06_methodology | How the study was designed, collected, coded - and its limits |
+| 06_methodology | Design, collection, coding, limits - plus verification.md (independent recount + per-engine run health) and a human validation sample |
 
 ## Suggested reading order
 

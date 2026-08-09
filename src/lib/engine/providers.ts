@@ -178,6 +178,11 @@ export async function completeWithEngine(
 
 const EXTRACT_MODEL = process.env.EXTRACT_MODEL ?? "gpt-4o-mini";
 
+/** The fixed coder's id — recorded on every response as provenance. */
+export function extractModelId(): string {
+  return EXTRACT_MODEL;
+}
+
 function extractSchema(reasonCodes: string[]) {
   return {
     type: "object",

@@ -90,6 +90,8 @@ export interface ResponseRow {
   finish_reason: string | null;
   /** Grounded engines' source URLs (Perplexity), JSON-parsed. */
   citations: string[] | null;
+  /** Which extraction model coded this answer — per-response provenance. */
+  coder_model: string | null;
   text: string;
   /** Brand the answer explicitly crowns as its choice (raw, pre-dictionary). */
   top_pick_brand: string | null;
@@ -449,6 +451,7 @@ export interface Store {
     model: string;
     finishReason?: string | null;
     citations?: string[] | null;
+    coderModel?: string | null;
     text: string;
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;
