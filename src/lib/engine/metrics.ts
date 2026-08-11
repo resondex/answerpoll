@@ -107,15 +107,24 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
 }
 
 export async function computeRunMetrics(
-  runId: string
+  runId: string,
+  opts?: { mode?: "instinct" | "search" }
 ): Promise<RunMetrics | null> {
   const run = await store.getRun(runId);
   if (!run) return null;
-  const [projectMaybe, responses, mentions] = await Promise.all([
+  const [projectMaybe, allResponses, mentions] = await Promise.all([
     store.getProject(run.project_id),
     store.listResponses(runId),
     store.listMentionsForRun(runId),
   ]);
+  // Optional instrument filter: every cut below recomputes over one mode's
+  // answers only. Mentions need no prefilter — every downstream loop checks
+  // membership in a response-id set derived from `responses`.
+  const responses = opts?.mode
+    ? allResponses.filter(
+        (r) => engineMode(r.model || run.model) === opts.mode
+      )
+    : allResponses;
   const project = projectMaybe!;
   const [prompts, dictionary] = await Promise.all([
     store.listPrompts(project.id),

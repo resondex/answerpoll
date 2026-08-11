@@ -62,6 +62,29 @@ export default function RunResults({
     setWorkbenchTab(tab);
     switchView("workbench");
   };
+  // The Workbench mode filter is a real filter: the server recomputes every
+  // cut over one instrument's answers. Cached per mode; cleared on refetch.
+  const [modeMetrics, setModeMetrics] = useState<Record<string, RunMetrics>>(
+    {}
+  );
+  useEffect(() => {
+    setModeMetrics({});
+  }, [runId, refreshToken]);
+  useEffect(() => {
+    if (modeFilter === "all" || modeMetrics[modeFilter]) return;
+    let cancelled = false;
+    fetch(`/api/runs/${runId}/metrics?mode=${modeFilter}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled && d.metrics) {
+          setModeMetrics((prev) => ({ ...prev, [modeFilter]: d.metrics }));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [modeFilter, runId, refreshToken, modeMetrics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,7 +231,13 @@ export default function RunResults({
       )}
       {view === "workbench" && (
         <WorkbenchView
-          metrics={metrics}
+          metrics={
+            modeFilter === "all"
+              ? metrics
+              : (modeMetrics[modeFilter] ?? metrics)
+          }
+          pooled={metrics}
+          filterPending={modeFilter !== "all" && !modeMetrics[modeFilter]}
           project={project}
           insights={insights}
           brandSet={brandSet}

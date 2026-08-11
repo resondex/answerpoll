@@ -212,6 +212,8 @@ export function BoardroomView({
 
 export function WorkbenchView({
   metrics,
+  pooled,
+  filterPending,
   project,
   insights,
   brandSet,
@@ -220,31 +222,59 @@ export function WorkbenchView({
   modeFilter,
   setModeFilter,
 }: ViewProps & {
+  /** Unfiltered run metrics — drives the tab list and the modes comparison. */
+  pooled: RunMetrics;
+  /** True while a mode slice is still being computed server-side. */
+  filterPending: boolean;
   tab: WorkbenchTab;
   setTab: (t: WorkbenchTab) => void;
   modeFilter: "all" | "instinct" | "search";
   setModeFilter: (m: "all" | "instinct" | "search") => void;
 }) {
+  const filtered = modeFilter !== "all";
   const tabs = useMemo(() => {
     const t: { id: WorkbenchTab; label: string }[] = [
       { id: "overview", label: "Overview" },
       { id: "engines", label: "Engines" },
     ];
-    if (metrics.modes && metrics.modes.length > 1)
+    if (pooled.modes && pooled.modes.length > 1)
       t.push({ id: "modes", label: "Instinct vs search" });
-    if (metrics.promptGrid) t.push({ id: "prompts", label: "Prompts" });
-    if (metrics.reasonLift) t.push({ id: "arguments", label: "Arguments" });
-    if (metrics.sources && metrics.sources.domains.length > 0)
+    if (pooled.promptGrid) t.push({ id: "prompts", label: "Prompts" });
+    if (pooled.reasonLift) t.push({ id: "arguments", label: "Arguments" });
+    if (pooled.sources && pooled.sources.domains.length > 0)
       t.push({ id: "sources", label: "Sources" });
     t.push({ id: "brands", label: "Brands" });
     t.push({ id: "risks", label: "Risks" });
     return t;
-  }, [metrics]);
+  }, [pooled]);
 
-  const target = metrics.brands.find((b) => b.isTarget)!;
-  const engines = (metrics.engines ?? []).filter(
-    (e) => modeFilter === "all" || e.mode === modeFilter
-  );
+  // Under a mode filter the target can in principle vanish from the slice.
+  const target = metrics.brands.find((b) => b.isTarget) ?? {
+    brand: project.brand,
+    isTarget: true,
+    isCompetitor: false,
+    mentionCount: 0,
+    mentionRate: 0,
+    ciLow: 0,
+    ciHigh: 0,
+    avgRank: null,
+    shareOfVoice: 0,
+    framing: { recommended: 0, mentioned: 0, negative: 0 },
+  };
+  const engines = metrics.engines ?? [];
+
+  // Verified readings describe the full run; under a filter they'd disagree
+  // with the numbers on screen, so a context line takes their place.
+  const SliceNote = ({ sentences }: { sentences: string[] }) =>
+    filtered ? (
+      <p className="text-[12px] text-ink-3">
+        {filterPending
+          ? "Recomputing this slice…"
+          : `Every number above is recomputed over ${metrics.unbrandedResponses} ${modeFilter} answers only. Verified readings describe the full run — switch to All modes to see them.`}
+      </p>
+    ) : (
+      <Note sentences={sentences} />
+    );
 
   return (
     <div className="card overflow-hidden">
@@ -264,7 +294,11 @@ export function WorkbenchView({
           </button>
         ))}
         <span className="text-[12px] text-ink-3 ml-1">
-          filters the engine grain; pooled cuts always show the core panel
+          {filtered
+            ? filterPending
+              ? "recomputing every cut for this instrument…"
+              : `every cut recomputed over ${modeFilter} answers only`
+            : "pick an instrument to recompute every cut over it"}
         </span>
       </div>
       <div className="grid md:grid-cols-[11rem_1fr]">
@@ -321,7 +355,7 @@ export function WorkbenchView({
                   </div>
                 ))}
               </div>
-              <Note sentences={notesFor(insights, "scorecard")} />
+              <SliceNote sentences={notesFor(insights, "scorecard")} />
             </>
           )}
 
@@ -370,14 +404,14 @@ export function WorkbenchView({
                   </tbody>
                 </table>
               </div>
-              <Note sentences={notesFor(insights, "engines")} />
+              <SliceNote sentences={notesFor(insights, "engines")} />
             </>
           )}
 
-          {tab === "modes" && metrics.modes && (
+          {tab === "modes" && pooled.modes && (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
-                {metrics.modes.map((m) => (
+                {pooled.modes.map((m) => (
                   <div key={m.mode} className="rounded-xl border border-line p-4 grid gap-2">
                     <div className="flex items-baseline justify-between">
                       <span className="text-sm font-semibold">
@@ -454,7 +488,7 @@ export function WorkbenchView({
                   </tbody>
                 </table>
               </div>
-              <Note sentences={notesFor(insights, "prompts")} />
+              <SliceNote sentences={notesFor(insights, "prompts")} />
             </>
           )}
 
@@ -491,10 +525,16 @@ export function WorkbenchView({
                   </tbody>
                 </table>
               </div>
-              <Note sentences={notesFor(insights, "arguments")} />
+              <SliceNote sentences={notesFor(insights, "arguments")} />
             </>
           )}
 
+          {tab === "sources" && !metrics.sources && (
+            <p className="text-sm text-ink-3">
+              No cited answers in this slice — citations come from
+              search-enabled engines.
+            </p>
+          )}
           {tab === "sources" && metrics.sources && (
             <>
               <div className="grid gap-2">
@@ -513,7 +553,7 @@ export function WorkbenchView({
                 ● = brand-owned domain. Everything else is earned/editorial —
                 the surface where content work pays off.
               </p>
-              <Note sentences={notesFor(insights, "sources")} />
+              <SliceNote sentences={notesFor(insights, "sources")} />
             </>
           )}
 
@@ -534,7 +574,7 @@ export function WorkbenchView({
                     />
                   ))}
               </div>
-              <Note sentences={notesFor(insights, "leaderboard")} />
+              <SliceNote sentences={notesFor(insights, "leaderboard")} />
             </>
           )}
 
