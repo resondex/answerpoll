@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
 
@@ -239,20 +239,40 @@ export function WorkbenchView({
   const filtered = modeFilter !== "all" || focus !== null;
   const [expandedBrand, setExpandedBrand] = useState<string | null>(null);
   const tabs = useMemo(() => {
-    const t: { id: WorkbenchTab; label: string }[] = [
+    const t: { id: WorkbenchTab; label: string; disabled?: string }[] = [
       { id: "overview", label: "Overview" },
       { id: "engines", label: "Engines" },
     ];
     if (pooled.modes && pooled.modes.length > 1)
-      t.push({ id: "modes", label: "Instinct vs search" });
+      t.push({
+        id: "modes",
+        label: "Instinct vs search",
+        // The cross-mode comparison is moot inside a single-mode slice.
+        disabled:
+          modeFilter !== "all"
+            ? "Comparing modes needs both — set the filter to All modes"
+            : undefined,
+      });
     if (pooled.promptGrid) t.push({ id: "prompts", label: "Prompts" });
     if (pooled.reasonLift) t.push({ id: "arguments", label: "Arguments" });
     if (pooled.sources && pooled.sources.domains.length > 0)
       t.push({ id: "sources", label: "Sources" });
     t.push({ id: "brands", label: "Brands" });
-    t.push({ id: "risks", label: "Risks" });
+    t.push({
+      id: "risks",
+      label: "Risks",
+      // Negative verbatims are coded for the client at collection time.
+      disabled: focus
+        ? `Verbatim risks are available for ${project.brand} only`
+        : undefined,
+    });
     return t;
-  }, [pooled]);
+  }, [pooled, modeFilter, focus, project.brand]);
+  // Leaving a tab that just became unavailable lands on Overview.
+  const activeDisabled = tabs.find((t) => t.id === tab)?.disabled;
+  useEffect(() => {
+    if (activeDisabled) setTab("overview");
+  }, [activeDisabled, setTab]);
 
   // Under a mode filter the target can in principle vanish from the slice.
   const target = metrics.brands.find((b) => b.isTarget) ?? {
@@ -272,19 +292,7 @@ export function WorkbenchView({
   // Verified readings describe the full run; under a filter they'd disagree
   // with the numbers on screen, so a context line takes their place.
   const SliceNote = ({ sentences }: { sentences: string[] }) =>
-    filtered ? (
-      <p className="text-[12px] text-ink-3">
-        {filterPending
-          ? "Recomputing this slice…"
-          : `Every number above is recomputed for this slice (${
-              focus ? `focus: ${focus}` : ""
-            }${focus && modeFilter !== "all" ? ", " : ""}${
-              modeFilter !== "all" ? `${modeFilter} answers only` : ""
-            }). Verified readings describe the client's full run — clear the filters to see them.`}
-      </p>
-    ) : (
-      <Note sentences={sentences} />
-    );
+    filtered ? null : <Note sentences={sentences} />;
 
   return (
     <div className="card overflow-hidden">
@@ -332,16 +340,12 @@ export function WorkbenchView({
             : "pick an instrument or a brand to recompute every cut"}
         </span>
       </div>
-      {focus && !filterPending && (
+      {focus && (
         <div className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/8 px-4 py-2 text-[13px]">
           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
             Lens
           </span>
-          <span className="text-ink-2">
-            All numbers are <span className="font-semibold">{focus}</span>&apos;s.
-            Verified readings and quotes are coded for {project.brand} and
-            step aside under a lens.
-          </span>
+          <span className="font-semibold text-ink">{focus}</span>
           <button
             type="button"
             onClick={() => setFocus(null)}
@@ -357,11 +361,15 @@ export function WorkbenchView({
             <button
               key={t.id}
               type="button"
+              disabled={Boolean(t.disabled)}
+              title={t.disabled}
               onClick={() => setTab(t.id)}
               className={`px-4 py-2 text-left text-sm whitespace-nowrap ${
-                tab === t.id
-                  ? "font-semibold text-primary md:border-r-2 border-[var(--color-primary)] bg-primary-soft/40"
-                  : "text-ink-2 hover:text-ink"
+                t.disabled
+                  ? "text-ink-3 opacity-40 cursor-not-allowed"
+                  : tab === t.id
+                    ? "font-semibold text-primary md:border-r-2 border-[var(--color-primary)] bg-primary-soft/40"
+                    : "text-ink-2 hover:text-ink"
               }`}
             >
               {t.label}
@@ -458,10 +466,10 @@ export function WorkbenchView({
             </>
           )}
 
-          {tab === "modes" && pooled.modes && (
+          {tab === "modes" && metrics.modes && (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
-                {pooled.modes.map((m) => (
+                {metrics.modes.map((m) => (
                   <div key={m.mode} className="rounded-xl border border-line p-4 grid gap-2">
                     <div className="flex items-baseline justify-between">
                       <span className="text-sm font-semibold">
@@ -710,13 +718,6 @@ export function WorkbenchView({
           {tab === "risks" &&
             (metrics.negatives && metrics.negatives.length > 0 ? (
               <>
-                {focus && (
-                  <p className="text-[12px] text-ink-3">
-                    Verbatim quotes are coded for {project.brand} at collection
-                    time — under a lens you see which prompts drew negative
-                    framing of {focus}, without the prose.
-                  </p>
-                )}
                 <div className="grid gap-3">
                   {metrics.negatives.slice(0, 8).map((n, i) => (
                     <div key={i} className="border-l-2 border-danger/50 pl-4">
@@ -732,8 +733,7 @@ export function WorkbenchView({
               </>
             ) : (
               <p className="text-sm text-ink-3">
-                No answers framed {focus ?? project.brand} negatively in this
-                slice.
+                No answers framed {project.brand} negatively in this run.
               </p>
             ))}
         </div>
