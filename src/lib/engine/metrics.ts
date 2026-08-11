@@ -108,7 +108,13 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
 
 export async function computeRunMetrics(
   runId: string,
-  opts?: { mode?: "instinct" | "search" }
+  opts?: {
+    mode?: "instinct" | "search";
+    /** Brand lens: compute every cut with this brand as the focus instead
+     * of the client — the workbook's Focus dropdown, server-side. Quotes
+     * and verified prose stay client-coded and are nulled under a lens. */
+    focus?: string;
+  }
 ): Promise<RunMetrics | null> {
   const run = await store.getRun(runId);
   if (!run) return null;
@@ -131,6 +137,11 @@ export async function computeRunMetrics(
     store.getDictionary(project.id),
   ]);
   const canon = buildCanonicalizer(dictionary);
+  // A lens naming the client is just the home state.
+  const focus =
+    opts?.focus && canon.norm(opts.focus) !== canon.norm(project.brand)
+      ? opts.focus.trim()
+      : undefined;
 
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const brandedPromptIds = new Set(
@@ -161,7 +172,7 @@ export async function computeRunMetrics(
   );
   const unbrandedIds = new Set(unbranded.map((r) => r.id));
 
-  const targetNorm = canon.norm(project.brand);
+  const targetNorm = canon.norm(focus ?? project.brand);
   const roleOf = dictionaryRoles(dictionary, project, canon);
 
   // --- per-brand stats over unbranded responses (canonicalized) ---
@@ -201,7 +212,7 @@ export async function computeRunMetrics(
     };
     for (const row of rows) framing[row.framing as Framing]++;
     return {
-      brand: norm === targetNorm ? project.brand : entry.display,
+      brand: norm === targetNorm && !focus ? project.brand : entry.display,
       isTarget: norm === targetNorm,
       isCompetitor: roleOf(norm) === "competitor",
       mentionCount: k,
@@ -570,7 +581,7 @@ export async function computeRunMetrics(
     }
     topPicks = [...pickCounts.entries()]
       .map(([norm, e]) => ({
-        brand: norm === targetNorm ? project.brand : e.display,
+        brand: norm === targetNorm && !focus ? project.brand : e.display,
         isTarget: norm === targetNorm,
         isCompetitor: roleOf(norm) === "competitor",
         picks: e.n,
@@ -675,8 +686,10 @@ export async function computeRunMetrics(
       })
       .map((r) => ({
         promptText: promptById.get(r.prompt_id)?.text ?? "",
-        quote: r.focus_quote,
-        interpretation: r.focus_interpretation,
+        // The coder extracts quotes for the client at collection time; under
+        // a brand lens only the counts are honest, never the prose.
+        quote: focus ? null : r.focus_quote,
+        interpretation: focus ? null : r.focus_interpretation,
       }));
 
     // Position distribution among answers where the target appears.

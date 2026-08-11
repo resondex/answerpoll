@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
 
@@ -221,17 +221,23 @@ export function WorkbenchView({
   setTab,
   modeFilter,
   setModeFilter,
+  focus,
+  setFocus,
 }: ViewProps & {
   /** Unfiltered run metrics — drives the tab list and the modes comparison. */
   pooled: RunMetrics;
-  /** True while a mode slice is still being computed server-side. */
+  /** True while a slice is still being computed server-side. */
   filterPending: boolean;
   tab: WorkbenchTab;
   setTab: (t: WorkbenchTab) => void;
   modeFilter: "all" | "instinct" | "search";
   setModeFilter: (m: "all" | "instinct" | "search") => void;
+  /** Brand lens: null = the client's own view. */
+  focus: string | null;
+  setFocus: (b: string | null) => void;
 }) {
-  const filtered = modeFilter !== "all";
+  const filtered = modeFilter !== "all" || focus !== null;
+  const [expandedBrand, setExpandedBrand] = useState<string | null>(null);
   const tabs = useMemo(() => {
     const t: { id: WorkbenchTab; label: string }[] = [
       { id: "overview", label: "Overview" },
@@ -270,7 +276,11 @@ export function WorkbenchView({
       <p className="text-[12px] text-ink-3">
         {filterPending
           ? "Recomputing this slice…"
-          : `Every number above is recomputed over ${metrics.unbrandedResponses} ${modeFilter} answers only. Verified readings describe the full run — switch to All modes to see them.`}
+          : `Every number above is recomputed for this slice (${
+              focus ? `focus: ${focus}` : ""
+            }${focus && modeFilter !== "all" ? ", " : ""}${
+              modeFilter !== "all" ? `${modeFilter} answers only` : ""
+            }). Verified readings describe the client's full run — clear the filters to see them.`}
       </p>
     ) : (
       <Note sentences={sentences} />
@@ -293,14 +303,54 @@ export function WorkbenchView({
             {m === "all" ? "All modes" : m === "instinct" ? "Instinct" : "Search"}
           </button>
         ))}
+        <label className="ml-2 inline-flex items-center gap-1.5 text-[12px] text-ink-3">
+          Viewing as:
+          <select
+            value={focus ?? "__client__"}
+            onChange={(e) =>
+              setFocus(e.target.value === "__client__" ? null : e.target.value)
+            }
+            className={`input w-auto py-0.5 text-[12px] ${focus ? "border-warning text-warning font-semibold" : ""}`}
+            title="The brand lens — every cut recomputes with this brand as the focus, like the workbook's Focus dropdown"
+          >
+            <option value="__client__">{project.brand} (client)</option>
+            {pooled.brands
+              .filter((b) => !b.isTarget)
+              .slice(0, 30)
+              .map((b) => (
+                <option key={b.brand} value={b.brand}>
+                  {b.brand}
+                </option>
+              ))}
+          </select>
+        </label>
         <span className="text-[12px] text-ink-3 ml-1">
           {filtered
             ? filterPending
-              ? "recomputing every cut for this instrument…"
-              : `every cut recomputed over ${modeFilter} answers only`
-            : "pick an instrument to recompute every cut over it"}
+              ? "recomputing this slice…"
+              : "every cut below is recomputed for this slice"
+            : "pick an instrument or a brand to recompute every cut"}
         </span>
       </div>
+      {focus && !filterPending && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/8 px-4 py-2 text-[13px]">
+          <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning">
+            Lens
+          </span>
+          <span className="text-ink-2">
+            All numbers are <span className="font-semibold">{focus}</span>&apos;s.
+            Verified readings and quotes are coded for {project.brand} and
+            step aside under a lens.
+          </span>
+          <button
+            type="button"
+            onClick={() => setFocus(null)}
+            className="text-[13px] font-semibold text-primary hover:opacity-80"
+          >
+            ← back to {project.brand}
+          </button>
+        </div>
+      )}
       <div className="grid md:grid-cols-[11rem_1fr]">
         <nav className="border-b md:border-b-0 md:border-r border-line py-2 flex md:grid content-start overflow-x-auto">
           {tabs.map((t) => (
@@ -559,20 +609,99 @@ export function WorkbenchView({
 
           {tab === "brands" && (
             <>
-              <div className="grid gap-2">
+              <p className="text-[12px] text-ink-3 -mb-1">
+                Click any brand to unfold its card.
+              </p>
+              <div className="grid gap-1">
                 {metrics.brands
                   .filter((b) => inSet(brandSet, b))
-                  .slice(0, 12)
-                  .map((b) => (
-                    <BarRow
-                      key={b.brand}
-                      name={b.brand}
-                      isTarget={b.isTarget}
-                      share={b.mentionRate}
-                      max={metrics.brands[0]?.mentionRate ?? 1}
-                      right={`${pct(b.mentionRate)} · ${b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}`}
-                    />
-                  ))}
+                  .slice(0, 15)
+                  .map((b) => {
+                    const open = expandedBrand === b.brand;
+                    const picks = metrics.topPicks?.find(
+                      (t) => t.brand === b.brand
+                    );
+                    return (
+                      <div key={b.brand}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedBrand(open ? null : b.brand)
+                          }
+                          className={`w-full rounded-lg px-2 py-1 text-left hover:bg-primary-soft/30 ${open ? "bg-primary-soft/30" : ""}`}
+                        >
+                          <BarRow
+                            name={`${b.brand} ${open ? "▾" : "▸"}`}
+                            isTarget={b.isTarget}
+                            share={b.mentionRate}
+                            max={metrics.brands[0]?.mentionRate ?? 1}
+                            right={`${pct(b.mentionRate)} · ${b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}`}
+                          />
+                        </button>
+                        {open && (
+                          <div className="mt-1 mb-2 rounded-xl border border-[var(--color-primary)]/40 bg-primary-soft/20 p-4 grid gap-3">
+                            <div className="flex flex-wrap gap-x-7 gap-y-2">
+                              <div>
+                                <div className="text-lg font-semibold tabular-nums">
+                                  {pct(b.mentionRate)}
+                                </div>
+                                <div className="text-[11px] text-ink-3">
+                                  named · CI {pct(b.ciLow)}–{pct(b.ciHigh)}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-lg font-semibold tabular-nums">
+                                  {picks ? pct(picks.shareOfDecided) : "0%"}
+                                </div>
+                                <div className="text-[11px] text-ink-3">
+                                  first picks{picks ? ` · ${picks.picks}` : ""}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-lg font-semibold tabular-nums">
+                                  {b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}
+                                </div>
+                                <div className="text-[11px] text-ink-3">
+                                  avg position
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-lg font-semibold tabular-nums">
+                                  {pct(b.shareOfVoice)}
+                                </div>
+                                <div className="text-[11px] text-ink-3">
+                                  share of voice
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-[12px] text-ink-2">
+                              Framing: {b.framing.recommended} recommended ·{" "}
+                              {b.framing.mentioned} neutral ·{" "}
+                              <span
+                                className={
+                                  b.framing.negative > 0 ? "text-danger" : ""
+                                }
+                              >
+                                {b.framing.negative} negative
+                              </span>
+                            </div>
+                            {!b.isTarget && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFocus(b.brand);
+                                  setTab("overview");
+                                }}
+                                className="w-fit text-[13px] font-semibold text-primary hover:opacity-80"
+                              >
+                                Make this my lens →
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
               <SliceNote sentences={notesFor(insights, "leaderboard")} />
             </>
@@ -581,6 +710,13 @@ export function WorkbenchView({
           {tab === "risks" &&
             (metrics.negatives && metrics.negatives.length > 0 ? (
               <>
+                {focus && (
+                  <p className="text-[12px] text-ink-3">
+                    Verbatim quotes are coded for {project.brand} at collection
+                    time — under a lens you see which prompts drew negative
+                    framing of {focus}, without the prose.
+                  </p>
+                )}
                 <div className="grid gap-3">
                   {metrics.negatives.slice(0, 8).map((n, i) => (
                     <div key={i} className="border-l-2 border-danger/50 pl-4">
@@ -596,7 +732,8 @@ export function WorkbenchView({
               </>
             ) : (
               <p className="text-sm text-ink-3">
-                No answers framed {project.brand} negatively in this run.
+                No answers framed {focus ?? project.brand} negatively in this
+                slice.
               </p>
             ))}
         </div>

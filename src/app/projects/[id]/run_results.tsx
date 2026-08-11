@@ -62,29 +62,36 @@ export default function RunResults({
     setWorkbenchTab(tab);
     switchView("workbench");
   };
-  // The Workbench mode filter is a real filter: the server recomputes every
-  // cut over one instrument's answers. Cached per mode; cleared on refetch.
-  const [modeMetrics, setModeMetrics] = useState<Record<string, RunMetrics>>(
+  // Workbench slices are real: the server recomputes every cut for a mode
+  // filter, a brand lens, or both. Cached per (mode, focus); cleared on
+  // refetch so dictionary edits invalidate them.
+  const [focus, setFocus] = useState<string | null>(null);
+  const [sliceMetrics, setSliceMetrics] = useState<Record<string, RunMetrics>>(
     {}
   );
+  const sliceKey = `${modeFilter}|${focus ?? ""}`;
+  const sliceActive = modeFilter !== "all" || focus !== null;
   useEffect(() => {
-    setModeMetrics({});
+    setSliceMetrics({});
   }, [runId, refreshToken]);
   useEffect(() => {
-    if (modeFilter === "all" || modeMetrics[modeFilter]) return;
+    if (!sliceActive || sliceMetrics[sliceKey]) return;
     let cancelled = false;
-    fetch(`/api/runs/${runId}/metrics?mode=${modeFilter}`)
+    const params = new URLSearchParams();
+    if (modeFilter !== "all") params.set("mode", modeFilter);
+    if (focus) params.set("focus", focus);
+    fetch(`/api/runs/${runId}/metrics?${params.toString()}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled && d.metrics) {
-          setModeMetrics((prev) => ({ ...prev, [modeFilter]: d.metrics }));
+          setSliceMetrics((prev) => ({ ...prev, [sliceKey]: d.metrics }));
         }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [modeFilter, runId, refreshToken, modeMetrics]);
+  }, [sliceActive, sliceKey, modeFilter, focus, runId, refreshToken, sliceMetrics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,13 +238,11 @@ export default function RunResults({
       )}
       {view === "workbench" && (
         <WorkbenchView
-          metrics={
-            modeFilter === "all"
-              ? metrics
-              : (modeMetrics[modeFilter] ?? metrics)
-          }
+          metrics={sliceActive ? (sliceMetrics[sliceKey] ?? metrics) : metrics}
           pooled={metrics}
-          filterPending={modeFilter !== "all" && !modeMetrics[modeFilter]}
+          filterPending={sliceActive && !sliceMetrics[sliceKey]}
+          focus={focus}
+          setFocus={setFocus}
           project={project}
           insights={insights}
           brandSet={brandSet}

@@ -13,9 +13,16 @@ export async function GET(
   if (loaded instanceof NextResponse) return loaded;
   // ?mode=instinct|search recomputes every cut over that instrument only —
   // the Workbench mode filter is a real filter, not a cosmetic one.
-  const modeParam = new URL(req.url).searchParams.get("mode");
+  const url = new URL(req.url);
+  const modeParam = url.searchParams.get("mode");
   const mode =
     modeParam === "instinct" || modeParam === "search" ? modeParam : undefined;
-  const metrics = await computeRunMetrics(id, mode ? { mode } : undefined);
+  // ?focus=<brand> is the brand lens — every cut recomputes with that brand
+  // as the focus. Combines freely with ?mode=.
+  const focus = url.searchParams.get("focus")?.trim().slice(0, 120) || undefined;
+  const metrics = await computeRunMetrics(
+    id,
+    mode || focus ? { mode, focus } : undefined
+  );
   return NextResponse.json({ metrics, project: loaded.project });
 }
