@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
+import {
+  BoardroomView,
+  QuestionsView,
+  WorkbenchView,
+  type WorkbenchTab,
+} from "./views";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
@@ -30,6 +36,32 @@ export default function RunResults({
   const [brandSet, setBrandSet] = useState<"all" | "competitors" | "discovered">(
     "all"
   );
+  // The four dashboard styles share one data fetch; the choice sticks.
+  const [view, setView] = useState<
+    "brief" | "boardroom" | "workbench" | "questions"
+  >("brief");
+  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("overview");
+  const [modeFilter, setModeFilter] = useState<"all" | "instinct" | "search">(
+    "all"
+  );
+  useEffect(() => {
+    const saved = window.localStorage.getItem("answerpoll_view");
+    if (
+      saved === "boardroom" ||
+      saved === "workbench" ||
+      saved === "questions"
+    ) {
+      setView(saved);
+    }
+  }, []);
+  const switchView = (v: typeof view) => {
+    setView(v);
+    window.localStorage.setItem("answerpoll_view", v);
+  };
+  const openWorkbench = (tab: WorkbenchTab) => {
+    setWorkbenchTab(tab);
+    switchView("workbench");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -140,7 +172,66 @@ export default function RunResults({
         </p>
       </div>
 
-      {insights && insights.sections.length > 0 && (
+      <div className="flex flex-wrap items-center gap-1.5 -mt-3">
+        <span className="text-[12px] text-ink-3 mr-1">View:</span>
+        {(
+          [
+            ["brief", "The brief"],
+            ["boardroom", "Boardroom"],
+            ["workbench", "Workbench"],
+            ["questions", "Five questions"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => switchView(id)}
+            className={`rounded-full border px-3 py-1 text-[13px] font-medium transition-colors ${
+              view === id
+                ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                : "border-line text-ink-2 hover:border-ink-3"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "boardroom" && (
+        <BoardroomView
+          metrics={metrics}
+          project={project}
+          insights={insights}
+          brandSet={brandSet}
+          openWorkbench={openWorkbench}
+        />
+      )}
+      {view === "workbench" && (
+        <WorkbenchView
+          metrics={metrics}
+          project={project}
+          insights={insights}
+          brandSet={brandSet}
+          openWorkbench={openWorkbench}
+          tab={workbenchTab}
+          setTab={setWorkbenchTab}
+          modeFilter={modeFilter}
+          setModeFilter={setModeFilter}
+        />
+      )}
+      {view === "questions" && (
+        <QuestionsView
+          metrics={metrics}
+          project={project}
+          insights={insights}
+          brandSet={brandSet}
+          openWorkbench={openWorkbench}
+        />
+      )}
+
+      {view === "brief" && (
+        <>
+          {insights && insights.sections.length > 0 && (
         <section className="card p-6 border-l-4 border-l-[var(--color-primary)]">
           <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
             <h2 className="section-label">Key takeaways</h2>
@@ -880,6 +971,8 @@ export default function RunResults({
           ))}
         </div>
       </section>
+        </>
+      )}
     </div>
   );
 }
