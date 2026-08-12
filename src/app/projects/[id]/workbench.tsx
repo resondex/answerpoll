@@ -61,6 +61,9 @@ interface WbState {
   /** Engine scope; empty = every engine in the run. */
   engines: string[];
   measure: "named" | "firstNamed" | "sov" | "position";
+  /** Table-only disclosures — charts never carry them. */
+  showCI: boolean;
+  showCounts: boolean;
 }
 
 function brandStats(m: RunMetrics | null) {
@@ -121,6 +124,8 @@ export default function Workbench({
     split: "none",
     engines: [],
     measure: "named",
+    showCI: false,
+    showCounts: false,
   });
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
@@ -263,11 +268,18 @@ export default function Workbench({
   const groups: Group[] = (facetDefs ?? [{ key: "", label: null as string | null, engines: st.engines }]).map(
     (f) => {
       const sr = seriesFor(f.engines);
-      return {
-        label: f.label,
-        series: sr,
-        m: sr.find((x) => x.stats)?.stats?.m ?? null,
-      };
+      const m = sr.find((x) => x.stats)?.stats?.m ?? null;
+      let label = f.label;
+      if (label && m) {
+        const rate =
+          st.split === "engine"
+            ? m.engines?.[0]?.searchRate
+            : m.modes?.find((x) => x.mode === "search")?.searchRate;
+        if (rate !== null && rate !== undefined && (st.split !== "mode" || f.key === "search")) {
+          label = `${label} · searched on ${pct(rate)} of answers`;
+        }
+      }
+      return { label, series: sr, m };
     }
   );
   const loading =
@@ -356,6 +368,26 @@ export default function Workbench({
               </button>
             </>
           )}
+          {st.brandMode === "comparative" && (
+            <select
+              value=""
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!n) return;
+                const top = options.filter((o) => o !== clientName).slice(0, n);
+                set({ compBrands: [clientName, ...top] });
+              }}
+              className="input w-auto py-0.5 text-[12px]"
+              title="Replace the comparison with the top brands by visibility, plus you"
+            >
+              <option value="">Top…</option>
+              {[3, 5, 10, 15, 20].map((n) => (
+                <option key={n} value={n}>
+                  Top {n} + you
+                </option>
+              ))}
+            </select>
+          )}
           <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
             Answers
           </span>
@@ -371,6 +403,19 @@ export default function Workbench({
               })
             }
           />
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 ml-2">
+            Show
+          </span>
+          <button type="button" className={chip(st.showCI)}
+            onClick={() => set({ showCI: !st.showCI })}
+            title="Add 95% confidence-interval columns to every table">
+            CI
+          </button>
+          <button type="button" className={chip(st.showCounts)}
+            onClick={() => set({ showCounts: !st.showCounts })}
+            title="Add the counts behind the rates to every table">
+            Counts
+          </button>
         </div>
       </div>
 
@@ -405,9 +450,9 @@ export default function Workbench({
               {view === "visibility" && (
                 <Visibility groups={groups} solo={solo} st={st} set={set} />
               )}
-              {view === "choice" && <Choice groups={groups} />}
+              {view === "choice" && <Choice groups={groups} st={st} />}
               {view === "why" && <Why groups={groups} />}
-              {view === "battleground" && <Battleground groups={groups} />}
+              {view === "battleground" && <Battleground groups={groups} st={st} />}
               {view === "sources" && <Sources groups={groups} />}
               {view === "risk" && plan !== "free" && (
                 <Risk groups={groups} pooled={pooled}
@@ -963,13 +1008,25 @@ function Visibility({
                   { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
                     color: (r) => r.color,
                     render: (r) => <span className="font-medium">{r.name}</span> },
+                  ...(st.showCounts
+                    ? [{ id: "answers", label: "Answers", num: true,
+                        val: (r: Series[number]) =>
+                          r.stats?.m.unbrandedResponses ?? null }]
+                    : []),
                   { id: "named", label: "Named", num: true,
                     val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
                     render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-                  { id: "ci", label: "95% CI", num: true,
-                    val: (r) => r.stats ? Math.round(r.stats.ciLow * 100) : null,
-                    render: (r) =>
-                      r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" },
+                  ...(st.showCounts
+                    ? [{ id: "namedn", label: "Named n", num: true,
+                        val: (r: Series[number]) => r.stats?.count ?? null }]
+                    : []),
+                  ...(st.showCI
+                    ? [{ id: "ci", label: "Named 95% CI", num: true,
+                        val: (r: Series[number]) =>
+                          r.stats ? Math.round(r.stats.ciLow * 100) : null,
+                        render: (r: Series[number]) =>
+                          r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" }]
+                    : []),
                   { id: "fn", label: "First-named", num: true,
                     val: (r) =>
                       r.stats?.firstNamed !== null && r.stats
@@ -1019,7 +1076,7 @@ function SoloVisibility({ s }: { s: Series[number] }) {
     <>
       <div className="flex flex-wrap gap-x-8 gap-y-3">
         {[
-          [pct(st.named), `named · CI ${pct(st.ciLow)}–${pct(st.ciHigh)}`],
+          [pct(st.named), "named"],
           [st.firstNamed !== null ? pct(st.firstNamed) : "—", "first-named"],
           [pct(st.sov), "share of voice"],
           [st.avgRank ? `#${st.avgRank.toFixed(1)}` : "—", "avg position"],
@@ -1047,6 +1104,26 @@ function SoloVisibility({ s }: { s: Series[number] }) {
           ))}
         </div>
         <div className="rounded-xl border border-line p-4">
+          <div className="section-label mb-2">Position when named</div>
+          {st.m.positionDist ? (
+            (
+              [
+                ["#1", st.m.positionDist.r1],
+                ["#2", st.m.positionDist.r2],
+                ["#3", st.m.positionDist.r3],
+                ["4th+", st.m.positionDist.r4plus],
+              ] as const
+            ).map(([l, v]) => (
+              <div key={l} className="flex justify-between text-sm py-0.5">
+                <span className="text-ink-2">{l}</span>
+                <span className="font-semibold tabular-nums">{v}×</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-ink-3">Not coded in this run.</p>
+          )}
+        </div>
+        <div className="rounded-xl border border-line p-4">
           <div className="section-label mb-2">Framing · % of named answers</div>
           {(["recommended", "mentioned", "negative"] as const).map((f) => (
             <div key={f} className="flex justify-between text-sm py-0.5">
@@ -1072,7 +1149,7 @@ function SoloVisibility({ s }: { s: Series[number] }) {
 }
 
 /* ---------------- Choice ---------------- */
-function Choice({ groups }: { groups: Group[] }) {
+function Choice({ groups, st }: { groups: Group[]; st: WbState }) {
   const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
   const metricDefs = [
     ["share", "Share of decided"],
@@ -1100,7 +1177,8 @@ function Choice({ groups }: { groups: Group[] }) {
       </div>
       <div className="grid gap-8">
         {groups.map((g) => (
-          <ChoiceGroup key={g.label ?? "all"} g={g} metric={metric} />
+          <ChoiceGroup key={g.label ?? "all"} g={g} metric={metric}
+            showCI={st.showCI} showCounts={st.showCounts} />
         ))}
       </div>
     </>
@@ -1110,9 +1188,13 @@ function Choice({ groups }: { groups: Group[] }) {
 function ChoiceGroup({
   g,
   metric,
+  showCI,
+  showCounts,
 }: {
   g: Group;
   metric: "share" | "chosen" | "top3" | "named";
+  showCI: boolean;
+  showCounts: boolean;
 }) {
   const m = g.m;
   if (!m) return null;
@@ -1206,6 +1288,24 @@ function ChoiceGroup({
               r.stats?.chosen !== null && r.stats ? Math.round((r.stats.chosen ?? 0) * 100) : null,
             render: (r) =>
               r.stats?.chosen !== null && r.stats ? pct(r.stats.chosen!) : "—" },
+          ...(showCI
+            ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
+                val: (r: Series[number]) =>
+                  r.stats?.m.firstPick
+                    ? Math.round(r.stats.m.firstPick.ciLow * 100) : null,
+                render: (r: Series[number]) =>
+                  r.stats?.m.firstPick
+                    ? `${pct(r.stats.m.firstPick.ciLow)}–${pct(r.stats.m.firstPick.ciHigh)}`
+                    : "—" }]
+            : []),
+          ...(showCounts
+            ? [
+                { id: "coded", label: "Answers", num: true,
+                  val: (r: Series[number]) => r.stats?.m.firstPick?.of ?? null },
+                { id: "chosenn", label: "Chosen n", num: true,
+                  val: (r: Series[number]) => r.stats?.m.firstPick?.count ?? null },
+              ]
+            : []),
           { id: "picks", label: "Picks", num: true,
             val: (r) => tp(r.name)?.picks ?? 0 },
           { id: "share", label: "Share of decided", num: true,
@@ -1378,8 +1478,9 @@ function WhyGroup({
 }
 
 /* ---------------- Battleground ---------------- */
-function Battleground({ groups }: { groups: Group[] }) {
+function Battleground({ groups, st }: { groups: Group[]; st: WbState }) {
   const [sort, setSort] = useState<"contested" | "owned" | "theme">("contested");
+  const [display, setDisplay] = useState<"grid" | "table">("grid");
   const firstName = groups[0]?.series[0]?.name ?? "";
   return (
     <>
@@ -1401,10 +1502,29 @@ function Battleground({ groups }: { groups: Group[] }) {
             {label}
           </button>
         ))}
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 ml-2">
+          View
+        </span>
+        {(
+          [
+            ["grid", "Grid"],
+            ["table", "Data"],
+          ] as const
+        ).map(([id, label]) => (
+          <button key={id} type="button" onClick={() => setDisplay(id)}
+            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+              display === id
+                ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                : "border-line text-ink-3 hover:border-ink-3"
+            }`}>
+            {label}
+          </button>
+        ))}
       </div>
       <div className="grid gap-8">
         {groups.map((g) => (
-          <BattlegroundGroup key={g.label ?? "all"} g={g} sort={sort} />
+          <BattlegroundGroup key={g.label ?? "all"} g={g} sort={sort}
+            display={display} showCI={st.showCI} />
         ))}
       </div>
     </>
@@ -1412,10 +1532,12 @@ function Battleground({ groups }: { groups: Group[] }) {
 }
 
 function BattlegroundGroup({
-  g, sort,
+  g, sort, display, showCI,
 }: {
   g: Group;
   sort: "contested" | "owned" | "theme";
+  display: "grid" | "table";
+  showCI: boolean;
 }) {
   const series = g.series;
   const base = g.m?.promptGrid ?? [];
@@ -1482,6 +1604,38 @@ function BattlegroundGroup({
           )
         }
       />
+      {display === "table" ? (
+        <SortTable
+          filename={`battleground${g.label ? `_${slugify(g.label)}` : ""}.csv`}
+          defaultSort={{ id: "named", dir: -1 }}
+          cols={[
+            { id: "prompt", label: "Prompt",
+              val: (r: { pg: NonNullable<RunMetrics["promptGrid"]>[number]; brand: string; color: string }) => r.pg.text,
+              render: (r) => (
+                <span className="line-clamp-2 max-w-[22rem]">{r.pg.text}</span>
+              ) },
+            { id: "topic", label: "Topic", val: (r) => r.pg.theme },
+            { id: "brand", label: "Brand", val: (r) => r.brand,
+              color: (r) => r.color,
+              render: (r) => <span className="font-medium">{r.brand}</span> },
+            { id: "named", label: "Named", num: true,
+              val: (r) => r.pg.answers > 0 ? Math.round((r.pg.targetNamed / r.pg.answers) * 100) : null,
+              render: (r) => `${r.pg.targetNamed}/${r.pg.answers}` },
+            { id: "picked", label: "Picked", num: true,
+              val: (r) => r.pg.decided > 0 ? Math.round((r.pg.targetPicks / r.pg.decided) * 100) : null,
+              render: (r) => `${r.pg.targetPicks}/${r.pg.decided}` },
+            { id: "consensus", label: "Consensus pick",
+              val: (r) => r.pg.modalPick ?? null },
+            { id: "status", label: "Status", val: (r) => r.pg.badge },
+          ]}
+          rows={series.flatMap((x) =>
+            base.flatMap((g0) => {
+              const pg = gridFor(x, g0.promptId);
+              return pg ? [{ pg, brand: x.name, color: x.color }] : [];
+            })
+          )}
+        />
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1507,7 +1661,9 @@ function BattlegroundGroup({
                       const th = x.stats?.m.themes.find((t) => t.theme === theme);
                       return (
                         <td key={x.name} className="py-1.5 pr-3 text-center text-[11px] tabular-nums text-ink-2">
-                          {th ? pct(th.targetRate) : "—"}
+                          {th
+                            ? `${pct(th.targetRate)}${th.targetAvgRank ? ` · #${th.targetAvgRank.toFixed(1)}` : ""}${showCI ? ` · ${pct(th.ciLow)}–${pct(th.ciHigh)}` : ""}`
+                            : "—"}
                         </td>
                       );
                     })}
@@ -1535,6 +1691,8 @@ function BattlegroundGroup({
           </tbody>
         </table>
       </div>
+      )}
+      {display === "grid" && (
       <div className="grid gap-1 text-[12px] text-ink-3">
         <div className="flex gap-4">
           <span>{dot("win")} wins it</span>
@@ -1548,6 +1706,7 @@ function BattlegroundGroup({
           does). Not named = absent from this prompt&apos;s answers entirely.
         </p>
       </div>
+      )}
     </div>
   );
 }
@@ -1780,6 +1939,13 @@ function Style({ pooled }: { pooled: RunMetrics }) {
             render: (e) => pct(e.style.clarRate) },
           { id: "opts", label: "Options offered", num: true,
             val: (e) => Number(e.style.avgOptions.toFixed(1)) },
+          { id: "searched", label: "Searches", num: true,
+            val: (e) =>
+              e.searchRate !== null ? Math.round(e.searchRate * 100) : null,
+            render: (e) =>
+              e.mode !== "search" ? "—"
+              : e.searchRate !== null ? pct(e.searchRate)
+              : e.citedAnswers > 0 ? "always" : "—" },
         ]}
         rows={pooled.engines}
       />

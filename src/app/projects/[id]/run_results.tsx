@@ -35,9 +35,9 @@ export default function RunResults({
   const [plan, setPlan] = useState<"free" | "pro" | "enterprise">("free");
   const [loaded, setLoaded] = useState(false);
   // Which competitive set the brand tables show. The target always stays.
-  const [brandSet, setBrandSet] = useState<"all" | "competitors" | "discovered">(
-    "all"
-  );
+  // The Set filter retired 2026-08-12 — the Workbench's brand picker is the
+  // curation surface now; the Brief always shows the full field.
+  const brandSet = "all" as const;
   // The four dashboard styles share one data fetch; the choice sticks.
   const [view, setView] = useState<
     "brief" | "boardroom" | "workbench" | "questions"
@@ -57,7 +57,7 @@ export default function RunResults({
     setView(v);
     window.localStorage.setItem("answerpoll_view", v);
   };
-  const openWorkbench = (tab: WorkbenchTab) => {
+  const openWorkbench = (tab: string) => {
     setWorkbenchTab(tab);
     switchView("workbench");
   };
@@ -129,25 +129,6 @@ export default function RunResults({
   return (
     <div className="grid gap-8">
       <div className="flex items-baseline justify-between gap-4 flex-wrap -mb-2">
-        <p className="text-sm text-ink-2 flex items-center gap-3 flex-wrap">
-          {metrics.model} · {metrics.unbrandedResponses} unbranded answers
-          sampled
-          <label className="inline-flex items-center gap-1.5 text-[13px] text-ink-3">
-            Set:
-            <select
-              value={brandSet}
-              onChange={(e) =>
-                setBrandSet(e.target.value as typeof brandSet)
-              }
-              className="input w-auto py-1 text-[13px]"
-              title="Which brands the tables below include — your brand always stays"
-            >
-              <option value="all">all brands</option>
-              <option value="competitors">competitors + you</option>
-              <option value="discovered">discovered + you</option>
-            </select>
-          </label>
-        </p>
         <p className="text-[13px] text-ink-3">
           Export:{" "}
           {(
@@ -169,6 +150,16 @@ export default function RunResults({
               </a>
             </span>
           ))}
+          {" · "}
+          <a href={`/api/projects/${project.id}/deck`}
+            className="font-medium text-primary hover:opacity-80">
+            deck (.pptx)
+          </a>
+          {" · "}
+          <a href={`/api/projects/${project.id}/study`}
+            className="font-medium text-primary hover:opacity-80">
+            study (.zip)
+          </a>
         </p>
       </div>
 
@@ -244,7 +235,15 @@ export default function RunResults({
                 <span className="font-semibold text-primary tabular-nums">
                   {i + 1}
                 </span>
-                <span>{t}</span>
+                <span>
+                  {t}
+                  <button type="button"
+                    onClick={() => openWorkbench("visibility")}
+                    title="See this data in the Workbench"
+                    className="ml-1.5 font-semibold text-primary hover:opacity-80">
+                    ↗
+                  </button>
+                </span>
               </li>
             ))}
           </ol>
@@ -288,14 +287,14 @@ export default function RunResults({
         <StatTile
           label="Mention rate"
           value={pct(target.mentionRate)}
-          detail={`95% CI ${pct(target.ciLow)}–${pct(target.ciHigh)}`}
+          detail={`named in ${target.mentionCount} of ${metrics.unbrandedResponses} answers`}
           hint="Share of unbranded answers that name you at all"
         />
         {metrics.coded && metrics.firstPick && (
           <StatTile
             label="First pick"
             value={pct(metrics.firstPick.rate)}
-            detail={`95% CI ${pct(metrics.firstPick.ciLow)}–${pct(metrics.firstPick.ciHigh)} · ${metrics.firstPick.count} of ${metrics.firstPick.of}`}
+            detail={`${metrics.firstPick.count} of ${metrics.firstPick.of} answers`}
             hint="Answers that crown your brand as THE recommendation - being mentioned is representation, being picked is the win"
           />
         )}
@@ -322,7 +321,8 @@ export default function RunResults({
       {metrics.engines && metrics.engines.length > 1 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">By engine</h2>
-          <InsightNote sentences={notesFor("engines")} />
+          <InsightNote sentences={notesFor("engines")}
+            onVerify={() => openWorkbench("visibility")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery answered by each assistant. Answers come from the
             engine; coding comes from one fixed coder, so these differences are
@@ -335,7 +335,6 @@ export default function RunResults({
                   <th className="py-2 pr-4 font-semibold">Engine</th>
                   <th className="py-2 pr-4 font-semibold text-right">Answers</th>
                   <th className="py-2 pr-4 font-semibold text-right">Named</th>
-                  <th className="py-2 pr-4 font-semibold text-right">95% CI</th>
                   <th className="py-2 pr-4 font-semibold text-right">
                     First pick
                   </th>
@@ -361,9 +360,6 @@ export default function RunResults({
                     </td>
                     <td className="py-2 pr-4 text-right tabular-nums">
                       {pct(e.namedRate)}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
-                      {pct(e.ciLow)}–{pct(e.ciHigh)}
                     </td>
                     <td className="py-2 pr-4 text-right tabular-nums">
                       {pct(e.pickRate)}
@@ -391,7 +387,8 @@ export default function RunResults({
       {metrics.modes && metrics.modes.length > 1 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Instinct vs search-enabled</h2>
-          <InsightNote sentences={notesFor("modes")} />
+          <InsightNote sentences={notesFor("modes")}
+            onVerify={() => openWorkbench("visibility")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery, two instruments: instinct engines answer from
             trained knowledge alone; search-enabled engines may retrieve like
@@ -419,7 +416,7 @@ export default function RunResults({
                       {pct(m.namedRate)}
                     </div>
                     <div className="text-[11px] text-ink-3">
-                      named · CI {pct(m.ciLow)}–{pct(m.ciHigh)}
+                      named
                     </div>
                   </div>
                   <div>
@@ -457,7 +454,8 @@ export default function RunResults({
       {metrics.coded && setTopPicks && setTopPicks.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Who wins instead</h2>
-          <InsightNote sentences={notesFor("top_picks")} />
+          <InsightNote sentences={notesFor("top_picks")}
+            onVerify={() => openWorkbench("choice")} />
           <p className="text-[13px] text-ink-3 mb-4">
             The brand each answer actually crowned - over the{" "}
             {metrics.outcomes?.pick ?? 0} answers that committed to a pick
@@ -507,7 +505,8 @@ export default function RunResults({
       {metrics.coded && metrics.reasonLift && metrics.reasonLift.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">The arguments that decide it</h2>
-          <InsightNote sentences={notesFor("arguments")} />
+          <InsightNote sentences={notesFor("arguments")}
+            onVerify={() => openWorkbench("why")} />
           <p className="text-[13px] text-ink-3 mb-4">
             Which arguments travel with your wins - share of answers using each
             argument, in your first-pick wins vs overall. Positive lift =
@@ -559,7 +558,8 @@ export default function RunResults({
 
       <section className="card p-6">
         <h2 className="section-label mb-1">Brand leaderboard</h2>
-          <InsightNote sentences={notesFor("leaderboard")} />
+          <InsightNote sentences={notesFor("leaderboard")}
+            onVerify={() => openWorkbench("visibility")} />
         <p className="text-[13px] text-ink-3 mb-5">
           Mention rate across unbranded answers — named competitors and brands
           the model volunteered on its own.
@@ -569,7 +569,7 @@ export default function RunResults({
             <div
               key={b.brand}
               className="group grid grid-cols-[9rem_1fr_7rem] items-center gap-3"
-              title={`${b.brand}: named in ${b.mentionCount} of ${metrics.unbrandedResponses} answers (95% CI ${pct(b.ciLow)}–${pct(b.ciHigh)}) · avg position ${b.avgRank ? b.avgRank.toFixed(1) : "—"} · recommended ${b.framing.recommended}× · negative ${b.framing.negative}×`}
+              title={`${b.brand}: named in ${b.mentionCount} of ${metrics.unbrandedResponses} answers · avg position ${b.avgRank ? b.avgRank.toFixed(1) : "—"} · recommended ${b.framing.recommended}× · negative ${b.framing.negative}×`}
             >
               <span
                 className={`truncate text-sm text-right ${
@@ -613,7 +613,8 @@ export default function RunResults({
       {metrics.parentRollup && metrics.parentRollup.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">By parent company</h2>
-          <InsightNote sentences={notesFor("parents")} />
+          <InsightNote sentences={notesFor("parents")}
+            onVerify={() => openWorkbench("visibility")} />
           <p className="text-[13px] text-ink-3 mb-5">
             Combined footprint at parent grain — every independent brand is
             its own parent company. An answer naming any of a parent&apos;s
@@ -635,7 +636,7 @@ export default function RunResults({
                 <div
                   key={p.parent}
                   className="grid grid-cols-[9rem_1fr_11rem] items-center gap-3"
-                  title={`${p.parent}: ${p.brands.join(", ")} — named in ${p.responses} of ${metrics.unbrandedResponses} answers (95% CI ${pct(p.ciLow)}–${pct(p.ciHigh)}) · ${pct(p.shareOfVoice)} share of voice`}
+                  title={`${p.parent}: ${p.brands.join(", ")} — named in ${p.responses} of ${metrics.unbrandedResponses} answers · ${pct(p.shareOfVoice)} share of voice`}
                 >
                   <span
                     className={`truncate text-sm text-right ${p.includesTarget ? "font-semibold text-primary" : "text-ink-2"}`}
@@ -654,7 +655,7 @@ export default function RunResults({
                     {pct(p.mentionRate)}
                     <span className="text-xs text-ink-3">
                       {" "}
-                      · CI {pct(p.ciLow)}–{pct(p.ciHigh)} · SOV{" "}
+                      · SOV{" "}
                       {pct(p.shareOfVoice)}
                     </span>
                   </span>
@@ -696,7 +697,6 @@ export default function RunResults({
                 <th className="py-2.5 pr-4 font-semibold text-right">
                   Mention rate
                 </th>
-                <th className="py-2.5 pr-4 font-semibold text-right">95% CI</th>
                 <th className="py-2.5 pr-4 font-semibold text-right">
                   Avg position
                 </th>
@@ -734,9 +734,6 @@ export default function RunResults({
                   <td className="py-2.5 pr-4 text-right tabular-nums">
                     {pct(b.mentionRate)}
                   </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
-                    {pct(b.ciLow)}–{pct(b.ciHigh)}
-                  </td>
                   <td className="py-2.5 pr-4 text-right tabular-nums">
                     {b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}
                   </td>
@@ -767,7 +764,7 @@ export default function RunResults({
             <div
               key={t.theme}
               className="grid grid-cols-[9rem_1fr_11rem] items-center gap-3"
-              title={`${t.prompts} prompts · ${t.targetMentions} of ${t.responses} answers name ${project.brand} (95% CI ${pct(t.ciLow)}–${pct(t.ciHigh)})`}
+              title={`${t.prompts} prompts · ${t.targetMentions} of ${t.responses} answers name ${project.brand}`}
             >
               <span
                 className={`text-sm text-right ${
@@ -788,7 +785,7 @@ export default function RunResults({
                 {pct(t.targetRate)}
                 <span className="text-xs text-ink-3">
                   {" "}
-                  · CI {pct(t.ciLow)}–{pct(t.ciHigh)} ·{" "}
+                  ·{" "}
                   {t.targetAvgRank ? `#${t.targetAvgRank.toFixed(1)}` : "—"}
                 </span>
               </span>
@@ -799,7 +796,8 @@ export default function RunResults({
 
       <section className="card p-6">
         <h2 className="section-label mb-4">Where you show up — by prompt</h2>
-          <InsightNote sentences={notesFor("prompts")} />
+          <InsightNote sentences={notesFor("prompts")}
+            onVerify={() => openWorkbench("battleground")} />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -878,7 +876,8 @@ export default function RunResults({
           <h2 className="section-label mb-1">
             Where grounded answers get their facts
           </h2>
-          <InsightNote sentences={notesFor("sources")} />
+          <InsightNote sentences={notesFor("sources")}
+            onVerify={() => openWorkbench("sources")} />
           <p className="text-[13px] text-ink-3 mb-4">
             Domains cited by the {metrics.sources.citedAnswers} answers from
             citation-grounded engines — each domain counted once per answer.
@@ -923,7 +922,8 @@ export default function RunResults({
       {metrics.negatives && metrics.negatives.length > 0 && (
         <section className="card p-6">
           <h2 className="section-label mb-1">Where the answers push back</h2>
-          <InsightNote sentences={notesFor("negatives")} />
+          <InsightNote sentences={notesFor("negatives")}
+            onVerify={() => openWorkbench("risk")} />
           <p className="text-[13px] text-ink-3 mb-4">
             {metrics.negatives.length} answer
             {metrics.negatives.length === 1 ? "" : "s"} framed {project.brand}{" "}
@@ -1034,7 +1034,13 @@ function VerifiedChip({ figures }: { figures: number }) {
 }
 
 /** A section's verified reading — the deck-caption pattern, in the app. */
-function InsightNote({ sentences }: { sentences: string[] }) {
+function InsightNote({
+  sentences,
+  onVerify,
+}: {
+  sentences: string[];
+  onVerify?: () => void;
+}) {
   if (sentences.length === 0) return null;
   return (
     <div className="my-3 rounded-lg bg-primary-soft/40 px-3.5 py-2.5 grid gap-1">
@@ -1044,6 +1050,13 @@ function InsightNote({ sentences }: { sentences: string[] }) {
             {i === 0 ? "AI reading (verified): " : ""}
           </span>
           {t}
+          {i === sentences.length - 1 && onVerify && (
+            <button type="button" onClick={onVerify}
+              title="See this data in the Workbench"
+              className="ml-1.5 font-semibold text-primary hover:opacity-80">
+              ↗
+            </button>
+          )}
         </p>
       ))}
     </div>

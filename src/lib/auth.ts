@@ -41,6 +41,27 @@ export interface AuthContext {
   /** null means auth is disabled — unscoped single-tenant mode. */
   userId: string | null;
   email: string | null;
+  /** Set when the caller holds a valid public share link: read-only access
+   * scoped to exactly this project, nothing else. */
+  shareProjectId?: string;
+}
+
+const SHARE_COOKIE = "ap_share_token";
+
+/** A share link, if the token is real and unexpired. */
+export async function shareLinkFor(
+  token: string
+): Promise<{ projectId: string; expiresAt: string } | null> {
+  if (!/^[a-f0-9]{32,64}$/.test(token)) return null;
+  const raw = await store.cacheGet(`share:${token}`, 32 * 24 * 3600 * 1000);
+  if (!raw) return null;
+  try {
+    const link = JSON.parse(raw) as { projectId: string; expiresAt: string };
+    if (new Date(link.expiresAt).getTime() < Date.now()) return null;
+    return link;
+  } catch {
+    return null;
+  }
 }
 
 /** Current auth context, or null when auth is on and nobody is signed in. */
@@ -50,8 +71,17 @@ export async function getAuth(): Promise<AuthContext | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
-  return { userId: user.id, email: user.email ?? null };
+  if (user) return { userId: user.id, email: user.email ?? null };
+  // No session — a share cookie can still grant scoped read-only access.
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SHARE_COOKIE)?.value;
+  if (token) {
+    const link = await shareLinkFor(token);
+    if (link) {
+      return { userId: "share", email: null, shareProjectId: link.projectId };
+    }
+  }
+  return null;
 }
 
 /** Answerpoll staff — god tier. Backed by the staff_users table plus an
@@ -84,6 +114,9 @@ export async function projectAccess(
   project: Project,
   auth: AuthContext
 ): Promise<ProjectAccess> {
+  if (auth.shareProjectId) {
+    return auth.shareProjectId === project.id ? "viewer" : null;
+  }
   if (auth.userId === null) return "owner"; // auth disabled: dev mode
   if (await isStaff(auth)) return "staff";
   if (project.org_id) {
@@ -118,6 +151,7 @@ export function canAccessProject(
 }
 
 export async function getPlanFor(auth: AuthContext): Promise<Plan> {
+  if (auth.shareProjectId) return "enterprise"; // read-only shared view
   if (auth.userId === null) return "enterprise"; // dev mode: no limits
   if (await isStaff(auth)) return "enterprise"; // staff: no limits
   return store.getPlan(auth.userId);

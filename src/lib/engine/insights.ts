@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v7";
+const INSIGHTS_VERSION = "v8";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -76,12 +76,12 @@ function buildFacts(
   add("answers sampled (unbranded)", String(metrics.unbrandedResponses));
   add(
     `${brandName} mention rate`,
-    `${pct(target.mentionRate)} (95% CI ${pct(target.ciLow)}–${pct(target.ciHigh)})`
+    pct(target.mentionRate)
   );
   if (metrics.firstPick) {
     add(
       `${brandName} first-pick rate`,
-      `${pct(metrics.firstPick.rate)} (95% CI ${pct(metrics.firstPick.ciLow)}–${pct(metrics.firstPick.ciHigh)}; ${metrics.firstPick.count} of ${metrics.firstPick.of} decided answers)`
+      `${pct(metrics.firstPick.rate)} (${metrics.firstPick.count} of ${metrics.firstPick.of} decided answers)`
     );
   }
   add(
@@ -105,7 +105,7 @@ function buildFacts(
     if (b.isTarget) continue;
     add(
       `${b.brand} mention rate`,
-      `${pct(b.mentionRate)} (95% CI ${pct(b.ciLow)}–${pct(b.ciHigh)})`
+      pct(b.mentionRate)
     );
   }
   if (metrics.topPicks) {
@@ -129,7 +129,7 @@ function buildFacts(
     for (const m of metrics.modes) {
       add(
         `${m.mode === "search" ? "search-enabled engines (may retrieve like consumer apps)" : "instinct engines (trained knowledge only)"}: share of answers naming ${brandName}`,
-        `${pct(m.namedRate)} (95% CI ${pct(m.ciLow)}–${pct(m.ciHigh)})`
+        pct(m.namedRate)
       );
       add(
         `${m.mode} engines: share of answers picking ${brandName} first`,
@@ -180,7 +180,7 @@ function buildFacts(
     for (const p of metrics.parentRollup.slice(0, 3)) {
       add(
         `parent company "${p.parent}" (any of its brands) named in`,
-        `${pct(p.mentionRate)} of answers (95% CI ${pct(p.ciLow)}–${pct(p.ciHigh)}), with ${pct(p.shareOfVoice)} share of voice`
+        `${pct(p.mentionRate)} of answers, with ${pct(p.shareOfVoice)} share of voice`
       );
     }
   }

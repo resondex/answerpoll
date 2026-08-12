@@ -31,7 +31,13 @@ interface Progress {
   total: number;
 }
 
-type OpenModal = "run" | "schedule" | "dictionary" | "health" | null;
+type OpenModal =
+  | "run"
+  | "schedule"
+  | "history"
+  | "dictionary"
+  | "health"
+  | null;
 
 export default function ProjectPage() {
   return (
@@ -228,33 +234,8 @@ function ProjectDashboard() {
           </Link>
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap mt-1.5">
-          <p className="text-sm text-ink-2">
-            <span className="font-medium text-ink">{project.brand}</span>
-            {project.competitors.length > 0 && (
-              <> vs. {project.competitors.join(", ")}</>
-            )}{" "}
-            · {project.category}
-            {project.audience ? ` · ${project.audience}` : ""}
-          </p>
           <span className="flex items-center gap-4">
-            {completeRuns.length > 0 && (
-              <>
-                <a
-                  href={`/api/projects/${id}/deck`}
-                  className="text-sm font-semibold text-primary hover:opacity-80"
-                  title="The executive summary deck (.pptx). Add ?variant=ai_beta for the AI-narrative beta."
-                >
-                  Deck (.pptx) ↓
-                </a>
-                <a
-                  href={`/api/projects/${id}/study`}
-                  className="text-sm font-semibold text-primary hover:opacity-80"
-                  title="Complete deliverable: executive summary, deck, workbooks, coded dataset, response library, methodology"
-                >
-                  Study (.zip) ↓
-                </a>
-              </>
-            )}
+            <ShareButton projectId={id} />
             <button
               type="button"
               onClick={async () => {
@@ -290,6 +271,11 @@ function ProjectDashboard() {
           label="Schedule"
           bubble={null}
           onClick={() => setOpenModal("schedule")}
+        />
+        <TaskButton
+          label="Run history"
+          bubble={null}
+          onClick={() => setOpenModal("history")}
         />
         <TaskButton
           label="Brand dictionary"
@@ -358,78 +344,7 @@ function ProjectDashboard() {
         </section>
       )}
 
-      {runs.length > 0 && (
-        <section>
-          <h2 className="section-label mb-3">Run history</h2>
-          <ul className="grid gap-2">
-            {runs.map((r) => {
-              const active = r.status === "pending" || r.status === "running";
-              const shown = shownRun?.id === r.id;
-              return (
-                <li
-                  key={r.id}
-                  className={`card flex items-center justify-between gap-4 px-5 py-3.5 ${
-                    shown ? "border-primary/40" : ""
-                  }`}
-                >
-                  <div className="text-sm min-w-0">
-                    <span className="font-semibold">{r.model}</span>
-                    <span className="text-ink-3">
-                      {" "}
-                      · {r.repeats} repeats · {r.created_at}
-                    </span>
-                    {r.error && (
-                      <span className="text-danger"> · {r.error}</span>
-                    )}
-                    {active && progress && (
-                      <ProgressBar
-                        completed={progress.completed}
-                        total={progress.total}
-                      />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-4 shrink-0">
-                    <StatusBadge status={r.status} />
-                    {r.status === "complete" &&
-                      (shown ? (
-                        <span className="text-xs font-semibold uppercase tracking-wide text-primary">
-                          shown above
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedRunId(r.id);
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          }}
-                          className="text-sm font-semibold text-primary hover:opacity-80"
-                        >
-                          View results ↑
-                        </button>
-                      ))}
-                    {!active && (
-                      <button
-                        type="button"
-                        aria-label="delete run"
-                        onClick={async () => {
-                          if (!confirm("Delete this run and its data?")) return;
-                          await fetch(`/api/runs/${r.id}`, {
-                            method: "DELETE",
-                          });
-                          refresh();
-                        }}
-                        className="text-ink-3 hover:text-danger text-lg leading-none"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+
 
       {openModal === "run" && (
         <Modal title="Run the battery" onClose={() => setOpenModal(null)}>
@@ -559,6 +474,79 @@ function ProjectDashboard() {
               />
             </div>
           </div>
+        </Modal>
+      )}
+
+      {openModal === "history" && (
+        <Modal title="Run history" onClose={() => setOpenModal(null)}>
+
+          <ul className="grid gap-2">
+            {runs.map((r) => {
+              const active = r.status === "pending" || r.status === "running";
+              const shown = shownRun?.id === r.id;
+              return (
+                <li
+                  key={r.id}
+                  className={`card flex items-center justify-between gap-4 px-5 py-3.5 ${
+                    shown ? "border-primary/40" : ""
+                  }`}
+                >
+                  <div className="text-sm min-w-0">
+                    <span className="font-semibold">{r.model}</span>
+                    <span className="text-ink-3">
+                      {" "}
+                      · {r.repeats} repeats · {r.created_at}
+                    </span>
+                    {r.error && (
+                      <span className="text-danger"> · {r.error}</span>
+                    )}
+                    {active && progress && (
+                      <ProgressBar
+                        completed={progress.completed}
+                        total={progress.total}
+                      />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <StatusBadge status={r.status} />
+                    {r.status === "complete" &&
+                      (shown ? (
+                        <span className="text-xs font-semibold uppercase tracking-wide text-primary">
+                          shown above
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRunId(r.id);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }}
+                          className="text-sm font-semibold text-primary hover:opacity-80"
+                        >
+                          View results ↑
+                        </button>
+                      ))}
+                    {!active && (
+                      <button
+                        type="button"
+                        aria-label="delete run"
+                        onClick={async () => {
+                          if (!confirm("Delete this run and its data?")) return;
+                          await fetch(`/api/runs/${r.id}`, {
+                            method: "DELETE",
+                          });
+                          refresh();
+                        }}
+                        className="text-ink-3 hover:text-danger text-lg leading-none"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </Modal>
       )}
 
@@ -1040,6 +1028,86 @@ function StatusBadge({ status }: { status: Run["status"] }) {
       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${styles[status]}`}
     >
       {status}
+    </span>
+  );
+}
+
+/** Create a public, expiring, read-only link to this dashboard. */
+function ShareButton({ projectId }: { projectId: string }) {
+  const [open, setOpen] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const create = async (ttl: "48h" | "7d") => {
+    setBusy(true);
+    const res = await fetch(`/api/projects/${projectId}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl }),
+    });
+    setBusy(false);
+    if (!res.ok) return;
+    const d = await res.json();
+    setLink(`${window.location.origin}${d.path}`);
+  };
+  return (
+    <span className="relative inline-block">
+      <button type="button"
+        onClick={() => {
+          setOpen((o) => !o);
+          setLink(null);
+          setCopied(false);
+        }}
+        className="text-sm font-semibold text-primary hover:opacity-80">
+        Share
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <span className="absolute right-0 top-full z-40 mt-1 block w-72 rounded-xl border border-line bg-surface p-4 shadow-lg">
+            {!link ? (
+              <>
+                <span className="block text-sm font-semibold mb-1">
+                  Share this dashboard
+                </span>
+                <span className="block text-[12px] text-ink-3 mb-3">
+                  Anyone with the link can view results — running, editing,
+                  and deleting stay disabled. The link expires on its own.
+                </span>
+                <span className="flex gap-2">
+                  <button type="button" disabled={busy}
+                    onClick={() => create("48h")}
+                    className="btn-primary flex-1 text-sm disabled:opacity-50">
+                    48 hours
+                  </button>
+                  <button type="button" disabled={busy}
+                    onClick={() => create("7d")}
+                    className="btn-primary flex-1 text-sm disabled:opacity-50">
+                    7 days
+                  </button>
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="block text-sm font-semibold mb-2">
+                  Link ready
+                </span>
+                <input readOnly value={link}
+                  onFocus={(e) => e.target.select()}
+                  className="input w-full text-[12px] mb-2" />
+                <button type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(link);
+                    setCopied(true);
+                  }}
+                  className="btn-primary w-full text-sm">
+                  {copied ? "Copied" : "Copy link"}
+                </button>
+              </>
+            )}
+          </span>
+        </>
+      )}
     </span>
   );
 }

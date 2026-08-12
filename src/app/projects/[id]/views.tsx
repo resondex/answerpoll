@@ -14,7 +14,7 @@ export interface ViewProps {
   insights: InsightsBundle | null;
   brandSet: "all" | "competitors" | "discovered";
   /** Jump to the Workbench, opened on a specific cut. */
-  openWorkbench: (tab: WorkbenchTab) => void;
+  openWorkbench: (tab: string) => void;
 }
 
 export type WorkbenchTab =
@@ -136,6 +136,10 @@ export function BoardroomView({
             : "."}
         </p>
         <Note sentences={notesFor(insights, "scorecard").slice(0, 1)} />
+        <button type="button" onClick={() => openWorkbench("visibility")}
+          className="mt-1 w-fit text-[13px] font-semibold text-primary hover:opacity-80">
+          Verify in Workbench ↗
+        </button>
       </section>
 
       <section className="card p-8">
@@ -175,7 +179,11 @@ export function BoardroomView({
         </div>
         <p className="text-[13px] text-ink-3 text-center mt-5">
           Named → shortlisted → chosen. The drop between stages says what kind
-          of problem you have.
+          of problem you have.{" "}
+          <button type="button" onClick={() => openWorkbench("choice")}
+            className="font-semibold text-primary hover:opacity-80">
+            Verify ↗
+          </button>
         </p>
       </section>
 
@@ -191,6 +199,10 @@ export function BoardroomView({
               <p className="text-[13px] text-ink-3 line-clamp-4" title={d.play}>
                 {d.play}
               </p>
+              <button type="button" onClick={() => openWorkbench("why")}
+                className="w-fit text-[12px] font-semibold text-primary hover:opacity-80">
+                Verify ↗
+              </button>
             </div>
           ))}
         </section>
@@ -235,7 +247,7 @@ export function QuestionsView({
   }: {
     n: number;
     q: string;
-    tab: WorkbenchTab;
+    tab: string;
     children: React.ReactNode;
   }) => (
     <section className="card p-6">
@@ -258,14 +270,14 @@ export function QuestionsView({
 
   return (
     <div className="grid gap-4">
-      <Q n={1} q="Do the AIs know you?" tab="overview">
+      <Q n={1} q="Do the AIs know you?" tab="visibility">
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {pct(target.mentionRate)}
           </span>
           <span className="text-[13px] text-ink-3">
             of {metrics.unbrandedResponses} unbranded answers name{" "}
-            {project.brand} · CI {pct(target.ciLow)}–{pct(target.ciHigh)} ·
+            {project.brand} ·
             average position{" "}
             {target.avgRank ? `#${target.avgRank.toFixed(1)}` : "—"}
           </span>
@@ -273,7 +285,7 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "scorecard").slice(0, 2)} />
       </Q>
 
-      <Q n={2} q="Do they choose you?" tab="modes">
+      <Q n={2} q="Do they choose you?" tab="choice">
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {metrics.firstPick ? pct(metrics.firstPick.rate) : "—"}
@@ -288,7 +300,7 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "modes")} />
       </Q>
 
-      <Q n={3} q="Who wins instead, and why?" tab="arguments">
+      <Q n={3} q="Who wins instead, and why?" tab="why">
         {metrics.topPicks ? (
           <div className="grid gap-2">
             {[...(you ? [you] : []), ...rivals]
@@ -348,7 +360,7 @@ export function QuestionsView({
         )}
       </Q>
 
-      <Q n={5} q="What should you do?" tab="overview">
+      <Q n={5} q="What should you do?" tab="why">
         {insights && insights.plays.length > 0 ? (
           <div className="grid gap-2.5">
             {insights.plays.map((p, i) => (
