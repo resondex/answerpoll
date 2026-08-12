@@ -52,6 +52,8 @@ const LEGACY: Record<string, WbView> = {
   risks: "risk",
 };
 
+export type WbPreset = Partial<WbState>;
+
 interface WbState {
   brandMode: "solo" | "comparative";
   soloBrand: string;
@@ -95,6 +97,7 @@ export default function Workbench({
   view: rawView,
   setView,
   refreshToken,
+  preset,
 }: {
   runId: string;
   pooled: RunMetrics;
@@ -103,6 +106,8 @@ export default function Workbench({
   view: string;
   setView: (v: string) => void;
   refreshToken: number;
+  /** Citation deep-link: applies this exact state when nonce changes. */
+  preset?: { nonce: number; state: WbPreset } | null;
 }) {
   const view: WbView = (LEGACY[rawView] ?? rawView) as WbView;
   const storageKey = `answerpoll_wb_${project.id}`;
@@ -138,6 +143,10 @@ export default function Workbench({
   useEffect(() => {
     if (hydrated) window.localStorage.setItem(storageKey, JSON.stringify(st));
   }, [st, hydrated, storageKey]);
+  useEffect(() => {
+    if (preset) setSt((prev) => ({ ...prev, ...preset.state }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset?.nonce]);
 
   const runEngines = useMemo(
     () => (pooled.engines ?? []).map((e) => ({ id: e.model, mode: e.mode })),

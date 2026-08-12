@@ -8,7 +8,7 @@ import {
   QuestionsView,
   type WorkbenchTab,
 } from "./views";
-import Workbench from "./workbench";
+import Workbench, { type WbPreset } from "./workbench";
 
 const pct = (x: number) =>
   x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
@@ -57,8 +57,13 @@ export default function RunResults({
     setView(v);
     window.localStorage.setItem("answerpoll_view", v);
   };
-  const openWorkbench = (tab: string) => {
+  const [wbPreset, setWbPreset] = useState<{
+    nonce: number;
+    state: WbPreset;
+  } | null>(null);
+  const openWorkbench = (tab: string, preset?: WbPreset) => {
     setWorkbenchTab(tab);
+    if (preset) setWbPreset({ nonce: Date.now(), state: preset });
     switchView("workbench");
   };
 
@@ -123,6 +128,40 @@ export default function RunResults({
   }
   const maxRate = Math.max(...leaderboard.map((b) => b.mentionRate), 0.01);
   const targetPos = setBrands.findIndex((b) => b.isTarget) + 1;
+  // Citation deep-links: the exact Workbench state that shows each
+  // section's figures — client solo by default, split where the section
+  // is about a split, comparative where it's about the field.
+  const cite = (key: string): [string, WbPreset] => {
+    const solo: WbPreset = {
+      brandMode: "solo",
+      soloBrand: project?.brand ?? "",
+      grain: "brands",
+      split: "none",
+      engines: [],
+    };
+    switch (key) {
+      case "engines":
+        return ["visibility", { ...solo, split: "engine" }];
+      case "modes":
+        return ["visibility", { ...solo, split: "mode" }];
+      case "top_picks":
+        return ["choice", { ...solo, brandMode: "comparative", compBrands: [] }];
+      case "arguments":
+        return ["why", solo];
+      case "leaderboard":
+        return ["visibility", { ...solo, brandMode: "comparative", compBrands: [], measure: "named" }];
+      case "parents":
+        return ["visibility", { ...solo, grain: "parents" }];
+      case "prompts":
+        return ["battleground", solo];
+      case "negatives":
+        return ["risk", solo];
+      case "sources":
+        return ["sources", { ...solo, split: "none" }];
+      default:
+        return ["visibility", solo];
+    }
+  };
   const notesFor = (key: string) =>
     insights?.sections.find((sec) => sec.key === key)?.insights ?? [];
 
@@ -206,6 +245,7 @@ export default function RunResults({
           view={workbenchTab}
           setView={setWorkbenchTab}
           refreshToken={refreshToken}
+          preset={wbPreset}
         />
       )}
       {view === "questions" && (
@@ -238,7 +278,7 @@ export default function RunResults({
                 <span>
                   {t}
                   <button type="button"
-                    onClick={() => openWorkbench("visibility")}
+                    onClick={() => openWorkbench(...cite("scorecard"))}
                     title="See this data in the Workbench"
                     className="ml-1.5 font-semibold text-primary hover:opacity-80">
                     ↗
@@ -322,7 +362,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">By engine</h2>
           <InsightNote sentences={notesFor("engines")}
-            onVerify={() => openWorkbench("visibility")} />
+            onVerify={() => openWorkbench(...cite("engines"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery answered by each assistant. Answers come from the
             engine; coding comes from one fixed coder, so these differences are
@@ -388,7 +428,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">Instinct vs search-enabled</h2>
           <InsightNote sentences={notesFor("modes")}
-            onVerify={() => openWorkbench("visibility")} />
+            onVerify={() => openWorkbench(...cite("modes"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery, two instruments: instinct engines answer from
             trained knowledge alone; search-enabled engines may retrieve like
@@ -455,7 +495,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">Who wins instead</h2>
           <InsightNote sentences={notesFor("top_picks")}
-            onVerify={() => openWorkbench("choice")} />
+            onVerify={() => openWorkbench(...cite("top_picks"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             The brand each answer actually crowned - over the{" "}
             {metrics.outcomes?.pick ?? 0} answers that committed to a pick
@@ -506,7 +546,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">The arguments that decide it</h2>
           <InsightNote sentences={notesFor("arguments")}
-            onVerify={() => openWorkbench("why")} />
+            onVerify={() => openWorkbench(...cite("arguments"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             Which arguments travel with your wins - share of answers using each
             argument, in your first-pick wins vs overall. Positive lift =
@@ -559,7 +599,7 @@ export default function RunResults({
       <section className="card p-6">
         <h2 className="section-label mb-1">Brand leaderboard</h2>
           <InsightNote sentences={notesFor("leaderboard")}
-            onVerify={() => openWorkbench("visibility")} />
+            onVerify={() => openWorkbench(...cite("leaderboard"))} />
         <p className="text-[13px] text-ink-3 mb-5">
           Mention rate across unbranded answers — named competitors and brands
           the model volunteered on its own.
@@ -614,7 +654,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">By parent company</h2>
           <InsightNote sentences={notesFor("parents")}
-            onVerify={() => openWorkbench("visibility")} />
+            onVerify={() => openWorkbench(...cite("parents"))} />
           <p className="text-[13px] text-ink-3 mb-5">
             Combined footprint at parent grain — every independent brand is
             its own parent company. An answer naming any of a parent&apos;s
@@ -797,7 +837,7 @@ export default function RunResults({
       <section className="card p-6">
         <h2 className="section-label mb-4">Where you show up — by prompt</h2>
           <InsightNote sentences={notesFor("prompts")}
-            onVerify={() => openWorkbench("battleground")} />
+            onVerify={() => openWorkbench(...cite("prompts"))} />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -877,7 +917,7 @@ export default function RunResults({
             Where grounded answers get their facts
           </h2>
           <InsightNote sentences={notesFor("sources")}
-            onVerify={() => openWorkbench("sources")} />
+            onVerify={() => openWorkbench(...cite("sources"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             Domains cited by the {metrics.sources.citedAnswers} answers from
             citation-grounded engines — each domain counted once per answer.
@@ -923,7 +963,7 @@ export default function RunResults({
         <section className="card p-6">
           <h2 className="section-label mb-1">Where the answers push back</h2>
           <InsightNote sentences={notesFor("negatives")}
-            onVerify={() => openWorkbench("risk")} />
+            onVerify={() => openWorkbench(...cite("negatives"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             {metrics.negatives.length} answer
             {metrics.negatives.length === 1 ? "" : "s"} framed {project.brand}{" "}

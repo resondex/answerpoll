@@ -14,7 +14,7 @@ export interface ViewProps {
   insights: InsightsBundle | null;
   brandSet: "all" | "competitors" | "discovered";
   /** Jump to the Workbench, opened on a specific cut. */
-  openWorkbench: (tab: string) => void;
+  openWorkbench: (tab: string, preset?: Record<string, unknown>) => void;
 }
 
 export type WorkbenchTab =
@@ -136,7 +136,7 @@ export function BoardroomView({
             : "."}
         </p>
         <Note sentences={notesFor(insights, "scorecard").slice(0, 1)} />
-        <button type="button" onClick={() => openWorkbench("visibility")}
+        <button type="button" onClick={() => openWorkbench("visibility", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
           className="mt-1 w-fit text-[13px] font-semibold text-primary hover:opacity-80">
           Verify in Workbench ↗
         </button>
@@ -180,7 +180,7 @@ export function BoardroomView({
         <p className="text-[13px] text-ink-3 text-center mt-5">
           Named → shortlisted → chosen. The drop between stages says what kind
           of problem you have.{" "}
-          <button type="button" onClick={() => openWorkbench("choice")}
+          <button type="button" onClick={() => openWorkbench("choice", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
             className="font-semibold text-primary hover:opacity-80">
             Verify ↗
           </button>
@@ -199,7 +199,7 @@ export function BoardroomView({
               <p className="text-[13px] text-ink-3 line-clamp-4" title={d.play}>
                 {d.play}
               </p>
-              <button type="button" onClick={() => openWorkbench("why")}
+              <button type="button" onClick={() => openWorkbench("why", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
                 className="w-fit text-[12px] font-semibold text-primary hover:opacity-80">
                 Verify ↗
               </button>
@@ -239,15 +239,24 @@ export function QuestionsView({
     ? [...metrics.reasonLift].sort((a, b) => b.lift - a.lift)
     : [];
 
+  const soloPreset = {
+    brandMode: "solo",
+    soloBrand: project.brand,
+    grain: "brands",
+    split: "none",
+    engines: [],
+  };
   const Q = ({
     n,
     q,
     tab,
+    preset,
     children,
   }: {
     n: number;
     q: string;
     tab: string;
+    preset?: Record<string, unknown>;
     children: React.ReactNode;
   }) => (
     <section className="card p-6">
@@ -257,7 +266,7 @@ export function QuestionsView({
           <h2 className="text-lg font-semibold leading-snug mt-1">{q}</h2>
           <button
             type="button"
-            onClick={() => openWorkbench(tab)}
+            onClick={() => openWorkbench(tab, preset ?? soloPreset)}
             className="mt-2 text-[13px] font-medium text-primary hover:opacity-80"
           >
             Go deeper →
@@ -285,7 +294,7 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "scorecard").slice(0, 2)} />
       </Q>
 
-      <Q n={2} q="Do they choose you?" tab="choice">
+      <Q n={2} q="Do they choose you?" tab="choice" preset={{ ...soloPreset, split: "mode" }}>
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {metrics.firstPick ? pct(metrics.firstPick.rate) : "—"}
@@ -300,7 +309,7 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "modes")} />
       </Q>
 
-      <Q n={3} q="Who wins instead, and why?" tab="why">
+      <Q n={3} q="Who wins instead, and why?" tab="why" preset={soloPreset}>
         {metrics.topPicks ? (
           <div className="grid gap-2">
             {[...(you ? [you] : []), ...rivals]
