@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 
-const pct = (x: number) => `${Math.round(x * 100)}%`;
+/** Percent for display. A non-zero value that rounds to 0 reads "<1%" —
+ * "0%" is reserved for a true zero, so absence and rarity never look alike. */
+const pct = (x: number) => {
+  if (x > 0 && x < 0.005) return "<1%";
+  return `${Math.round(x * 100)}%`;
+};
 
 /** Series colors: the client is always the primary blue; rivals take the
  * fixed order after it — color follows the entity, never its rank. */
@@ -382,6 +387,56 @@ function downloadCsv(
   URL.revokeObjectURL(a.href);
 }
 
+async function downloadXlsx(
+  sheet: string,
+  header: string[],
+  rows: (string | number | null)[][]
+) {
+  const res = await fetch("/api/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheet, header, rows }),
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${sheet}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** Every table's download control: the same rows, either format. */
+function Download({
+  name,
+  header,
+  rows,
+}: {
+  name: string;
+  header: string[];
+  rows: () => (string | number | null)[][];
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex justify-end gap-3">
+      <button type="button"
+        onClick={() => downloadCsv(`${name}.csv`, header, rows())}
+        className="text-[12px] font-medium text-primary hover:opacity-80">
+        ↓ csv
+      </button>
+      <button type="button" disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await downloadXlsx(name, header, rows());
+          setBusy(false);
+        }}
+        className="text-[12px] font-medium text-primary hover:opacity-80 disabled:opacity-50">
+        {busy ? "…" : "↓ excel"}
+      </button>
+    </div>
+  );
+}
+
 /** Instant tooltip. Rendered position:fixed so it escapes overflow-x
  * scroll containers (tables) instead of being clipped at their edge. */
 function Tip({ tip, children }: { tip: string; children: React.ReactNode }) {
@@ -415,6 +470,22 @@ function Tip({ tip, children }: { tip: string; children: React.ReactNode }) {
         </span>
       )}
     </span>
+  );
+}
+
+/** Header text with the sort arrow bound to its final word, so a wrapping
+ * label can never drop the arrow onto a line of its own. */
+function HeadLabel({ label, arrow }: { label: string; arrow: string }) {
+  const words = label.split(" ");
+  const last = words.pop() ?? "";
+  return (
+    <>
+      {words.length > 0 && `${words.join(" ")} `}
+      <span className="whitespace-nowrap">
+        {last}
+        <span className="inline-block w-2.5 text-left">{arrow}</span>
+      </span>
+    </>
   );
 }
 
@@ -461,21 +532,11 @@ function SortTable<T>({
   });
   return (
     <div className="mt-3 grid gap-1">
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() =>
-            downloadCsv(
-              filename,
-              cols.map((c) => c.label),
-              rows.map((r) => cols.map((c) => c.val(r)))
-            )
-          }
-          className="text-[12px] font-medium text-primary hover:opacity-80"
-        >
-          ↓ csv
-        </button>
-      </div>
+      <Download
+        name={filename.replace(/\.csv$/, "")}
+        header={cols.map((c) => c.label)}
+        rows={() => rows.map((r) => cols.map((c) => c.val(r)))}
+      />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -492,12 +553,12 @@ function SortTable<T>({
                   }
                   className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-center" : ""}`}
                 >
-                  {c.label}
                   {/* The arrow always occupies its slot, so sorting a
                       different column never re-measures the header. */}
-                  <span className="inline-block w-2.5 text-left">
-                    {sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
-                  </span>
+                  <HeadLabel
+                    label={c.label}
+                    arrow={sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
+                  />
                 </th>
               ))}
             </tr>
@@ -978,29 +1039,23 @@ function Why({ series }: { series: Series }) {
         ))}
       </div>
       <div className="mt-3 grid gap-1">
-        <div className="flex justify-end">
-          <button type="button"
-            onClick={() =>
-              downloadCsv(
-                "arguments.csv",
-                ["argument", ...series.flatMap((s) => [
-                  `${s.name} lift`, `${s.name} in wins`, `${s.name} overall`, `${s.name} where missing`,
-                ])],
-                first.map((r0) => [
-                  r0.code,
-                  ...series.flatMap((s) => {
-                    const r = liftOf(s, r0.code);
-                    return r
-                      ? [Math.round(r.lift * 100), Math.round(r.shareWins * 100), Math.round(r.shareAll * 100), Math.round(r.shareAbsent * 100)]
-                      : [null, null, null, null];
-                  }),
-                ])
-              )
-            }
-            className="text-[12px] font-medium text-primary hover:opacity-80">
-            ↓ csv
-          </button>
-        </div>
+        <Download
+          name="arguments"
+          header={["argument", ...series.flatMap((s) => [
+            `${s.name} lift`, `${s.name} in wins`, `${s.name} overall`, `${s.name} where missing`,
+          ])]}
+          rows={() =>
+            first.map((r0) => [
+              r0.code,
+              ...series.flatMap((s) => {
+                const r = liftOf(s, r0.code);
+                return r
+                  ? [Math.round(r.lift * 100), Math.round(r.shareWins * 100), Math.round(r.shareAll * 100), Math.round(r.shareAbsent * 100)]
+                  : [null, null, null, null];
+              }),
+            ])
+          }
+        />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -1017,10 +1072,14 @@ function Why({ series }: { series: Series }) {
                           : { name: s.name, dir: -1 }
                       )
                     }>
-                    {s.name}
-                    <span className="inline-block w-2.5 text-left">
-                      {sortBy?.name === s.name ? (sortBy.dir === -1 ? "↓" : "↑") : ""}
-                    </span>
+                    <HeadLabel
+                      label={s.name}
+                      arrow={
+                        sortBy?.name === s.name
+                          ? sortBy.dir === -1 ? "↓" : "↑"
+                          : ""
+                      }
+                    />
                   </th>
                 ))}
               </tr>
@@ -1120,30 +1179,26 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           </button>
         ))}
       </div>
-      <div className="mt-3 flex justify-end">
-        <button type="button"
-          onClick={() =>
-            downloadCsv(
-              "battleground.csv",
-              ["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"],
-              base.flatMap((g0) =>
-                series.map((s) => {
-                  const g = gridFor(s, g0.promptId);
-                  return [
-                    g0.text, g0.theme, s.name,
-                    g?.answers ?? null, g?.targetNamed ?? null,
-                    g?.decided ?? null, g?.targetPicks ?? null,
-                    g?.badge ?? null, g?.modalPick ?? null,
-                    g?.modalShare !== null && g?.modalShare !== undefined
-                      ? Math.round(g.modalShare * 100) : null,
-                  ];
-                })
-              )
+      <div className="mt-3">
+        <Download
+          name="battleground"
+          header={["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"]}
+          rows={() =>
+            base.flatMap((g0) =>
+              series.map((s) => {
+                const g = gridFor(s, g0.promptId);
+                return [
+                  g0.text, g0.theme, s.name,
+                  g?.answers ?? null, g?.targetNamed ?? null,
+                  g?.decided ?? null, g?.targetPicks ?? null,
+                  g?.badge ?? null, g?.modalPick ?? null,
+                  g?.modalShare !== null && g?.modalShare !== undefined
+                    ? Math.round(g.modalShare * 100) : null,
+                ];
+              })
             )
           }
-          className="text-[12px] font-medium text-primary hover:opacity-80">
-          ↓ csv
-        </button>
+        />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

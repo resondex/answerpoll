@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
 
-const pct = (x: number) => `${Math.round(x * 100)}%`;
+const pct = (x: number) =>
+  x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
 
 /** Everything a view needs — fetched once by the RunResults shell. */
 export interface ViewProps {

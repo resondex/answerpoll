@@ -10,7 +10,8 @@ import {
 } from "./views";
 import Workbench from "./workbench";
 
-const pct = (x: number) => `${Math.round(x * 100)}%`;
+const pct = (x: number) =>
+  x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
 
 /**
  * Full results block for one run — the analytical core of the tracker
