@@ -13,7 +13,9 @@ export interface CompletionProvider {
   /** Full per-answer coding: mentions, top pick, outcome, reasons, focus quote. */
   extractCoding(
     responseText: string,
-    ctx: ExtractionContext
+    ctx: ExtractionContext,
+    /** Override the coder for evaluation; production uses EXTRACT_MODEL. */
+    model?: string
   ): Promise<ExtractionResult>;
 }
 
@@ -328,6 +330,130 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
   throw lastErr;
 }
 
+/** One instruction set, whichever vendor codes — so a coder swap changes
+ * the model and nothing else. */
+function codingInstructions(ctx: ExtractionContext): string {
+  return (
+    "You are coding one AI assistant answer for a brand study. Be " +
+    "literal: code only what the text says.\n\n" +
+    "mentions — every company, brand, product, or service named, in " +
+    "order of first appearance, including ones named only as " +
+    "integrations or adjacent tools. Completeness matters; relevance " +
+    "is decided later. ONLY proper-noun names: a generic descriptor " +
+    "('a self-hosted server', 'open-source tools', 'spreadsheets') is " +
+    "never a mention. A phrase naming several brands ('Trello / " +
+    "Asana') is one mention PER brand. A feature fragment without its " +
+    "brand ('Issue Boards') is attributed to the full product when " +
+    "the answer makes it clear, otherwise omitted.\n" +
+    "framing per mention — 'recommended' only when the answer " +
+    "endorses it for the reader's situation (a pick, a 'best for " +
+    "you', a clear favourable ranking). 'negative' when criticized, " +
+    "warned about, or advised against — including a caveat like " +
+    "'powerful but too heavy for a small team'. 'mentioned' when it " +
+    "is merely listed, compared factually, or named as an " +
+    "integration. Being included in a list is NOT an endorsement.\n" +
+    "outcome — 'pick' ONLY when the answer commits to ONE option " +
+    "overall, for everyone. 'conditional' when it recommends " +
+    "different options for different situations or says the choice " +
+    "depends ('X for enterprises, Y for startups', 'there is no " +
+    "single best'), even if it names a favourite in passing. " +
+    "'no_pick' when it explains options without recommending. " +
+    "'clarification' when it mainly asks the user a question.\n" +
+    "top_pick_brand — the ONE brand crowned as THE choice for " +
+    "everyone. MUST be null unless outcome is 'pick'. A conditional " +
+    "answer has no top pick, however prominent a brand is.\n" +
+    "reasons — which allowed argument codes the answer uses.\n" +
+    "clarification_requested — does it ask the user anything?\n" +
+    "gives_recommendation — does it recommend at least one option?\n" +
+    "includes_prices — true ONLY if an actual figure appears (a " +
+    "number with a currency or a per-seat/per-month rate). 'Pricing " +
+    "varies' or 'it is expensive' is false.\n" +
+    "includes_specs — true ONLY if concrete numeric limits or " +
+    "quantities appear (storage, seats, API limits, versions). " +
+    "Feature names without numbers are false.\n" +
+    "total_recommendations — how many distinct options it actually " +
+    "recommends (0 when it recommends none).\n" +
+    `Known brands (extract others too): ${ctx.knownBrands.join(", ")}.`
+  );
+}
+
+/** Claude as the extraction coder: a forced tool call is Anthropic's
+ * equivalent of structured outputs. */
+async function codeWithClaude(
+  responseText: string,
+  ctx: ExtractionContext,
+  model: string
+): Promise<ExtractionResult> {
+  const a = await anthropicClient();
+  const schema = extractSchema(ctx.reasonCodes);
+  const res = await a.messages.create({
+    model,
+    max_tokens: 2000,
+    system: codingInstructions(ctx),
+    tools: [
+      {
+        name: "emit_coding",
+        description: "Return the coding for this answer.",
+        input_schema: schema as unknown as { type: "object" },
+      },
+    ],
+    tool_choice: { type: "tool", name: "emit_coding" },
+    messages: [{ role: "user", content: responseText }],
+  });
+  const block = res.content.find((b) => b.type === "tool_use");
+  const parsed = (block && "input" in block ? block.input : {}) as ExtractionResult;
+  const pick =
+    parsed.top_pick_brand &&
+    !/^(null|none|n\/a|no pick|no_pick)$/i.test(parsed.top_pick_brand.trim())
+      ? parsed.top_pick_brand
+      : null;
+  // The focus read stays a separate, later call here too.
+  let focusQuote: string | null = null;
+  let focusInterpretation: string | null = null;
+  try {
+    const f = await a.messages.create({
+      model,
+      max_tokens: 400,
+      system:
+        `Read this AI assistant answer and report how it treats "${ctx.targetBrand}".`,
+      tools: [
+        {
+          name: "emit_focus",
+          description: "Return the focus read.",
+          input_schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              focus_quote: { type: ["string", "null"] },
+              focus_interpretation: { type: ["string", "null"] },
+            },
+            required: ["focus_quote", "focus_interpretation"],
+          } as unknown as { type: "object" },
+        },
+      ],
+      tool_choice: { type: "tool", name: "emit_focus" },
+      messages: [{ role: "user", content: responseText }],
+    });
+    const fb = f.content.find((b) => b.type === "tool_use");
+    const fp = (fb && "input" in fb ? fb.input : {}) as {
+      focus_quote?: string | null;
+      focus_interpretation?: string | null;
+    };
+    focusQuote = fp.focus_quote ?? null;
+    focusInterpretation = fp.focus_interpretation ?? null;
+  } catch {
+    // Quotes are optional; the coding is not.
+  }
+  return {
+    ...parsed,
+    top_pick_brand: parsed.outcome === "pick" ? pick : null,
+    mentions: dedupeMentions(parsed.mentions ?? []),
+    reasons: [...new Set(parsed.reasons ?? [])],
+    focus_quote: focusQuote,
+    focus_interpretation: focusInterpretation,
+  };
+}
+
 const openaiProvider: CompletionProvider = {
   async complete(prompt, model) {
     return withRetry(async () => {
@@ -339,10 +465,14 @@ const openaiProvider: CompletionProvider = {
     });
   },
 
-  async extractCoding(responseText, ctx) {
+  async extractCoding(responseText, ctx, model) {
+    const coder = model ?? EXTRACT_MODEL;
+    if (coder.startsWith("claude")) {
+      return codeWithClaude(responseText, ctx, coder);
+    }
     return withRetry(async () => {
       const res = await client().chat.completions.create({
-        model: EXTRACT_MODEL,
+        model: coder,
         messages: [
           {
             role: "system",
@@ -350,46 +480,7 @@ const openaiProvider: CompletionProvider = {
               // Deliberately blind: naming the study's focus brand here made
               // the coder crown it — measured at 28% of picks moving when the
               // focus changed. This pass never learns whose study it is.
-              "You are coding one AI assistant answer for a brand study. Be " +
-              "literal: code only what the text says.\n\n" +
-              "mentions — every company, brand, product, or service named, in " +
-              "order of first appearance, including ones named only as " +
-              "integrations or adjacent tools. Completeness matters; relevance " +
-              "is decided later. ONLY proper-noun names: a generic descriptor " +
-              "('a self-hosted server', 'open-source tools', 'spreadsheets') is " +
-              "never a mention. A phrase naming several brands ('Trello / " +
-              "Asana') is one mention PER brand. A feature fragment without its " +
-              "brand ('Issue Boards') is attributed to the full product when " +
-              "the answer makes it clear, otherwise omitted.\n" +
-              "framing per mention — 'recommended' only when the answer " +
-              "endorses it for the reader's situation (a pick, a 'best for " +
-              "you', a clear favourable ranking). 'negative' when criticized, " +
-              "warned about, or advised against — including a caveat like " +
-              "'powerful but too heavy for a small team'. 'mentioned' when it " +
-              "is merely listed, compared factually, or named as an " +
-              "integration. Being included in a list is NOT an endorsement.\n" +
-              "outcome — 'pick' ONLY when the answer commits to ONE option " +
-              "overall, for everyone. 'conditional' when it recommends " +
-              "different options for different situations or says the choice " +
-              "depends ('X for enterprises, Y for startups', 'there is no " +
-              "single best'), even if it names a favourite in passing. " +
-              "'no_pick' when it explains options without recommending. " +
-              "'clarification' when it mainly asks the user a question.\n" +
-              "top_pick_brand — the ONE brand crowned as THE choice for " +
-              "everyone. MUST be null unless outcome is 'pick'. A conditional " +
-              "answer has no top pick, however prominent a brand is.\n" +
-              "reasons — which allowed argument codes the answer uses.\n" +
-              "clarification_requested — does it ask the user anything?\n" +
-              "gives_recommendation — does it recommend at least one option?\n" +
-              "includes_prices — true ONLY if an actual figure appears (a " +
-              "number with a currency or a per-seat/per-month rate). 'Pricing " +
-              "varies' or 'it is expensive' is false.\n" +
-              "includes_specs — true ONLY if concrete numeric limits or " +
-              "quantities appear (storage, seats, API limits, versions). " +
-              "Feature names without numbers are false.\n" +
-              "total_recommendations — how many distinct options it actually " +
-              "recommends (0 when it recommends none).\n" +
-              `Known brands (extract others too): ${ctx.knownBrands.join(", ")}.`,
+codingInstructions(ctx),
           },
           { role: "user", content: responseText },
         ],
@@ -410,7 +501,7 @@ const openaiProvider: CompletionProvider = {
       let focusInterpretation: string | null = null;
       try {
         const f = await client().chat.completions.create({
-          model: EXTRACT_MODEL,
+          model: coder,
           messages: [
             {
               role: "system",
@@ -466,6 +557,147 @@ const openaiProvider: CompletionProvider = {
     });
   },
 };
+
+/**
+ * Consensus coding: two independent coders, then adjudication where they
+ * disagree.
+ *
+ * No single cheap model codes these answers correctly every time — measured
+ * field accuracy sat in the 70-90% range for both candidates, with different
+ * strengths (Claude reads outcome and mentions better; GPT reads the crown
+ * and numeric flags better). Running both and escalating disagreements to a
+ * stronger judge turns two imperfect coders into a pipeline whose residual
+ * error is both smaller and *visible*: every adjudication is recorded, so
+ * the study can report how often its coders disagreed instead of pretending
+ * they never do.
+ */
+export const CODER_A = process.env.EXTRACT_MODEL ?? "gpt-4o-mini";
+export const CODER_B = process.env.EXTRACT_MODEL_B ?? "claude-haiku-4-5-20251001";
+const ADJUDICATOR = process.env.EXTRACT_JUDGE ?? "claude-sonnet-5";
+
+export interface ConsensusResult extends ExtractionResult {
+  /** Provenance for the honesty table: who coded, and who settled ties. */
+  coderProvenance: string;
+  /** Judgement fields the two coders disagreed on, before adjudication. */
+  disagreements: string[];
+}
+
+export async function extractCodingConsensus(
+  responseText: string,
+  ctx: ExtractionContext
+): Promise<ConsensusResult> {
+  const provider = getProvider();
+  const [a, b] = await Promise.all([
+    provider.extractCoding(responseText, ctx, CODER_A),
+    provider.extractCoding(responseText, ctx, CODER_B).catch(() => null),
+  ]);
+  if (!b) {
+    return { ...a, coderProvenance: `${CODER_A} (solo)`, disagreements: [] };
+  }
+  const sameBrand = (x: string | null, y: string | null) =>
+    (x ?? "").trim().toLowerCase() === (y ?? "").trim().toLowerCase();
+  const disagreements: string[] = [];
+  if (a.outcome !== b.outcome) disagreements.push("outcome");
+  if (!sameBrand(a.top_pick_brand, b.top_pick_brand)) disagreements.push("top_pick_brand");
+
+  // Union the mentions: a brand either coder saw is a brand the answer named,
+  // and recall was the weaker side of both coders. Framing ties break toward
+  // the stronger reading (negative > recommended > mentioned) only when the
+  // same brand is framed differently — a criticism seen by one coder and
+  // missed by the other is still a criticism.
+  const rank: Record<string, number> = { negative: 3, recommended: 2, mentioned: 1 };
+  const merged = new Map<string, ExtractedMention>();
+  for (const m of [...a.mentions, ...b.mentions]) {
+    const key = m.brand.trim().toLowerCase();
+    const prev = merged.get(key);
+    if (!prev || rank[m.framing] > rank[prev.framing]) merged.set(key, m);
+  }
+
+  let outcome = a.outcome;
+  let topPick = a.top_pick_brand;
+  let provenance = `${CODER_A}+${CODER_B} (agreed)`;
+  if (disagreements.length > 0) {
+    const verdict = await adjudicate(responseText, a, b).catch(() => null);
+    if (verdict) {
+      outcome = verdict.outcome;
+      topPick = verdict.outcome === "pick" ? verdict.top_pick_brand : null;
+      provenance = `${CODER_A}+${CODER_B} → ${ADJUDICATOR}`;
+    } else {
+      // Judge unreachable: keep the more conservative reading rather than
+      // inventing a winner.
+      outcome = a.outcome === "pick" && b.outcome === "pick" ? "pick" : "conditional";
+      topPick = outcome === "pick" ? a.top_pick_brand : null;
+      provenance = `${CODER_A}+${CODER_B} (unresolved)`;
+    }
+  }
+  return {
+    ...a,
+    outcome,
+    top_pick_brand: topPick,
+    mentions: [...merged.values()],
+    // Numeric flags: agree, or take the affirmative only when both saw it.
+    includes_prices: a.includes_prices && b.includes_prices,
+    includes_specs: a.includes_specs && b.includes_specs,
+    total_recommendations: Math.round(
+      (a.total_recommendations + b.total_recommendations) / 2
+    ),
+    reasons: [...new Set([...(a.reasons ?? []), ...(b.reasons ?? [])])],
+    coderProvenance: provenance,
+    disagreements,
+  };
+}
+
+async function adjudicate(
+  responseText: string,
+  a: ExtractionResult,
+  b: ExtractionResult
+): Promise<{ outcome: ExtractionResult["outcome"]; top_pick_brand: string | null }> {
+  const anthropic = await anthropicClient();
+  const res = await anthropic.messages.create({
+    model: ADJUDICATOR,
+    max_tokens: 500,
+    system:
+      "Two coders disagree about one AI answer. Decide from the text alone. " +
+      "outcome is 'pick' ONLY when the answer commits to one option for " +
+      "everyone; 'conditional' when it recommends different options for " +
+      "different situations or says it depends; 'no_pick' when it explains " +
+      "without recommending; 'clarification' when it mainly asks a question. " +
+      "top_pick_brand is null unless outcome is 'pick'.",
+    tools: [
+      {
+        name: "settle",
+        description: "Settle the disagreement.",
+        input_schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            outcome: {
+              type: "string",
+              enum: ["pick", "conditional", "no_pick", "clarification"],
+            },
+            top_pick_brand: { type: ["string", "null"] },
+          },
+          required: ["outcome", "top_pick_brand"],
+        } as unknown as { type: "object" },
+      },
+    ],
+    tool_choice: { type: "tool", name: "settle" },
+    messages: [
+      {
+        role: "user",
+        content:
+          `ANSWER:\n${responseText.slice(0, 8000)}\n\n` +
+          `CODER A said: outcome=${a.outcome}, top_pick=${a.top_pick_brand}\n` +
+          `CODER B said: outcome=${b.outcome}, top_pick=${b.top_pick_brand}`,
+      },
+    ],
+  });
+  const block = res.content.find((x) => x.type === "tool_use");
+  return (block && "input" in block ? block.input : {}) as {
+    outcome: ExtractionResult["outcome"];
+    top_pick_brand: string | null;
+  };
+}
 
 function dedupeMentions(mentions: ExtractedMention[]): ExtractedMention[] {
   const seen = new Set<string>();

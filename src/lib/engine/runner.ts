@@ -1,5 +1,10 @@
 import { store } from "../store";
-import { completeWithEngine, engineAvailable, extractModelId, getProvider } from "./providers";
+import {
+  completeWithEngine,
+  engineAvailable,
+  extractCodingConsensus,
+  getProvider,
+} from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
 import { getDictionarySuggestions } from "./dict_suggest";
@@ -102,7 +107,7 @@ export async function driveRunChunk(
           task.model,
           task.promptText
         );
-        const coding = await provider.extractCoding(text, extractionCtx);
+        const coding = await extractCodingConsensus(text, extractionCtx);
         await store.insertResponse({
           runId,
           promptId: task.promptId,
@@ -110,7 +115,7 @@ export async function driveRunChunk(
           model: task.model,
           finishReason,
           citations,
-          coderModel: extractModelId(),
+          coderModel: coding.coderProvenance,
           searchCount,
           text,
           mentions: coding.mentions,
