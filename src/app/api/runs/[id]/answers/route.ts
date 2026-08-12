@@ -101,6 +101,37 @@ export async function GET(
       );
     });
 
+  // Lens counts: the same predicates the chips offer, over the same
+  // prompt/engine narrowing, so a chip can never promise answers it has not.
+  const narrowed = responses.filter((r) => {
+    const p = promptById.get(r.prompt_id);
+    if (!p || p.theme === "branded") return false;
+    if (promptId && r.prompt_id !== promptId) return false;
+    const model = r.model || run.model;
+    if (engine && model !== engine) return false;
+    if (mode && engineMode(model) !== mode) return false;
+    return true;
+  });
+  const pickOf = (r: (typeof narrowed)[number]) =>
+    r.top_pick_brand ? canon.norm(r.top_pick_brand) : null;
+  const framingOf = (id: string): string => {
+    if (!focusNorm) return "absent";
+    const hit = (byResponse.get(id) ?? []).find(
+      (x) => canon.norm(x.brand) === focusNorm
+    );
+    return hit ? hit.framing : "absent";
+  };
+  const lenses = {
+    all: narrowed.length,
+    lost: narrowed.filter(
+      (r) => r.outcome === "pick" && pickOf(r) !== null && pickOf(r) !== focusNorm
+    ).length,
+    won: narrowed.filter((r) => pickOf(r) === focusNorm).length,
+    criticized: narrowed.filter((r) => framingOf(r.id) === "negative").length,
+    absent: narrowed.filter((r) => framingOf(r.id) === "absent").length,
+    nopick: narrowed.filter((r) => r.outcome !== "pick").length,
+  };
+
   const page = matched.slice(offset, offset + limit).map((r) => {
     const p = promptById.get(r.prompt_id)!;
     return {
@@ -120,6 +151,7 @@ export async function GET(
 
   return NextResponse.json({
     total: matched.length,
+    lenses,
     answers: page,
     prompts: prompts
       .filter((p) => p.theme !== "branded")

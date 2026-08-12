@@ -157,6 +157,11 @@ export default function Workbench({
   useEffect(() => {
     try {
       const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}");
+      // Stored preferences can predate a control's shape — drop anything
+      // that no longer matches rather than restoring a broken view.
+      if (saved.answers && typeof saved.answers.lens !== "string") {
+        delete saved.answers;
+      }
       setSt((prev) => ({ ...prev, ...saved }));
     } catch {}
     setHydrated(true);
@@ -503,8 +508,9 @@ export default function Workbench({
                   runId={runId}
                   filter={st.answers}
                   setFilter={(f) => set({ answers: f })}
-                  brands={topBrands}
-                  clientBrand={project.brand}
+                  subject={
+                    st.brandMode === "solo" ? selected[0] : clientName
+                  }
                 />
               )}
               {view === "style" && <Style pooled={pooled} />}
