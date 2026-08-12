@@ -815,8 +815,8 @@ function SortTable<T>({
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 }>(
     defaultSort ?? { id: cols[1]?.id ?? cols[0].id, dir: -1 }
   );
-  const col = cols.find((c) => c.id === sort.id) ?? cols[0];
-  const sorted = [...rows].sort((a, b) => {
+  const col = cols.find((c) => c.id === sort.id);
+  const sorted = !col ? rows : [...rows].sort((a, b) => {
     const va = col.val(a);
     const vb = col.val(b);
     if (va === null && vb === null) return 0;
@@ -1591,6 +1591,12 @@ function BattlegroundGroup({
         ? [...base].sort((a, b) => ownedScore(b.promptId) - ownedScore(a.promptId))
         : base;
   const themes = sort === "theme" ? [...new Set(base.map((pg) => pg.theme))] : [null];
+  // The data view reads the same ordering the grid does: by contestedness,
+  // by how much the first brand owns, or grouped by topic.
+  const orderedPrompts =
+    sort === "theme"
+      ? [...base].sort((a, b) => a.theme.localeCompare(b.theme))
+      : rows;
   return (
     <div className="grid gap-3">
       <GroupLabel label={g.label} />
@@ -1618,7 +1624,8 @@ function BattlegroundGroup({
       {display === "table" ? (
         <SortTable
           filename={`battleground${g.label ? `_${slugify(g.label)}` : ""}.csv`}
-          defaultSort={{ id: "named", dir: -1 }}
+          // Empty id = keep the chip's ordering until a header is clicked.
+          defaultSort={{ id: "", dir: -1 }}
           cols={[
             { id: "prompt", label: "Prompt",
               val: (r: { pg: NonNullable<RunMetrics["promptGrid"]>[number]; brand: string; color: string }) => r.pg.text,
@@ -1662,8 +1669,8 @@ function BattlegroundGroup({
                 <span className="whitespace-nowrap">{r.pg.badge}</span>
               ) },
           ]}
-          rows={series.flatMap((x) =>
-            base.flatMap((g0) => {
+          rows={orderedPrompts.flatMap((g0) =>
+            series.flatMap((x) => {
               const pg = gridFor(x, g0.promptId);
               return pg ? [{ pg, brand: x.name, color: x.color }] : [];
             })
