@@ -6,10 +6,12 @@ import type {
   Framing,
   MentionRow,
   Project,
+  Prompt,
   PromptBadge,
   PromptStats,
   PromptTheme,
   ResponseRow,
+  Run,
   RunMetrics,
   ThemeStats,
 } from "../types";
@@ -110,27 +112,59 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
   };
 }
 
-export async function computeRunMetrics(
-  runId: string,
-  opts?: {
-    mode?: "instinct" | "search";
-    /** Explicit engine scope: only these engines' answers are in play, and
-     * they become the panel for this slice (a selection may include bonus
-     * engines the project's core panel excludes). */
-    engines?: string[];
-    /** Brand lens: compute every cut with this brand as the focus instead
-     * of the client — the workbook's Focus dropdown, server-side. Quotes
-     * and verified prose stay client-coded and are nulled under a lens. */
-    focus?: string;
-  }
-): Promise<RunMetrics | null> {
+export interface SliceOpts {
+  mode?: "instinct" | "search";
+  /** Explicit engine scope: only these engines' answers are in play, and
+   * they become the panel for this slice (a selection may include bonus
+   * engines the project's core panel excludes). */
+  engines?: string[];
+  /** Brand lens: compute every cut with this brand as the focus instead
+   * of the client — the workbook's Focus dropdown, server-side. Quotes
+   * and verified prose stay client-coded and are nulled under a lens. */
+  focus?: string;
+}
+
+/** Everything a run's metrics derive from — loaded once, computed many. */
+export interface RunData {
+  run: Run;
+  project: Project;
+  responses: ResponseRow[];
+  mentions: MentionRow[];
+  prompts: Prompt[];
+  dictionary: DictionaryEntry[];
+}
+
+export async function loadRunData(runId: string): Promise<RunData | null> {
   const run = await store.getRun(runId);
   if (!run) return null;
-  const [projectMaybe, allResponses, mentions] = await Promise.all([
+  const [projectMaybe, responses, mentions] = await Promise.all([
     store.getProject(run.project_id),
     store.listResponses(runId),
     store.listMentionsForRun(runId),
   ]);
+  const project = projectMaybe!;
+  const [prompts, dictionary] = await Promise.all([
+    store.listPrompts(project.id),
+    store.getDictionary(project.id),
+  ]);
+  return { run, project, responses, mentions, prompts, dictionary };
+}
+
+export async function computeRunMetrics(
+  runId: string,
+  opts?: SliceOpts
+): Promise<RunMetrics | null> {
+  const data = await loadRunData(runId);
+  return data ? computeRunMetricsFromData(data, opts) : null;
+}
+
+/** The pure computation: N slices of one run share a single load. */
+export function computeRunMetricsFromData(
+  data: RunData,
+  opts?: SliceOpts
+): RunMetrics {
+  const { run, project, responses: allResponses, mentions, prompts, dictionary } = data;
+  const runId = run.id;
   // Optional instrument filter: every cut below recomputes over one mode's
   // answers only. Mentions need no prefilter — every downstream loop checks
   // membership in a response-id set derived from `responses`.
@@ -142,11 +176,6 @@ export async function computeRunMetrics(
     if (engineScope && !engineScope.has(model)) return false;
     return true;
   });
-  const project = projectMaybe!;
-  const [prompts, dictionary] = await Promise.all([
-    store.listPrompts(project.id),
-    store.getDictionary(project.id),
-  ]);
   const canon = buildCanonicalizer(dictionary);
   // A lens naming the client is just the home state. "parent:X" makes the
   // parent company the focus: any member brand counts as the target.

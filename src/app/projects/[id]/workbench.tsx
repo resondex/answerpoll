@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 
 /** Percent for display. A non-zero value that rounds to 0 reads "<1%" —
@@ -165,50 +165,114 @@ export default function Workbench({
     return defaultComp;
   }, [st, options, defaultComp, clientName, clientParent, parentNames, view]);
 
-  // ---- slice fetching: one recompute per (mode, grain, name), cached ----
+  // ---- slice fetching: one batched request per change, cached ----
   const [slices, setSlices] = useState<Record<string, RunMetrics>>({});
-  useEffect(() => setSlices({}), [runId, refreshToken]);
-  const engineKey = [...st.engines].sort().join(",");
-  const keyFor = (name: string) => `${engineKey}|${st.grain}|${name}`;
+  const inFlight = useRef<Set<string>>(new Set());
   useEffect(() => {
-    let cancelled = false;
-    for (const name of selected) {
-      const key = keyFor(name);
-      if (slices[key]) continue;
-      // The client with every engine in scope IS the pooled object.
-      if (st.grain === "brands" && name === project.brand && st.engines.length === 0) {
-        setSlices((prev) => ({ ...prev, [key]: pooled }));
-        continue;
-      }
-      const params = new URLSearchParams();
-      if (st.engines.length > 0) params.set("engines", st.engines.join(","));
-      params.set("focus", st.grain === "parents" ? `parent:${name}` : name);
-      fetch(`/api/runs/${runId}/metrics?${params.toString()}`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (!cancelled && d.metrics) {
-            setSlices((prev) => ({ ...prev, [key]: d.metrics }));
-          }
-        })
-        .catch(() => {});
-    }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, engineKey, st.grain, runId, refreshToken, pooled]);
+    setSlices({});
+    inFlight.current.clear();
+  }, [runId, refreshToken]);
+  const scopedEngines = useMemo(
+    () =>
+      st.engines.length > 0 ? st.engines : runEngines.map((e) => e.id),
+    [st.engines, runEngines]
+  );
+  const keyFor = (name: string, engines: string[]) =>
+    `${engines.slice().sort().join(",")}|${st.grain}|${name}`;
+  const focusFor = (name: string) =>
+    st.grain === "parents" ? `parent:${name}` : name;
 
-  const series = selected.map((name, i) => ({
-    name,
-    isClient: name === clientName,
-    // The client always holds slot 1; rivals take the remaining hues in
-    // order and wrap — every row is name-labeled, so color is redundant.
-    color:
-      name === clientName ? SERIES[0] : SERIES[1 + (i % (SERIES.length - 1))],
-    stats: brandStats(slices[keyFor(name)] ?? null),
-  }));
-  const loading = series.some((s) => !s.stats);
-  const solo = st.brandMode === "solo" ? series[0] : null;
+  // Break-out facets: each facet is just a narrower engine scope, so every
+  // view can break out — the facet's slice carries the whole metrics shape.
+  const facetDefs = useMemo(() => {
+    if (view === "style" || st.split === "none") return null;
+    if (st.split === "engine") {
+      return scopedEngines.map((id) => ({ key: id, label: id, engines: [id] }));
+    }
+    const byMode = (m: "instinct" | "search") =>
+      runEngines
+        .filter((e) => e.mode === m && scopedEngines.includes(e.id))
+        .map((e) => e.id);
+    return (
+      [
+        { key: "instinct", label: "Instinct", engines: byMode("instinct") },
+        { key: "search", label: "Search-enabled", engines: byMode("search") },
+      ] as const
+    ).filter((f) => f.engines.length > 0);
+  }, [view, st.split, scopedEngines, runEngines]);
+
+  useEffect(() => {
+    const scopes: string[][] = facetDefs
+      ? facetDefs.map((f) => f.engines)
+      : [st.engines];
+    const missing: { key: string; focus: string; engines?: string[] }[] = [];
+    for (const name of selected) {
+      for (const engines of scopes) {
+        const key = keyFor(name, engines);
+        if (slices[key] || inFlight.current.has(key)) continue;
+        if (
+          st.grain === "brands" &&
+          name === project.brand &&
+          engines.length === 0
+        ) {
+          setSlices((prev) => ({ ...prev, [key]: pooled }));
+          continue;
+        }
+        missing.push({
+          key,
+          focus: focusFor(name),
+          engines: engines.length > 0 ? engines : undefined,
+        });
+      }
+    }
+    if (missing.length === 0) return;
+    for (const m of missing) inFlight.current.add(m.key);
+    fetch(`/api/runs/${runId}/slices`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requests: missing }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        // Slice keys are content-addressed, so merging a late response is
+        // always safe — no cancellation, or in-flight dedupe would deadlock
+        // with the effect re-running as earlier slices land.
+        if (d?.slices) setSlices((prev) => ({ ...prev, ...d.slices }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        for (const m of missing) inFlight.current.delete(m.key);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, facetDefs, st.engines, st.grain, runId, refreshToken, pooled, slices]);
+
+  const colorOf = (name: string) =>
+    name === clientName
+      ? SERIES[0]
+      : SERIES[1 + (selected.indexOf(name) % (SERIES.length - 1))];
+  const seriesFor = (engines: string[]): Series =>
+    selected.map((name) => ({
+      name,
+      isClient: name === clientName,
+      color: colorOf(name),
+      stats: brandStats(slices[keyFor(name, engines)] ?? null),
+    }));
+  // One group per facet — or a single unlabeled group when not broken out.
+  // g.m carries the group's brand-independent metrics (outcomes, topPicks,
+  // sources, prompt list), identical across the group's brand slices.
+  const groups: Group[] = (facetDefs ?? [{ key: "", label: null as string | null, engines: st.engines }]).map(
+    (f) => {
+      const sr = seriesFor(f.engines);
+      return {
+        label: f.label,
+        series: sr,
+        m: sr.find((x) => x.stats)?.stats?.m ?? null,
+      };
+    }
+  );
+  const loading =
+    view !== "style" && groups.some((g) => g.series.some((x) => !x.stats));
+  const solo = st.brandMode === "solo";
 
   const set = (patch: Partial<WbState>) => setSt((p) => ({ ...p, ...patch }));
 
@@ -263,10 +327,7 @@ export default function Workbench({
                     set({ compBrands: selected.filter((b) => b !== name) })
                   }
                   className="rounded-full border px-2.5 py-0.5 text-[12px] font-semibold"
-                  style={{
-                    borderColor: series.find((s) => s.name === name)?.color,
-                    color: series.find((s) => s.name === name)?.color,
-                  }}
+                  style={{ borderColor: colorOf(name), color: colorOf(name) }}
                   title="Remove from comparison"
                 >
                   {name} ✕
@@ -337,23 +398,19 @@ export default function Workbench({
           })}
         </nav>
         <div className="p-5 grid gap-4 content-start min-h-[24rem]">
-          {loading && view !== "style" ? (
+          {loading ? (
             <p className="text-sm text-ink-3">Computing slices…</p>
           ) : (
             <>
               {view === "visibility" && (
-                <Visibility series={series} solo={solo} st={st} set={set} />
+                <Visibility groups={groups} solo={solo} st={st} set={set} />
               )}
-              {view === "choice" && (
-                <Choice series={series} pooled={pooled} st={st} />
-              )}
-              {view === "why" && <Why series={series} />}
-              {view === "battleground" && (
-                <Battleground series={series} pooled={pooled} />
-              )}
-              {view === "sources" && <Sources pooled={pooled} />}
+              {view === "choice" && <Choice groups={groups} />}
+              {view === "why" && <Why groups={groups} />}
+              {view === "battleground" && <Battleground groups={groups} />}
+              {view === "sources" && <Sources groups={groups} />}
               {view === "risk" && plan !== "free" && (
-                <Risk series={series} pooled={pooled}
+                <Risk groups={groups} pooled={pooled}
                   plan={plan} runId={runId} clientName={clientName} />
               )}
               {view === "style" && <Style pooled={pooled} />}
@@ -773,6 +830,12 @@ function SortTable<T>({
   );
 }
 
+interface Group {
+  label: string | null;
+  series: Series;
+  m: RunMetrics | null;
+}
+
 type Series = {
   name: string;
   isClient: boolean;
@@ -811,11 +874,19 @@ function SeriesBars({
 }
 
 /* ---------------- Visibility ---------------- */
+const slugify = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+
+function GroupLabel({ label }: { label: string | null }) {
+  if (!label) return null;
+  return <div className="section-label -mb-1">{label}</div>;
+}
+
+/* ---------------- Visibility ---------------- */
 function Visibility({
-  series, solo, st, set,
+  groups, solo, st, set,
 }: {
-  series: Series;
-  solo: Series[number] | null;
+  groups: Group[];
+  solo: boolean;
   st: WbState;
   set: (p: Partial<WbState>) => void;
 }) {
@@ -825,80 +896,190 @@ function Visibility({
     ["sov", "Share of voice"],
     ["position", "Avg position"],
   ] as const;
-  const valOf = (s: Series[number]): number | null =>
-    !s.stats ? null
-    : st.measure === "named" ? s.stats.named
-    : st.measure === "firstNamed" ? s.stats.firstNamed
-    : st.measure === "sov" ? s.stats.sov
-    : s.stats.avgRank;
+  const valOf = (x: Series[number]): number | null =>
+    !x.stats ? null
+    : st.measure === "named" ? x.stats.named
+    : st.measure === "firstNamed" ? x.stats.firstNamed
+    : st.measure === "sov" ? x.stats.sov
+    : x.stats.avgRank;
   const fmt = (v: number | null) =>
     v === null ? "—" : st.measure === "position" ? `#${v.toFixed(1)}` : pct(v);
 
-  if (solo && solo.stats) {
-    const s = solo.stats;
-    return (
-      <>
-        <div className="flex flex-wrap gap-x-8 gap-y-3">
+  return (
+    <>
+      {!solo && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+            Chart
+          </span>
+          {measures.map(([id, label]) => (
+            <button key={id} type="button" onClick={() => set({ measure: id })}
+              className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+                st.measure === id
+                  ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                  : "border-line text-ink-3 hover:border-ink-3"
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="grid gap-8">
+        {groups.map((g) => {
+          const sr = g.series;
+          if (solo) {
+            const one = sr[0];
+            if (!one?.stats) return null;
+            return (
+              <div key={g.label ?? "all"} className="grid gap-4">
+                <GroupLabel label={g.label} />
+                <SoloVisibility s={one} />
+              </div>
+            );
+          }
+          const chartRows = sr.map((x) => ({
+            label: x.name, color: x.color, raw: valOf(x), right: fmt(valOf(x)),
+          }));
+          const best =
+            st.measure === "position"
+              ? Math.min(...chartRows.map((r) => r.raw ?? Infinity))
+              : null;
+          return (
+            <div key={g.label ?? "all"} className="grid gap-4">
+              <GroupLabel label={g.label} />
+              <SeriesBars rows={chartRows.map((r) => ({
+                label: r.label,
+                color: r.color,
+                value:
+                  st.measure === "position"
+                    ? r.raw !== null && best !== null ? best / r.raw : null
+                    : r.raw,
+                right: r.right,
+              }))} />
+              <SortTable
+                filename={`visibility${g.label ? `_${slugify(g.label)}` : ""}.csv`}
+                defaultSort={{ id: "named", dir: -1 }}
+                cols={[
+                  { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+                    color: (r) => r.color,
+                    render: (r) => <span className="font-medium">{r.name}</span> },
+                  { id: "named", label: "Named", num: true,
+                    val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
+                    render: (r) => (r.stats ? pct(r.stats.named) : "—") },
+                  { id: "ci", label: "95% CI", num: true,
+                    val: (r) => r.stats ? Math.round(r.stats.ciLow * 100) : null,
+                    render: (r) =>
+                      r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" },
+                  { id: "fn", label: "First-named", num: true,
+                    val: (r) =>
+                      r.stats?.firstNamed !== null && r.stats
+                        ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
+                    render: (r) =>
+                      r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
+                  { id: "sov", label: "Share of voice", num: true,
+                    val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
+                    render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
+                  { id: "pos", label: "Avg position", num: true,
+                    val: (r) => r.stats?.avgRank ?? null,
+                    render: (r) =>
+                      r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
+                  { id: "rec", label: "Recommended", num: true,
+                    val: (r) =>
+                      r.stats && r.stats.count > 0
+                        ? Math.round((r.stats.framing.recommended / r.stats.count) * 100)
+                        : null,
+                    render: (r) =>
+                      r.stats && r.stats.count > 0
+                        ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+                  { id: "neg", label: "Negative", num: true,
+                    val: (r) =>
+                      r.stats && r.stats.count > 0
+                        ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
+                        : null,
+                    render: (r) =>
+                      r.stats && r.stats.count > 0 ? (
+                        <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
+                          {pct(r.stats.framing.negative / r.stats.count)}
+                        </span>
+                      ) : ("—") },
+                ]}
+                rows={sr}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function SoloVisibility({ s }: { s: Series[number] }) {
+  const st = s.stats!;
+  return (
+    <>
+      <div className="flex flex-wrap gap-x-8 gap-y-3">
+        {[
+          [pct(st.named), `named · CI ${pct(st.ciLow)}–${pct(st.ciHigh)}`],
+          [st.firstNamed !== null ? pct(st.firstNamed) : "—", "first-named"],
+          [pct(st.sov), "share of voice"],
+          [st.avgRank ? `#${st.avgRank.toFixed(1)}` : "—", "avg position"],
+        ].map(([v, l]) => (
+          <div key={l}>
+            <div className="text-2xl font-semibold tabular-nums">{v}</div>
+            <div className="text-[11px] text-ink-3">{l}</div>
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-line p-4">
+          <div className="section-label mb-2">Funnel</div>
           {[
-            [pct(s.named), `named · CI ${pct(s.ciLow)}–${pct(s.ciHigh)}`],
-            [s.firstNamed !== null ? pct(s.firstNamed) : "—", "first-named"],
-            [pct(s.sov), "share of voice"],
-            [s.avgRank ? `#${s.avgRank.toFixed(1)}` : "—", "avg position"],
-          ].map(([v, l]) => (
-            <div key={l}>
-              <div className="text-2xl font-semibold tabular-nums">{v}</div>
-              <div className="text-[11px] text-ink-3">{l}</div>
+            ["Named", st.named],
+            ["Top-3", st.top3],
+            ["Chosen", st.chosen],
+          ].map(([l, v]) => (
+            <div key={l as string} className="flex justify-between text-sm py-0.5">
+              <span className="text-ink-2">{l}</span>
+              <span className="font-semibold tabular-nums">
+                {v !== null ? pct(v as number) : "—"}
+              </span>
             </div>
           ))}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-line p-4">
-            <div className="section-label mb-2">Funnel</div>
-            {[
-              ["Named", s.named],
-              ["Top-3", s.top3],
-              ["Chosen", s.chosen],
-            ].map(([l, v]) => (
-              <div key={l as string} className="flex justify-between text-sm py-0.5">
-                <span className="text-ink-2">{l}</span>
-                <span className="font-semibold tabular-nums">
-                  {v !== null ? pct(v as number) : "—"}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-xl border border-line p-4">
-            <div className="section-label mb-2">Framing · % of named answers</div>
-            {(["recommended", "mentioned", "negative"] as const).map((f) => (
-              <div key={f} className="flex justify-between text-sm py-0.5">
-                <span className="text-ink-2">{f === "mentioned" ? "neutral" : f}</span>
-                <span className={`font-semibold tabular-nums ${f === "negative" && s.framing[f] > 0 ? "text-danger" : ""}`}>
-                  {s.count > 0 ? pct(s.framing[f] / s.count) : "—"}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div className="rounded-xl border border-line p-4">
+          <div className="section-label mb-2">Framing · % of named answers</div>
+          {(["recommended", "mentioned", "negative"] as const).map((f) => (
+            <div key={f} className="flex justify-between text-sm py-0.5">
+              <span className="text-ink-2">{f === "mentioned" ? "neutral" : f}</span>
+              <span className={`font-semibold tabular-nums ${f === "negative" && st.framing[f] > 0 ? "text-danger" : ""}`}>
+                {st.count > 0 ? pct(st.framing[f] / st.count) : "—"}
+              </span>
+            </div>
+          ))}
         </div>
-        {s.m.engines && s.m.engines.length > 1 && (
-          <div>
-            <div className="section-label mb-2">Named rate by engine</div>
-            <SeriesBars rows={s.m.engines.map((e) => ({
-              label: e.model, color: solo.color, value: e.namedRate,
-              right: pct(e.namedRate),
-            }))} />
-          </div>
-        )}
-      </>
-    );
-  }
+      </div>
+      {st.m.engines && st.m.engines.length > 1 && (
+        <div>
+          <div className="section-label mb-2">Named rate by engine</div>
+          <SeriesBars rows={st.m.engines.map((e) => ({
+            label: e.model, color: s.color, value: e.namedRate,
+            right: pct(e.namedRate),
+          }))} />
+        </div>
+      )}
+    </>
+  );
+}
 
-  const chartRows = series.map((sr) => {
-    const v = valOf(sr);
-    return { label: sr.name, color: sr.color, raw: v, right: fmt(v) };
-  });
-  const best = st.measure === "position"
-    ? Math.min(...chartRows.map((r) => r.raw ?? Infinity))
-    : null;
+/* ---------------- Choice ---------------- */
+function Choice({ groups }: { groups: Group[] }) {
+  const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
+  const metricDefs = [
+    ["share", "Share of decided"],
+    ["chosen", "Chosen rate"],
+    ["top3", "Top-3 rate"],
+    ["named", "Named rate"],
+  ] as const;
 
   return (
     <>
@@ -906,12 +1087,10 @@ function Visibility({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
           Chart
         </span>
-        {measures.map(([id, label]) => (
-          <button key={id} type="button"
-            disabled={st.split !== "none" && id !== "named"}
-            onClick={() => set({ measure: id })}
-            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium disabled:opacity-40 ${
-              st.measure === id
+        {metricDefs.map(([id, label]) => (
+          <button key={id} type="button" onClick={() => setMetric(id)}
+            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+              metric === id
                 ? "border-[var(--color-primary)] bg-primary-soft text-primary"
                 : "border-line text-ink-3 hover:border-ink-3"
             }`}>
@@ -919,154 +1098,49 @@ function Visibility({
           </button>
         ))}
       </div>
-      {st.split === "none" && (
-        <SeriesBars rows={chartRows.map((r) => ({
-          label: r.label,
-          color: r.color,
-          // Position: lower is better, so the best position gets the full bar.
-          value:
-            st.measure === "position"
-              ? r.raw !== null && best !== null
-                ? best / r.raw
-                : null
-              : r.raw,
-          right: r.right,
-        }))} />
-      )}
-      {st.split !== "none" && (
-        <div className="grid gap-7">
-          {(st.split === "engine"
-            ? (series[0].stats?.m.engines ?? []).map((e) => ({
-                key: e.model,
-                label: e.model,
-              }))
-            : (series[0].stats?.m.modes ?? []).map((m) => ({
-                key: m.mode,
-                label: m.mode === "search" ? "Search-enabled" : "Instinct",
-              }))
-          ).map((facet) => {
-            const rows = series.flatMap((sr) => {
-              const f =
-                st.split === "engine"
-                  ? sr.stats?.m.engines?.find((x) => x.model === facet.key)
-                  : sr.stats?.m.modes?.find((x) => x.mode === facet.key);
-              return f ? [{ brand: sr.name, color: sr.color, f }] : [];
-            });
-            if (rows.length === 0) return null;
-            const searched = rows[0].f.searchRate;
-            return (
-              <div key={facet.key}>
-                <div className="section-label mb-1.5">
-                  {facet.label}
-                  {searched !== null && (
-                    <span className="ml-2 font-normal normal-case tracking-normal text-ink-3">
-                      searched on {pct(searched)} of answers
-                    </span>
-                  )}
-                </div>
-                <SeriesBars rows={rows.map((r) => ({
-                  label: r.brand,
-                  color: r.color,
-                  value: r.f.namedRate,
-                  right: pct(r.f.namedRate),
-                }))} />
-                <SortTable
-                  filename={`visibility_${facet.key}.csv`}
-                  defaultSort={{ id: "named", dir: -1 }}
-                  cols={[
-                    { id: "brand", label: "Brand",
-                      val: (r: (typeof rows)[number]) => r.brand,
-                      color: (r) => r.color,
-                      render: (r) => <span className="font-medium">{r.brand}</span> },
-                    { id: "answers", label: "Answers", num: true,
-                      val: (r) => r.f.answers },
-                    { id: "named", label: "Named", num: true,
-                      val: (r) => Math.round(r.f.namedRate * 100),
-                      render: (r) => pct(r.f.namedRate) },
-                    { id: "ci", label: "95% CI", num: true,
-                      val: (r) => Math.round(r.f.ciLow * 100),
-                      render: (r) => `${pct(r.f.ciLow)}–${pct(r.f.ciHigh)}` },
-                    { id: "pick", label: "First pick", num: true,
-                      val: (r) => Math.round(r.f.pickRate * 100),
-                      render: (r) => pct(r.f.pickRate) },
-                    { id: "pos", label: "Avg position", num: true,
-                      val: (r) => r.f.avgPosition,
-                      render: (r) =>
-                        r.f.avgPosition ? `#${r.f.avgPosition.toFixed(1)}` : "—" },
-                  ]}
-                  rows={rows}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {st.split === "none" && (
-        <SortTable
-          filename="visibility.csv"
-          defaultSort={{ id: "named", dir: -1 }}
-          cols={[
-            { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
-              color: (r) => r.color,
-              render: (r) => <span className="font-medium">{r.name}</span> },
-            { id: "named", label: "Named", num: true,
-              val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
-              render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-            { id: "ci", label: "95% CI", num: true,
-              val: (r) => r.stats ? Math.round(r.stats.ciLow * 100) : null,
-              render: (r) =>
-                r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" },
-            { id: "fn", label: "First-named", num: true,
-              val: (r) =>
-                r.stats?.firstNamed !== null && r.stats
-                  ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
-              render: (r) =>
-                r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
-            { id: "sov", label: "Share of voice", num: true,
-              val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
-              render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
-            { id: "pos", label: "Avg position", num: true,
-              val: (r) => r.stats?.avgRank ?? null,
-              render: (r) =>
-                r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
-            { id: "rec", label: "Recommended", num: true,
-              val: (r) =>
-                r.stats && r.stats.count > 0
-                  ? Math.round((r.stats.framing.recommended / r.stats.count) * 100)
-                  : null,
-              render: (r) =>
-                r.stats && r.stats.count > 0
-                  ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
-            { id: "neg", label: "Negative", num: true,
-              val: (r) =>
-                r.stats && r.stats.count > 0
-                  ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
-                  : null,
-              render: (r) =>
-                r.stats && r.stats.count > 0 ? (
-                  <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
-                    {pct(r.stats.framing.negative / r.stats.count)}
-                  </span>
-                ) : ("—") },
-          ]}
-          rows={series}
-        />
-      )}
+      <div className="grid gap-8">
+        {groups.map((g) => (
+          <ChoiceGroup key={g.label ?? "all"} g={g} metric={metric} />
+        ))}
+      </div>
     </>
   );
 }
 
-/* ---------------- Choice ---------------- */
-function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st: WbState }) {
-  const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
-
-  // Decisiveness: the coder types every answer's outcome — a fixed,
-  // study-independent typology from the extraction schema.
-  const strip = (o: { pick: number; no_pick: number; clarification: number }, label?: string) => {
+function ChoiceGroup({
+  g,
+  metric,
+}: {
+  g: Group;
+  metric: "share" | "chosen" | "top3" | "named";
+}) {
+  const m = g.m;
+  if (!m) return null;
+  const tp = (name: string) => m.topPicks?.find((t) => t.brand === name);
+  const valFor = (x: Series[number]) => {
+    if (!x.stats) return null;
+    if (metric === "share") return tp(x.name)?.shareOfDecided ?? 0;
+    return metric === "chosen" ? x.stats.chosen : metric === "top3" ? x.stats.top3 : x.stats.named;
+  };
+  const rows = [...g.series].sort((a, b) => (valFor(b) ?? 0) - (valFor(a) ?? 0));
+  const unselected =
+    metric === "share"
+      ? (m.topPicks ?? [])
+          .filter((t) => !g.series.some((x) => x.name === t.brand))
+          .slice(0, Math.max(0, 8 - g.series.length))
+      : [];
+  const maxV = Math.max(
+    ...rows.map((x) => valFor(x) ?? 0),
+    ...unselected.map((t) => t.shareOfDecided),
+    0.01
+  );
+  const strip = (o: { pick: number; no_pick: number; clarification: number }) => {
     const total = o.pick + o.no_pick + o.clarification || 1;
     return (
-      <div key={label ?? "run"}>
-        {label && <div className="section-label mb-1">{label}</div>}
+      <div className="rounded-xl border border-line p-4">
+        <div className="section-label mb-2">
+          Decisiveness — committed = the answer crowned ONE product as its pick
+        </div>
         <Tip tip={`${pct(o.no_pick / total)} explained the options without crowning one · ${pct(o.clarification / total)} asked the user a question instead of answering`}>
           <div className="flex items-baseline gap-2 cursor-help">
             <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
@@ -1083,74 +1157,19 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
       </div>
     );
   };
-
-  const metricDefs = [
-    ["share", "Share of decided"],
-    ["chosen", "Chosen rate"],
-    ["top3", "Top-3 rate"],
-    ["named", "Named rate"],
-  ] as const;
-  const valFor = (s: Series[number]) => {
-    if (!s.stats) return null;
-    if (metric === "share") {
-      return pooled.topPicks?.find((t) => t.brand === s.name)?.shareOfDecided ?? 0;
-    }
-    return metric === "chosen" ? s.stats.chosen : metric === "top3" ? s.stats.top3 : s.stats.named;
-  };
-  const rows = [...series].sort((a, b) => (valFor(b) ?? 0) - (valFor(a) ?? 0));
-  const unselected =
-    metric === "share"
-      ? (pooled.topPicks ?? [])
-          .filter((t) => !series.some((s) => s.name === t.brand))
-          .slice(0, Math.max(0, 8 - series.length))
-      : [];
-  const maxV = Math.max(
-    ...rows.map((s) => valFor(s) ?? 0),
-    ...unselected.map((t) => t.shareOfDecided),
-    0.01
-  );
-
   return (
-    <>
-      {pooled.outcomes && st.split !== "engine" && (
-        <div className="rounded-xl border border-line p-4">
-          <div className="section-label mb-2">
-            Decisiveness — committed = the answer crowned ONE product as its pick
-          </div>
-          {strip(pooled.outcomes)}
-        </div>
-      )}
-      {st.split === "engine" && pooled.engines && (
-        <div className="rounded-xl border border-line p-4 grid gap-3">
-          <div className="section-label">Decisiveness by engine — who commits, who hedges</div>
-          {pooled.engines.map((e) => strip(e.outcomes, e.model))}
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Chart
-        </span>
-        {metricDefs.map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setMetric(id)}
-            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-              metric === id
-                ? "border-[var(--color-primary)] bg-primary-soft text-primary"
-                : "border-line text-ink-3 hover:border-ink-3"
-            }`}>
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="grid gap-4">
+      <GroupLabel label={g.label} />
+      {m.outcomes && strip(m.outcomes)}
       <div className="grid gap-1.5">
-        {rows.map((s) => {
-          const v = valFor(s);
+        {rows.map((x) => {
+          const v = valFor(x);
           return (
-            <div key={s.name} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
-              <span className="truncate text-sm text-right font-medium" style={{ color: s.color }}>
-                {s.name}
+            <div key={x.name} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
+              <span className="truncate text-sm text-right font-medium" style={{ color: x.color }}>
+                {x.name}
               </span>
-              <Bar w={(v ?? 0) / maxV} color={s.color} />
+              <Bar w={(v ?? 0) / maxV} color={x.color} />
               <span className="text-[13px] tabular-nums text-ink-2">
                 {v !== null ? pct(v) : "—"}
               </span>
@@ -1167,77 +1186,48 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
           </div>
         ))}
       </div>
-
-      <ChoiceTable series={series} pooled={pooled} />
-    </>
-  );
-}
-
-function ChoiceTable({ series, pooled }: { series: Series; pooled: RunMetrics }) {
-  const tp = (name: string) => pooled.topPicks?.find((t) => t.brand === name);
-  return (
-    <SortTable
-      filename="choice.csv"
-      defaultSort={{ id: "share", dir: -1 }}
-      cols={[
-        { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
-          color: (r) => r.color,
-          render: (r) => <span className="font-medium">{r.name}</span> },
-        { id: "named", label: "Named", num: true,
-          val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
-          render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-        { id: "top3", label: "Top-3", num: true,
-          val: (r) =>
-            r.stats?.top3 !== null && r.stats ? Math.round((r.stats.top3 ?? 0) * 100) : null,
-          render: (r) =>
-            r.stats?.top3 !== null && r.stats ? pct(r.stats.top3!) : "—" },
-        { id: "chosen", label: "Chosen", num: true,
-          val: (r) =>
-            r.stats?.chosen !== null && r.stats ? Math.round((r.stats.chosen ?? 0) * 100) : null,
-          render: (r) =>
-            r.stats?.chosen !== null && r.stats ? pct(r.stats.chosen!) : "—" },
-        { id: "picks", label: "Picks", num: true,
-          val: (r) => tp(r.name)?.picks ?? 0 },
-        { id: "share", label: "Share of decided", num: true,
-          val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
-          render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
-      ]}
-      rows={series}
-    />
+      <SortTable
+        filename={`choice${g.label ? `_${slugify(g.label)}` : ""}.csv`}
+        defaultSort={{ id: "share", dir: -1 }}
+        cols={[
+          { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+            color: (r) => r.color,
+            render: (r) => <span className="font-medium">{r.name}</span> },
+          { id: "named", label: "Named", num: true,
+            val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
+            render: (r) => (r.stats ? pct(r.stats.named) : "—") },
+          { id: "top3", label: "Top-3", num: true,
+            val: (r) =>
+              r.stats?.top3 !== null && r.stats ? Math.round((r.stats.top3 ?? 0) * 100) : null,
+            render: (r) =>
+              r.stats?.top3 !== null && r.stats ? pct(r.stats.top3!) : "—" },
+          { id: "chosen", label: "Chosen", num: true,
+            val: (r) =>
+              r.stats?.chosen !== null && r.stats ? Math.round((r.stats.chosen ?? 0) * 100) : null,
+            render: (r) =>
+              r.stats?.chosen !== null && r.stats ? pct(r.stats.chosen!) : "—" },
+          { id: "picks", label: "Picks", num: true,
+            val: (r) => tp(r.name)?.picks ?? 0 },
+          { id: "share", label: "Share of decided", num: true,
+            val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
+            render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
+        ]}
+        rows={g.series}
+      />
+    </div>
   );
 }
 
 /* ---------------- Why ---------------- */
-function Why({ series }: { series: Series }) {
+function Why({ groups }: { groups: Group[] }) {
   const [metric, setMetric] = useState<"lift" | "wins" | "all" | "absent">("lift");
   const [sortBy, setSortBy] = useState<{ name: string; dir: 1 | -1 } | null>(null);
-  const first = series[0]?.stats?.m.reasonLift ?? [];
-  const liftOf = (s: Series[number], code: string) =>
-    s.stats?.m.reasonLift?.find((r) => r.code === code) ?? null;
-  const cell = (s: Series[number], code: string): number | null => {
-    const r = liftOf(s, code);
-    if (!r) return null;
-    return metric === "lift" ? r.lift : metric === "wins" ? r.shareWins
-      : metric === "all" ? r.shareAll : r.shareAbsent;
-  };
-  const sortSeries = series.find((x) => x.name === sortBy?.name) ?? series[0];
-  const codes = [...first]
-    .map((r) => r.code)
-    .sort((a, b) => {
-      const va = cell(sortSeries, a) ?? -Infinity;
-      const vb = cell(sortSeries, b) ?? -Infinity;
-      return (vb - va) * (sortBy?.dir === 1 ? -1 : 1);
-    });
-  if (codes.length === 0)
-    return <p className="text-sm text-ink-3">No argument coding in this run.</p>;
   const metricDefs = [
     ["lift", "Lift", "the argument's share in that brand's wins, minus its share overall"],
     ["wins", "In their wins", "share of the brand's winning answers using the argument"],
     ["all", "Overall", "share of all answers using the argument"],
     ["absent", "Where they're missing", "share of answers that never mention the brand — the arguments of conversations they're excluded from"],
   ] as const;
-  const fmtCell = (v: number | null) =>
-    v === null ? "—" : metric === "lift" ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}` : pct(v);
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1257,126 +1247,136 @@ function Why({ series }: { series: Series }) {
           </Tip>
         ))}
       </div>
-      <div className="mt-3 grid gap-1">
-        <Download
-          name="arguments"
-          header={["argument", ...series.flatMap((s) => [
-            `${s.name} lift`, `${s.name} in wins`, `${s.name} overall`, `${s.name} where missing`,
-          ])]}
-          rows={() =>
-            first.map((r0) => [
-              r0.code,
-              ...series.flatMap((s) => {
-                const r = liftOf(s, r0.code);
-                return r
-                  ? [Math.round(r.lift * 100), Math.round(r.shareWins * 100), Math.round(r.shareAll * 100), Math.round(r.shareAbsent * 100)]
-                  : [null, null, null, null];
-              }),
-            ])
-          }
-        />
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                <th className="py-2 pr-4 font-semibold">Argument</th>
-                {series.map((s) => (
-                  <th key={s.name}
-                    className="py-2 pr-3 font-semibold text-center cursor-pointer select-none hover:opacity-70"
-                    style={{ color: s.color }}
-                    onClick={() =>
-                      setSortBy((prev) =>
-                        prev?.name === s.name
-                          ? { name: s.name, dir: prev.dir === 1 ? -1 : 1 }
-                          : { name: s.name, dir: -1 }
-                      )
-                    }>
-                    <HeadLabel
-                      label={s.name}
-                      arrow={
-                        sortBy?.name === s.name
-                          ? sortBy.dir === -1 ? "↓" : "↑"
-                          : ""
-                      }
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {codes.map((code) => (
-                <tr key={code} className="border-b border-line/60">
-                  <td className="py-2 pr-4 font-medium">{code}</td>
-                  {series.map((s) => {
-                    const v = cell(s, code);
-                    const r = liftOf(s, code);
-                    return (
-                      <td key={s.name}
-                        className={`py-2 pr-3 text-center tabular-nums ${
-                          metric !== "lift" ? "text-ink-2"
-                          : v === null ? "text-ink-3"
-                          : v > 0.02 ? "text-success font-semibold"
-                          : v < -0.02 ? "text-danger font-semibold"
-                          : "text-ink-2"
-                        }`}>
-                        {r ? (
-                          <Tip tip={`in wins ${pct(r.shareWins)} · overall ${pct(r.shareAll)} · where missing ${pct(r.shareAbsent)} · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
-                            <span className="cursor-help">{fmtCell(v)}</span>
-                          </Tip>
-                        ) : ("—")}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid gap-8">
+        {groups.map((g) => (
+          <WhyGroup key={g.label ?? "all"} g={g} metric={metric}
+            sortBy={sortBy} setSortBy={setSortBy} />
+        ))}
       </div>
     </>
   );
 }
 
-/* ---------------- Battleground ---------------- */
-function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }) {
-  const [sort, setSort] = useState<"contested" | "owned" | "theme">("contested");
-  const base = pooled.promptGrid ?? [];
-  if (base.length === 0)
-    return <p className="text-sm text-ink-3">No prompt coding in this run.</p>;
-  const gridFor = (s: Series[number], promptId: string) =>
-    s.stats?.m.promptGrid?.find((g) => g.promptId === promptId) ?? null;
-  const badgeFor = (s: Series[number], promptId: string) =>
-    gridFor(s, promptId)?.badge ?? null;
-  const dot = (b: string | null) => (
-    <span className="inline-block h-2.5 w-2.5 rounded-full"
-      style={{
-        background: b === "win" ? "var(--color-success, #2e7d4f)"
-          : b === "contested" ? "var(--color-warning, #b3822a)"
-          : "var(--color-line, #d8dfe2)",
-      }} />
-  );
-  const cellDot = (s: Series[number], promptId: string) => {
-    const g = gridFor(s, promptId);
-    if (!g) return dot(null);
-    return (
-      <Tip tip={`named in ${g.targetNamed}/${g.answers} · picked in ${g.targetPicks}/${g.decided} decided${g.modalPick ? ` · consensus: ${g.modalPick}` : ""}`}>
-        <span className="cursor-help">{dot(g.badge)}</span>
-      </Tip>
-    );
+function WhyGroup({
+  g, metric, sortBy, setSortBy,
+}: {
+  g: Group;
+  metric: "lift" | "wins" | "all" | "absent";
+  sortBy: { name: string; dir: 1 | -1 } | null;
+  setSortBy: (v: { name: string; dir: 1 | -1 } | null) => void;
+}) {
+  const series = g.series;
+  const first = series[0]?.stats?.m.reasonLift ?? [];
+  const liftOf = (x: Series[number], code: string) =>
+    x.stats?.m.reasonLift?.find((r) => r.code === code) ?? null;
+  const cell = (x: Series[number], code: string): number | null => {
+    const r = liftOf(x, code);
+    if (!r) return null;
+    return metric === "lift" ? r.lift : metric === "wins" ? r.shareWins
+      : metric === "all" ? r.shareAll : r.shareAbsent;
   };
-  const contestScore = (promptId: string) =>
-    series.filter((s) => badgeFor(s, promptId) === "contested").length * 2 +
-    series.filter((s) => badgeFor(s, promptId) === "win").length;
-  const ownedScore = (promptId: string) =>
-    (badgeFor(series[0], promptId) === "win" ? 100 : 0) +
-    series.filter((s) => badgeFor(s, promptId) === "win").length;
-  const rows =
-    sort === "contested"
-      ? [...base].sort((a, b) => contestScore(b.promptId) - contestScore(a.promptId))
-      : sort === "owned"
-        ? [...base].sort((a, b) => ownedScore(b.promptId) - ownedScore(a.promptId))
-        : base;
-  const themes = sort === "theme" ? [...new Set(base.map((g) => g.theme))] : [null];
+  const sortSeries = series.find((x) => x.name === sortBy?.name) ?? series[0];
+  const codes = [...first]
+    .map((r) => r.code)
+    .sort((a, b) => {
+      const va = cell(sortSeries, a) ?? -Infinity;
+      const vb = cell(sortSeries, b) ?? -Infinity;
+      return (vb - va) * (sortBy?.dir === 1 ? -1 : 1);
+    });
+  if (codes.length === 0)
+    return (
+      <div className="grid gap-2">
+        <GroupLabel label={g.label} />
+        <p className="text-sm text-ink-3">No argument coding in this slice.</p>
+      </div>
+    );
+  const fmtCell = (v: number | null) =>
+    v === null ? "—" : metric === "lift" ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}` : pct(v);
+  return (
+    <div className="grid gap-3">
+      <GroupLabel label={g.label} />
+      <Download
+        name={`arguments${g.label ? `_${slugify(g.label)}` : ""}`}
+        header={["argument", ...series.flatMap((x) => [
+          `${x.name} lift`, `${x.name} in wins`, `${x.name} overall`, `${x.name} where missing`,
+        ])]}
+        rows={() =>
+          first.map((r0) => [
+            r0.code,
+            ...series.flatMap((x) => {
+              const r = liftOf(x, r0.code);
+              return r
+                ? [Math.round(r.lift * 100), Math.round(r.shareWins * 100), Math.round(r.shareAll * 100), Math.round(r.shareAbsent * 100)]
+                : [null, null, null, null];
+            }),
+          ])
+        }
+      />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+              <th className="py-2 pr-4 font-semibold">Argument</th>
+              {series.map((x) => (
+                <th key={x.name}
+                  className="py-2 pr-3 font-semibold text-center cursor-pointer select-none hover:opacity-70"
+                  style={{ color: x.color }}
+                  onClick={() =>
+                    setSortBy(
+                      sortBy?.name === x.name
+                        ? { name: x.name, dir: sortBy.dir === 1 ? -1 : 1 }
+                        : { name: x.name, dir: -1 }
+                    )
+                  }>
+                  <HeadLabel
+                    label={x.name}
+                    arrow={
+                      sortBy?.name === x.name
+                        ? sortBy.dir === -1 ? "↓" : "↑"
+                        : ""
+                    }
+                  />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {codes.map((code) => (
+              <tr key={code} className="border-b border-line/60">
+                <td className="py-2 pr-4 font-medium">{code}</td>
+                {series.map((x) => {
+                  const v = cell(x, code);
+                  const r = liftOf(x, code);
+                  return (
+                    <td key={x.name}
+                      className={`py-2 pr-3 text-center tabular-nums ${
+                        metric !== "lift" ? "text-ink-2"
+                        : v === null ? "text-ink-3"
+                        : v > 0.02 ? "text-success font-semibold"
+                        : v < -0.02 ? "text-danger font-semibold"
+                        : "text-ink-2"
+                      }`}>
+                      {r ? (
+                        <Tip tip={`in wins ${pct(r.shareWins)} · overall ${pct(r.shareAll)} · where missing ${pct(r.shareAbsent)} · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
+                          <span className="cursor-help">{fmtCell(v)}</span>
+                        </Tip>
+                      ) : ("—")}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Battleground ---------------- */
+function Battleground({ groups }: { groups: Group[] }) {
+  const [sort, setSort] = useState<"contested" | "owned" | "theme">("contested");
+  const firstName = groups[0]?.series[0]?.name ?? "";
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1384,7 +1384,7 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
         {(
           [
             ["contested", "most contested"],
-            ["owned", `most owned by ${series[0]?.name ?? ""}`],
+            ["owned", `most owned by ${firstName}`],
             ["theme", "by topic"],
           ] as const
         ).map(([id, label]) => (
@@ -1398,36 +1398,95 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           </button>
         ))}
       </div>
-      <div className="mt-3">
-        <Download
-          name="battleground"
-          header={["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"]}
-          rows={() =>
-            base.flatMap((g0) =>
-              series.map((s) => {
-                const g = gridFor(s, g0.promptId);
-                return [
-                  g0.text, g0.theme, s.name,
-                  g?.answers ?? null, g?.targetNamed ?? null,
-                  g?.decided ?? null, g?.targetPicks ?? null,
-                  g?.badge ?? null, g?.modalPick ?? null,
-                  g?.modalShare !== null && g?.modalShare !== undefined
-                    ? Math.round(g.modalShare * 100) : null,
-                ];
-              })
-            )
-          }
-        />
+      <div className="grid gap-8">
+        {groups.map((g) => (
+          <BattlegroundGroup key={g.label ?? "all"} g={g} sort={sort} />
+        ))}
       </div>
+    </>
+  );
+}
+
+function BattlegroundGroup({
+  g, sort,
+}: {
+  g: Group;
+  sort: "contested" | "owned" | "theme";
+}) {
+  const series = g.series;
+  const base = g.m?.promptGrid ?? [];
+  const gridFor = (x: Series[number], promptId: string) =>
+    x.stats?.m.promptGrid?.find((pg) => pg.promptId === promptId) ?? null;
+  const badgeFor = (x: Series[number], promptId: string) =>
+    gridFor(x, promptId)?.badge ?? null;
+  const dot = (b: string | null) => (
+    <span className="inline-block h-2.5 w-2.5 rounded-full"
+      style={{
+        background: b === "win" ? "var(--color-success, #2e7d4f)"
+          : b === "contested" ? "var(--color-warning, #b3822a)"
+          : "var(--color-line, #d8dfe2)",
+      }} />
+  );
+  const cellDot = (x: Series[number], promptId: string) => {
+    const pg = gridFor(x, promptId);
+    if (!pg) return dot(null);
+    return (
+      <Tip tip={`named in ${pg.targetNamed}/${pg.answers} · picked in ${pg.targetPicks}/${pg.decided} decided${pg.modalPick ? ` · consensus: ${pg.modalPick}` : ""}`}>
+        <span className="cursor-help">{dot(pg.badge)}</span>
+      </Tip>
+    );
+  };
+  if (base.length === 0)
+    return (
+      <div className="grid gap-2">
+        <GroupLabel label={g.label} />
+        <p className="text-sm text-ink-3">No prompt coding in this slice.</p>
+      </div>
+    );
+  const contestScore = (promptId: string) =>
+    series.filter((x) => badgeFor(x, promptId) === "contested").length * 2 +
+    series.filter((x) => badgeFor(x, promptId) === "win").length;
+  const ownedScore = (promptId: string) =>
+    (badgeFor(series[0], promptId) === "win" ? 100 : 0) +
+    series.filter((x) => badgeFor(x, promptId) === "win").length;
+  const rows =
+    sort === "contested"
+      ? [...base].sort((a, b) => contestScore(b.promptId) - contestScore(a.promptId))
+      : sort === "owned"
+        ? [...base].sort((a, b) => ownedScore(b.promptId) - ownedScore(a.promptId))
+        : base;
+  const themes = sort === "theme" ? [...new Set(base.map((pg) => pg.theme))] : [null];
+  return (
+    <div className="grid gap-3">
+      <GroupLabel label={g.label} />
+      <Download
+        name={`battleground${g.label ? `_${slugify(g.label)}` : ""}`}
+        header={["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"]}
+        rows={() =>
+          base.flatMap((g0) =>
+            series.map((x) => {
+              const pg = gridFor(x, g0.promptId);
+              return [
+                g0.text, g0.theme, x.name,
+                pg?.answers ?? null, pg?.targetNamed ?? null,
+                pg?.decided ?? null, pg?.targetPicks ?? null,
+                pg?.badge ?? null, pg?.modalPick ?? null,
+                pg?.modalShare !== null && pg?.modalShare !== undefined
+                  ? Math.round(pg.modalShare * 100) : null,
+              ];
+            })
+          )
+        }
+      />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
               <th className="py-2 pr-4 font-semibold">Prompt</th>
               <th className="py-2 pr-4 font-semibold">Topic</th>
-              {series.map((s) => (
-                <th key={s.name} className="py-2 pr-3 font-semibold text-center" style={{ color: s.color }}>
-                  {s.name}
+              {series.map((x) => (
+                <th key={x.name} className="py-2 pr-3 font-semibold text-center" style={{ color: x.color }}>
+                  {x.name}
                 </th>
               ))}
             </tr>
@@ -1440,10 +1499,10 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
                     <td colSpan={2} className="py-1.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-primary">
                       {theme.replace("_", " ")} — named rate at topic grain
                     </td>
-                    {series.map((s) => {
-                      const th = s.stats?.m.themes.find((x) => x.theme === theme);
+                    {series.map((x) => {
+                      const th = x.stats?.m.themes.find((t) => t.theme === theme);
                       return (
-                        <td key={s.name} className="py-1.5 pr-3 text-center text-[11px] tabular-nums text-ink-2">
+                        <td key={x.name} className="py-1.5 pr-3 text-center text-[11px] tabular-nums text-ink-2">
                           {th ? pct(th.targetRate) : "—"}
                         </td>
                       );
@@ -1451,18 +1510,18 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
                   </tr>
                 )}
                 {rows
-                  .filter((g) => !theme || g.theme === theme)
-                  .map((g) => (
-                    <tr key={g.promptId} className="border-b border-line/60">
+                  .filter((pg) => !theme || pg.theme === theme)
+                  .map((pg) => (
+                    <tr key={pg.promptId} className="border-b border-line/60">
                       <td className="py-2 pr-4 text-ink-2 max-w-[24rem]">
-                        <span className="line-clamp-2">{g.text}</span>
+                        <span className="line-clamp-2">{pg.text}</span>
                       </td>
                       <td className="py-2 pr-4 text-[12px] text-ink-3 whitespace-nowrap">
-                        {g.theme.replace("_", " ")}
+                        {pg.theme.replace("_", " ")}
                       </td>
-                      {series.map((s) => (
-                        <td key={s.name} className="py-2 pr-3 text-center">
-                          {cellDot(s, g.promptId)}
+                      {series.map((x) => (
+                        <td key={x.name} className="py-2 pr-3 text-center">
+                          {cellDot(x, pg.promptId)}
                         </td>
                       ))}
                     </tr>
@@ -1485,67 +1544,78 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           does). Not named = absent from this prompt&apos;s answers entirely.
         </p>
       </div>
-    </>
+    </div>
   );
 }
 
 /* ---------------- Sources ---------------- */
-function Sources({ pooled }: { pooled: RunMetrics }) {
-  const searchMode = pooled.modes?.find((m) => m.mode === "search");
-  if (!pooled.sources || pooled.sources.domains.length === 0)
-    return (
-      <p className="text-sm text-ink-3">
-        No grounded answers in this run — add search-enabled engines to the
-        panel and the source landscape appears here: which sites write the
-        AI&apos;s script, and how much of it you own.
-      </p>
-    );
-  const src = pooled.sources;
-  const max = src.domains[0].share || 1;
+function Sources({ groups }: { groups: Group[] }) {
   return (
-    <>
-      <div className="flex flex-wrap gap-x-8 gap-y-2">
-        {[
-          [String(src.citedAnswers), "answers with citations"],
-          [searchMode?.searchRate !== null && searchMode?.searchRate !== undefined ? pct(searchMode.searchRate) : "—", "search rate"],
-          [String(src.domains.length), "distinct domains"],
-        ].map(([v, l]) => (
-          <div key={l}>
-            <div className="text-2xl font-semibold tabular-nums">{v}</div>
-            <div className="text-[11px] text-ink-3">{l}</div>
+    <div className="grid gap-8">
+      {groups.map((g) => {
+        const m = g.m;
+        const searchMode = m?.modes?.find((x) => x.mode === "search");
+        if (!m?.sources || m.sources.domains.length === 0) {
+          return (
+            <div key={g.label ?? "all"} className="grid gap-2">
+              <GroupLabel label={g.label} />
+              <p className="text-sm text-ink-3">
+                No cited answers in this slice — citations come from
+                search-enabled engines.
+              </p>
+            </div>
+          );
+        }
+        const src = m.sources;
+        const max = src.domains[0].share || 1;
+        return (
+          <div key={g.label ?? "all"} className="grid gap-4">
+            <GroupLabel label={g.label} />
+            <div className="flex flex-wrap gap-x-8 gap-y-2">
+              {[
+                [String(src.citedAnswers), "answers with citations"],
+                [searchMode?.searchRate !== null && searchMode?.searchRate !== undefined ? pct(searchMode.searchRate) : "—", "search rate"],
+                [String(src.domains.length), "distinct domains"],
+              ].map(([v, l]) => (
+                <div key={l}>
+                  <div className="text-2xl font-semibold tabular-nums">{v}</div>
+                  <div className="text-[11px] text-ink-3">{l}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid gap-2.5">
+              {src.domains.slice(0, 12).map((d) => (
+                <div key={d.domain} className="grid grid-cols-[12rem_1fr_14rem] items-center gap-3">
+                  <span className={`truncate text-sm text-right ${d.brand ? "font-semibold text-primary" : "text-ink-2"}`}
+                    title={d.brand ? `Owned/operated by ${d.brand}` : undefined}>
+                    {d.domain}{d.brand ? " ●" : ""}
+                  </span>
+                  <Bar w={d.share / max} color={d.brand ? "var(--color-primary)" : "var(--color-neutral-bar, #c3ced4)"} />
+                  <span className="text-[12px] tabular-nums text-ink-2">
+                    {d.answers} answers
+                    {d.topBrands.length > 0 && (
+                      <span className="text-ink-3"> · {d.topBrands.map((b) => b.brand).join(", ")}</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-ink-3">
+              ● = brand-owned domain. The brand names on each row are who
+              appears in that domain&apos;s citing answers.
+            </p>
           </div>
-        ))}
-      </div>
-      <div className="grid gap-2.5">
-        {src.domains.slice(0, 12).map((d) => (
-          <div key={d.domain} className="grid grid-cols-[12rem_1fr_14rem] items-center gap-3">
-            <span className={`truncate text-sm text-right ${d.brand ? "font-semibold text-primary" : "text-ink-2"}`}
-              title={d.brand ? `Owned/operated by ${d.brand}` : undefined}>
-              {d.domain}{d.brand ? " ●" : ""}
-            </span>
-            <Bar w={d.share / max} color={d.brand ? "var(--color-primary)" : "var(--color-neutral-bar, #c3ced4)"} />
-            <span className="text-[12px] tabular-nums text-ink-2">
-              {d.answers} answers
-              {d.topBrands.length > 0 && (
-                <span className="text-ink-3"> · {d.topBrands.map((b) => b.brand).join(", ")}</span>
-              )}
-            </span>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-ink-3">
-        ● = brand-owned domain. The brand names on each row are who appears in
-        that domain&apos;s citing answers — earned coverage in action.
-      </p>
-    </>
+        );
+      })}
+    </div>
   );
 }
 
 /* ---------------- Risk ---------------- */
 function Risk({
-  series, pooled, plan, runId, clientName,
+  groups, pooled, plan, runId, clientName,
 }: {
-  series: Series;
+  groups: Group[];
   pooled: RunMetrics;
   plan: "free" | "pro" | "enterprise";
   runId: string;
@@ -1584,51 +1654,58 @@ function Risk({
 
   return (
     <>
-      <SortTable
-        filename="risk.csv"
-        defaultSort={{ id: "negpct", dir: -1 }}
-        onRowClick={(r) => setVerbBrand(r.name)}
-        activeRow={(r) => r.name === verbBrand}
-        cols={[
-          { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
-            color: (r) => r.color,
-            render: (r) => <span className="font-medium">{r.name}</span> },
-          { id: "named", label: "Named answers", num: true,
-            val: (r) => r.stats?.count ?? null },
-          { id: "rec", label: "Recommended", num: true,
-            val: (r) =>
-              r.stats && r.stats.count > 0
-                ? Math.round((r.stats.framing.recommended / r.stats.count) * 100) : null,
-            render: (r) =>
-              r.stats && r.stats.count > 0
-                ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
-          { id: "neutral", label: "Neutral", num: true,
-            val: (r) =>
-              r.stats && r.stats.count > 0
-                ? Math.round((r.stats.framing.mentioned / r.stats.count) * 100) : null,
-            render: (r) =>
-              r.stats && r.stats.count > 0 ? (
-                <Tip tip="Named without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
-                  <span className="cursor-help">
-                    {pct(r.stats.framing.mentioned / r.stats.count)}
-                  </span>
-                </Tip>
-              ) : ("—") },
-          { id: "negpct", label: "Negative", num: true,
-            val: (r) =>
-              r.stats && r.stats.count > 0
-                ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
-            render: (r) =>
-              r.stats && r.stats.count > 0 ? (
-                <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
-                  {pct(r.stats.framing.negative / r.stats.count)}
-                </span>
-              ) : ("—") },
-          { id: "negn", label: "Negative n", num: true,
-            val: (r) => r.stats?.framing.negative ?? null },
-        ]}
-        rows={series}
-      />
+      <div className="grid gap-8">
+        {groups.map((g) => (
+          <div key={g.label ?? "all"} className="grid gap-2">
+            <GroupLabel label={g.label} />
+            <SortTable
+              filename={`risk${g.label ? `_${slugify(g.label)}` : ""}.csv`}
+              defaultSort={{ id: "negpct", dir: -1 }}
+              onRowClick={(r) => setVerbBrand(r.name)}
+              activeRow={(r) => r.name === verbBrand}
+              cols={[
+                { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+                  color: (r) => r.color,
+                  render: (r) => <span className="font-medium">{r.name}</span> },
+                { id: "named", label: "Named answers", num: true,
+                  val: (r) => r.stats?.count ?? null },
+                { id: "rec", label: "Recommended", num: true,
+                  val: (r) =>
+                    r.stats && r.stats.count > 0
+                      ? Math.round((r.stats.framing.recommended / r.stats.count) * 100) : null,
+                  render: (r) =>
+                    r.stats && r.stats.count > 0
+                      ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+                { id: "neutral", label: "Neutral", num: true,
+                  val: (r) =>
+                    r.stats && r.stats.count > 0
+                      ? Math.round((r.stats.framing.mentioned / r.stats.count) * 100) : null,
+                  render: (r) =>
+                    r.stats && r.stats.count > 0 ? (
+                      <Tip tip="Named without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
+                        <span className="cursor-help">
+                          {pct(r.stats.framing.mentioned / r.stats.count)}
+                        </span>
+                      </Tip>
+                    ) : ("—") },
+                { id: "negpct", label: "Negative", num: true,
+                  val: (r) =>
+                    r.stats && r.stats.count > 0
+                      ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
+                  render: (r) =>
+                    r.stats && r.stats.count > 0 ? (
+                      <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
+                        {pct(r.stats.framing.negative / r.stats.count)}
+                      </span>
+                    ) : ("—") },
+                { id: "negn", label: "Negative n", num: true,
+                  val: (r) => r.stats?.framing.negative ?? null },
+              ]}
+              rows={g.series}
+            />
+          </div>
+        ))}
+      </div>
       <div className="mt-2">
         <div className="section-label mb-2">Verbatims — {verbBrand}</div>
         {!allowed ? (
