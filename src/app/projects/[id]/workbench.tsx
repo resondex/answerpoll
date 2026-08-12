@@ -1594,6 +1594,7 @@ function BattlegroundGroup({
   return (
     <div className="grid gap-3">
       <GroupLabel label={g.label} />
+      {display === "grid" && (
       <Download
         name={`battleground${g.label ? `_${slugify(g.label)}` : ""}`}
         header={["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"]}
@@ -1613,6 +1614,7 @@ function BattlegroundGroup({
           )
         }
       />
+      )}
       {display === "table" ? (
         <SortTable
           filename={`battleground${g.label ? `_${slugify(g.label)}` : ""}.csv`}
@@ -1621,21 +1623,44 @@ function BattlegroundGroup({
             { id: "prompt", label: "Prompt",
               val: (r: { pg: NonNullable<RunMetrics["promptGrid"]>[number]; brand: string; color: string }) => r.pg.text,
               render: (r) => (
-                <span className="line-clamp-2 max-w-[22rem]">{r.pg.text}</span>
+                <span className="line-clamp-2 max-w-[20rem]" title={r.pg.text}>
+                  {r.pg.text}
+                </span>
               ) },
-            { id: "topic", label: "Topic", val: (r) => r.pg.theme },
+            { id: "topic", label: "Topic", val: (r) => r.pg.theme,
+              render: (r) => (
+                <span className="whitespace-nowrap">
+                  {r.pg.theme.replace("_", " ")}
+                </span>
+              ) },
             { id: "brand", label: "Brand", val: (r) => r.brand,
               color: (r) => r.color,
-              render: (r) => <span className="font-medium">{r.brand}</span> },
+              render: (r) => (
+                <span className="font-medium whitespace-nowrap">{r.brand}</span>
+              ) },
             { id: "named", label: "Named", num: true,
               val: (r) => r.pg.answers > 0 ? Math.round((r.pg.targetNamed / r.pg.answers) * 100) : null,
-              render: (r) => `${r.pg.targetNamed}/${r.pg.answers}` },
+              render: (r) => (
+                <span className="whitespace-nowrap">
+                  {r.pg.targetNamed}/{r.pg.answers}
+                </span>
+              ) },
             { id: "picked", label: "Picked", num: true,
               val: (r) => r.pg.decided > 0 ? Math.round((r.pg.targetPicks / r.pg.decided) * 100) : null,
-              render: (r) => `${r.pg.targetPicks}/${r.pg.decided}` },
-            { id: "consensus", label: "Consensus pick",
-              val: (r) => r.pg.modalPick ?? null },
-            { id: "status", label: "Status", val: (r) => r.pg.badge },
+              render: (r) => (
+                <span className="whitespace-nowrap">
+                  {r.pg.targetPicks}/{r.pg.decided}
+                </span>
+              ) },
+            { id: "consensus", label: "Consensus", 
+              val: (r) => r.pg.modalPick ?? null,
+              render: (r) => (
+                <span className="whitespace-nowrap">{r.pg.modalPick ?? "—"}</span>
+              ) },
+            { id: "status", label: "Status", val: (r) => r.pg.badge,
+              render: (r) => (
+                <span className="whitespace-nowrap">{r.pg.badge}</span>
+              ) },
           ]}
           rows={series.flatMap((x) =>
             base.flatMap((g0) => {
