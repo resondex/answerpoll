@@ -71,6 +71,7 @@ export default function AnswersView({
     if (filter.brand) q.set("brand", filter.brand);
     if (filter.framing) q.set("framing", filter.framing);
     if (filter.outcome) q.set("outcome", filter.outcome);
+    q.set("focus", filter.brand ?? clientBrand);
     fetch(`/api/runs/${runId}/answers?${q.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -84,7 +85,7 @@ export default function AnswersView({
     return () => {
       cancelled = true;
     };
-  }, [runId, filter]);
+  }, [runId, filter, clientBrand]);
 
   const set = (patch: Partial<AnswersFilter>) =>
     setFilter({ ...filter, ...patch });

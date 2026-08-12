@@ -28,6 +28,10 @@ export async function GET(
   const engine = q.get("engine") || null;
   const mode = q.get("mode");
   const brand = q.get("brand") || null;
+  /** Whose outcome "chosen"/"lost" refers to — the view's subject brand,
+   * independent of any mention filter. Without this, asking for "chose
+   * jira" while the mention filter says "any brand" matched nothing. */
+  const focus = q.get("focus") || null;
   const framing = q.get("framing") || null; // recommended | mentioned | negative | absent
   const outcome = q.get("outcome") || null; // chosen | lost | no_pick
   const limit = Math.min(Number(q.get("limit") ?? 40), 100);
@@ -42,6 +46,7 @@ export async function GET(
   const canon = buildCanonicalizer(dictionary);
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const brandNorm = brand ? canon.norm(brand) : null;
+  const focusNorm = focus ? canon.norm(focus) : brandNorm;
 
   const byResponse = new Map<string, { brand: string; rank: number; framing: string }[]>();
   for (const m of mentions) {
@@ -80,10 +85,10 @@ export async function GET(
       if (outcome) {
         const pickNorm = r.top_pick_brand ? canon.norm(r.top_pick_brand) : null;
         if (outcome === "no_pick" && r.outcome === "pick") return false;
-        if (outcome === "chosen" && (!brandNorm || pickNorm !== brandNorm)) return false;
+        if (outcome === "chosen" && (!focusNorm || pickNorm !== focusNorm)) return false;
         if (outcome === "lost") {
           if (r.outcome !== "pick") return false;
-          if (brandNorm && pickNorm === brandNorm) return false;
+          if (focusNorm && pickNorm === focusNorm) return false;
         }
       }
       return true;
