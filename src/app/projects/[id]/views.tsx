@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
+import { METRICS } from "@/lib/metrics_dictionary";
 
 const pct = (x: number) =>
   x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
@@ -37,9 +38,6 @@ function Note({ sentences }: { sentences: string[] }) {
     <div className="my-3 rounded-lg bg-primary-soft/40 px-3.5 py-2.5 grid gap-1">
       {sentences.map((t, i) => (
         <p key={i} className="text-[13px] leading-snug text-ink-2">
-          <span className="font-semibold text-primary">
-            {i === 0 ? "AI reading (verified): " : ""}
-          </span>
           {t}
         </p>
       ))}
@@ -110,12 +108,6 @@ export function BoardroomView({
   openWorkbench,
 }: ViewProps) {
   const target = metrics.brands.find((b) => b.isTarget)!;
-  const shortlisted = metrics.positionDist
-    ? (metrics.positionDist.r1 +
-        metrics.positionDist.r2 +
-        metrics.positionDist.r3) /
-      Math.max(metrics.unbrandedResponses, 1)
-    : null;
   const decisions = insights?.plays.slice(0, 3) ?? [];
   return (
     <div className="grid gap-5">
@@ -146,19 +138,19 @@ export function BoardroomView({
         <div className="grid grid-cols-3 gap-4 text-center">
           {[
             {
-              label: "Named",
+              label: METRICS.mentioned.label,
               value: pct(target.mentionRate),
               sub: `${target.mentionCount} of ${metrics.unbrandedResponses} answers`,
             },
             {
-              label: "Shortlisted",
-              value: shortlisted !== null ? pct(shortlisted) : "—",
-              sub: "top-3 in the answer",
+              label: METRICS.recommended.label,
+              value: pct(target.recommendedRate),
+              sub: `endorsed in ${target.recommendedCount}`,
             },
             {
-              label: "Chosen",
-              value: metrics.firstPick ? pct(metrics.firstPick.rate) : "—",
-              sub: "the crowned pick",
+              label: METRICS.chosen.label,
+              value: pct(target.chosenRate),
+              sub: `crowned in ${target.chosenCount}`,
             },
           ].map((s, i) => (
             <div key={s.label} className="relative">
@@ -178,8 +170,8 @@ export function BoardroomView({
           ))}
         </div>
         <p className="text-[13px] text-ink-3 text-center mt-5">
-          Named → shortlisted → chosen. The drop between stages says what kind
-          of problem you have.{" "}
+          Mentioned → recommended → chosen, all of the same {metrics.unbrandedResponses}{" "}
+          answers. The drop between stages says what kind of problem you have.{" "}
           <button type="button" onClick={() => openWorkbench("choice", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
             className="font-semibold text-primary hover:opacity-80">
             Verify ↗
@@ -300,7 +292,7 @@ export function QuestionsView({
             {metrics.firstPick ? pct(metrics.firstPick.rate) : "—"}
           </span>
           <span className="text-[13px] text-ink-3">
-            of decided answers crown {project.brand}
+            of answers crown {project.brand}
             {instinctMode && searchMode
               ? ` · instinct ${pct(instinctMode.pickRate)} / search ${pct(searchMode.pickRate)}`
               : ""}

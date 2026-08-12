@@ -132,6 +132,8 @@ export function HeadLabel({ label, arrow }: { label: string; arrow: string }) {
 export interface Col<T> {
   id: string;
   label: string;
+  /** Definition and denominator, from the metric dictionary. */
+  tip?: string;
   num?: boolean;
   color?: (r: T) => string | undefined;
   val: (r: T) => string | number | null;
@@ -195,10 +197,21 @@ export function SortTable<T>({
                 >
                   {/* The arrow always occupies its slot, so sorting a
                       different column never re-measures the header. */}
-                  <HeadLabel
-                    label={c.label}
-                    arrow={sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
-                  />
+                  {c.tip ? (
+                    <Tip tip={c.tip}>
+                      <span className="cursor-help border-b border-dotted border-ink-3/50">
+                        <HeadLabel
+                          label={c.label}
+                          arrow={sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
+                        />
+                      </span>
+                    </Tip>
+                  ) : (
+                    <HeadLabel
+                      label={c.label}
+                      arrow={sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
+                    />
+                  )}
                 </th>
               ))}
             </tr>

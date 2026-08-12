@@ -322,14 +322,14 @@ export default function RunResults({
         className={`grid gap-3 sm:grid-cols-2 ${metrics.coded ? "lg:grid-cols-4" : "sm:grid-cols-3"}`}
       >
         <StatTile
-          label="Mention rate"
+          label="Mentioned rate"
           value={pct(target.mentionRate)}
           detail={`named in ${target.mentionCount} of ${metrics.unbrandedResponses} answers`}
           hint="Share of unbranded answers that name you at all"
         />
         {metrics.coded && metrics.firstPick && (
           <StatTile
-            label="First pick"
+            label="Chosen"
             value={pct(metrics.firstPick.rate)}
             detail={`${metrics.firstPick.count} of ${metrics.firstPick.of} answers`}
             hint="Answers that crown your brand as THE recommendation - being mentioned is representation, being picked is the win"
@@ -686,8 +686,7 @@ export default function RunResults({
         </summary>
         <p className="text-[13px] text-ink-3 mb-4 mt-3">
           Every brand named in this run, with its full metrics
-          {setBrands.length > 25 ? ` — top 25 of ${setBrands.length} shown` : ""}
-          .
+.
         </p>
         <SortTable
           filename="brands.csv"

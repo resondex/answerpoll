@@ -15,7 +15,7 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-const INSIGHTS_VERSION = "v8";
+const INSIGHTS_VERSION = "v9";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -85,12 +85,20 @@ function buildFacts(
     );
   }
   add(
+    `${brandName} recommended rate (answers that endorse it)`,
+    pct(target.recommendedRate)
+  );
+  add(
+    `${brandName} chosen rate (answers that crown it)`,
+    pct(target.chosenRate)
+  );
+  add(
     `${brandName} average position when named`,
     target.avgRank ? `#${target.avgRank.toFixed(1)}` : "never named"
   );
   if (metrics.positionDist) {
     add(
-      `${brandName} position distribution`,
+      `${brandName} position spread when named (order in the answer, not endorsement)`,
       `#1 in ${metrics.positionDist.r1} answers, #2 in ${metrics.positionDist.r2}, #3 in ${metrics.positionDist.r3}, 4th-or-lower in ${metrics.positionDist.r4plus}`
     );
   }
@@ -340,6 +348,11 @@ export async function buildRunInsights(
           "Read your sentence back with the value dropped in before " +
           "committing to it. Do NOT number your insights ('One.', '1.') — " +
           "numbering is applied by the renderer.\n\n" +
+          "THE FUNNEL — the study's spine is mentioned → recommended → " +
+          "chosen: named at all, endorsed, then crowned as the single pick. " +
+          "Never describe position or order as a funnel stage; position is " +
+          "about where a brand sits in a list, which only matters when the " +
+          "engine ranks.\n\n" +
           "Produce:\n" +
           "- sections: one per analysis with 2-4 numbered insights each. Keys " +
           "and titles, in order: scorecard 'Headline'; leaderboard 'Brand " +

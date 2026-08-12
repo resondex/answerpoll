@@ -167,6 +167,13 @@ export interface BrandStats {
   isCompetitor: boolean;
   mentionCount: number;
   mentionRate: number;
+  /** Answers that endorse the brand — the funnel's middle stage. A crowned
+   * brand always counts as recommended, so the funnel can never invert. */
+  recommendedCount: number;
+  recommendedRate: number;
+  /** Answers that crown this brand, over the same base as the two above. */
+  chosenCount: number;
+  chosenRate: number;
   ciLow: number;
   ciHigh: number;
   avgRank: number | null;
@@ -303,6 +310,8 @@ export interface RunMetrics {
         outcomes: { pick: number; no_pick: number; clarification: number };
         style: {
           avgWords: number;
+          /** Distinct brands the engine names per answer — category crowding. */
+          avgBrands: number;
           recRate: number;
           priceRate: number;
           specRate: number;

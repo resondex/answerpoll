@@ -249,8 +249,10 @@ export function computeRunMetricsFromData(
     entry.rows.push(m);
     byBrand.set(norm, entry);
   }
+  // Share of voice divides by every brand's distinct-answer count, so the
+  // numerator and denominator are in the same unit.
   const totalMentions = [...byBrand.values()].reduce(
-    (acc, e) => acc + e.rows.length,
+    (acc, e) => acc + new Set(e.rows.map((r) => r.response_id)).size,
     0
   );
 
@@ -272,16 +274,35 @@ export function computeRunMetricsFromData(
       negative: 0,
     };
     for (const row of rows) framing[row.framing as Framing]++;
+    // Funnel middle stage. Crowning a brand is the strongest endorsement
+    // there is, so a chosen answer counts as recommended even when the
+    // coder framed the mention neutrally — without this the funnel can
+    // invert (stage 3 wider than stage 2).
+    const chosenIds = new Set(
+      unbranded
+        .filter((r) => r.top_pick_brand && canon.norm(r.top_pick_brand) === norm)
+        .map((r) => r.id)
+    );
+    const recommendedIds = new Set(chosenIds);
+    for (const row of rows) {
+      if (row.framing === "recommended") recommendedIds.add(row.response_id);
+    }
     return {
       brand: isT(norm) && !focus ? project.brand : entry.display,
       isTarget: isT(norm),
       isCompetitor: roleOf(norm) === "competitor",
       mentionCount: k,
       mentionRate: n > 0 ? k / n : 0,
+      recommendedCount: recommendedIds.size,
+      recommendedRate: n > 0 ? recommendedIds.size / n : 0,
+      chosenCount: chosenIds.size,
+      chosenRate: n > 0 ? chosenIds.size / n : 0,
       ciLow: ci.low,
       ciHigh: ci.high,
       avgRank: k > 0 ? rows.reduce((acc, r) => acc + r.rank, 0) / k : null,
-      shareOfVoice: totalMentions > 0 ? entry.rows.length / totalMentions : 0,
+      // Distinct answers, matching the unit the mentioned rate uses — raw
+      // mention rows double-count a brand named under two aliases.
+      shareOfVoice: totalMentions > 0 ? k / totalMentions : 0,
       framing,
     };
   });
@@ -301,6 +322,15 @@ export function computeRunMetricsFromData(
       if (!prev || m.rank < prev.rank) per.set(m.response_id, m);
     }
     const rows = [...per.values()];
+    const chosenIds = new Set(
+      unbranded
+        .filter((r) => r.top_pick_brand && isT(canon.norm(r.top_pick_brand)))
+        .map((r) => r.id)
+    );
+    const recIds = new Set(chosenIds);
+    for (const row of rows) {
+      if (row.framing === "recommended") recIds.add(row.response_id);
+    }
     const ci = wilson(rows.length, unbranded.length);
     const framing: Record<Framing, number> = {
       recommended: 0,
@@ -315,6 +345,10 @@ export function computeRunMetricsFromData(
       isCompetitor: false,
       mentionCount: rows.length,
       mentionRate: unbranded.length > 0 ? rows.length / unbranded.length : 0,
+      recommendedCount: recIds.size,
+      recommendedRate: unbranded.length > 0 ? recIds.size / unbranded.length : 0,
+      chosenCount: chosenIds.size,
+      chosenRate: unbranded.length > 0 ? chosenIds.size / unbranded.length : 0,
       ciLow: ci.low,
       ciHigh: ci.high,
       avgRank:
@@ -382,6 +416,23 @@ export function computeRunMetricsFromData(
                 .length,
             },
             style: {
+              avgBrands:
+                rows.length > 0
+                  ? Number(
+                      (
+                        rows.reduce(
+                          (a, r) =>
+                            a +
+                            new Set(
+                              mentions
+                                .filter((m) => m.response_id === r.id)
+                                .map((m) => canon.norm(m.brand))
+                            ).size,
+                          0
+                        ) / rows.length
+                      ).toFixed(1)
+                    )
+                  : 0,
               avgWords:
                 rows.length > 0
                   ? Math.round(
@@ -609,6 +660,10 @@ export function computeRunMetricsFromData(
       isCompetitor: false,
       mentionCount: 0,
       mentionRate: 0,
+      recommendedCount: 0,
+      recommendedRate: 0,
+      chosenCount: 0,
+      chosenRate: 0,
       ciLow: ci.low,
       ciHigh: ci.high,
       avgRank: null,

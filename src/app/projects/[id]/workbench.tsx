@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
+import { METRICS, metricTip } from "@/lib/metrics_dictionary";
 import {
   Download,
   HeadLabel,
@@ -90,8 +91,12 @@ function brandStats(m: RunMetrics | null) {
     sov: t.shareOfVoice,
     framing: t.framing,
     firstNamed: pd && un > 0 ? pd.r1 / un : null,
-    top3: pd && un > 0 ? (pd.r1 + pd.r2 + pd.r3) / un : null,
-    chosen: m.firstPick?.rate ?? null,
+    // The funnel: mentioned → recommended → chosen, all over the same base.
+    recommended: t.recommendedRate,
+    recommendedCount: t.recommendedCount,
+    chosen: t.chosenRate,
+    chosenCount: t.chosenCount,
+    positionDist: pd,
     m,
   };
 }
@@ -735,10 +740,10 @@ function Visibility({
   set: (p: Partial<WbState>) => void;
 }) {
   const measures = [
-    ["named", "Named rate"],
-    ["firstNamed", "First-named"],
-    ["sov", "Share of voice"],
-    ["position", "Avg position"],
+    ["named", METRICS.mentionedRate.label],
+    ["firstNamed", METRICS.firstNamed.label],
+    ["sov", METRICS.shareOfVoice.label],
+    ["position", METRICS.avgPosition.label],
   ] as const;
   const valOf = (x: Series[number]): number | null =>
     !x.stats ? null
@@ -808,46 +813,56 @@ function Visibility({
                     color: (r) => r.color,
                     render: (r) => <span className="font-medium">{r.name}</span> },
                   ...(st.showCounts
-                    ? [{ id: "answers", label: "Answers", num: true,
+                    ? [{ id: "answers", label: METRICS.answers.label, num: true,
+                        tip: metricTip("answers"),
                         val: (r: Series[number]) =>
                           r.stats?.m.unbrandedResponses ?? null }]
                     : []),
-                  { id: "named", label: "Named", num: true,
+                  { id: "named", label: METRICS.mentioned.label, num: true,
+                    tip: metricTip("mentionedRate"),
                     val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
                     render: (r) => (r.stats ? pct(r.stats.named) : "—") },
                   ...(st.showCounts
-                    ? [{ id: "namedn", label: "Named n", num: true,
+                    ? [{ id: "namedn", label: "Mentioned n", num: true,
                         val: (r: Series[number]) => r.stats?.count ?? null }]
                     : []),
+                  { id: "rec", label: METRICS.recommended.label, num: true,
+                    tip: metricTip("recommended"),
+                    val: (r: Series[number]) =>
+                      r.stats ? Math.round(r.stats.recommended * 100) : null,
+                    render: (r: Series[number]) =>
+                      r.stats ? pct(r.stats.recommended) : "—" },
+                  { id: "chosen", label: METRICS.chosen.label, num: true,
+                    tip: metricTip("chosen"),
+                    val: (r: Series[number]) =>
+                      r.stats ? Math.round(r.stats.chosen * 100) : null,
+                    render: (r: Series[number]) =>
+                      r.stats ? pct(r.stats.chosen) : "—" },
                   ...(st.showCI
-                    ? [{ id: "ci", label: "Named 95% CI", num: true,
+                    ? [{ id: "ci", label: "Mentioned 95% CI", num: true,
                         val: (r: Series[number]) =>
                           r.stats ? Math.round(r.stats.ciLow * 100) : null,
                         render: (r: Series[number]) =>
                           r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" }]
                     : []),
-                  { id: "fn", label: "First-named", num: true,
+                  { id: "fn", label: METRICS.firstNamed.label, num: true,
+                    tip: metricTip("firstNamed"),
                     val: (r) =>
                       r.stats?.firstNamed !== null && r.stats
                         ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
                     render: (r) =>
                       r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
-                  { id: "sov", label: "Share of voice", num: true,
+                  { id: "sov", label: METRICS.shareOfVoice.label, num: true,
+                    tip: metricTip("shareOfVoice"),
                     val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
                     render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
-                  { id: "pos", label: "Avg position", num: true,
+                  { id: "pos", label: METRICS.avgPosition.label, num: true,
+                    tip: metricTip("avgPosition"),
                     val: (r) => r.stats?.avgRank ?? null,
                     render: (r) =>
                       r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
-                  { id: "rec", label: "Recommended", num: true,
-                    val: (r) =>
-                      r.stats && r.stats.count > 0
-                        ? Math.round((r.stats.framing.recommended / r.stats.count) * 100)
-                        : null,
-                    render: (r) =>
-                      r.stats && r.stats.count > 0
-                        ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
-                  { id: "neg", label: "Negative", num: true,
+                  { id: "neg", label: METRICS.negative.label, num: true,
+                    tip: metricTip("negative"),
                     val: (r) =>
                       r.stats && r.stats.count > 0
                         ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
@@ -877,6 +892,7 @@ function SoloVisibility({ s }: { s: Series[number] }) {
         {[
           [pct(st.named), "named"],
           [st.firstNamed !== null ? pct(st.firstNamed) : "—", "first-named"],
+          [pct(st.recommended), "recommended"],
           [pct(st.sov), "share of voice"],
           [st.avgRank ? `#${st.avgRank.toFixed(1)}` : "—", "avg position"],
         ].map(([v, l]) => (
@@ -890,9 +906,9 @@ function SoloVisibility({ s }: { s: Series[number] }) {
         <div className="rounded-xl border border-line p-4">
           <div className="section-label mb-2">Funnel</div>
           {[
-            ["Named", st.named],
-            ["Top-3", st.top3],
-            ["Chosen", st.chosen],
+            [METRICS.mentioned.label, st.named],
+            [METRICS.recommended.label, st.recommended],
+            [METRICS.chosen.label, st.chosen],
           ].map(([l, v]) => (
             <div key={l as string} className="flex justify-between text-sm py-0.5">
               <span className="text-ink-2">{l}</span>
@@ -904,13 +920,13 @@ function SoloVisibility({ s }: { s: Series[number] }) {
         </div>
         <div className="rounded-xl border border-line p-4">
           <div className="section-label mb-2">Position when named</div>
-          {st.m.positionDist ? (
+          {st.positionDist ? (
             (
               [
-                ["#1", st.m.positionDist.r1],
-                ["#2", st.m.positionDist.r2],
-                ["#3", st.m.positionDist.r3],
-                ["4th+", st.m.positionDist.r4plus],
+                ["#1", st.positionDist.r1],
+                ["#2", st.positionDist.r2],
+                ["#3", st.positionDist.r3],
+                ["4th+", st.positionDist.r4plus],
               ] as const
             ).map(([l, v]) => (
               <div key={l} className="flex justify-between text-sm py-0.5">
@@ -949,12 +965,14 @@ function SoloVisibility({ s }: { s: Series[number] }) {
 
 /* ---------------- Choice ---------------- */
 function Choice({ groups, st }: { groups: Group[]; st: WbState }) {
-  const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
+  const [metric, setMetric] = useState<
+    "share" | "chosen" | "recommended" | "named"
+  >("share");
   const metricDefs = [
-    ["share", "Share of decided"],
-    ["chosen", "Chosen rate"],
-    ["top3", "Top-3 rate"],
-    ["named", "Named rate"],
+    ["share", METRICS.shareOfDecided.label],
+    ["chosen", METRICS.chosen.label],
+    ["recommended", METRICS.recommended.label],
+    ["named", METRICS.mentionedRate.label],
   ] as const;
 
   return (
@@ -991,7 +1009,7 @@ function ChoiceGroup({
   showCounts,
 }: {
   g: Group;
-  metric: "share" | "chosen" | "top3" | "named";
+  metric: "share" | "chosen" | "recommended" | "named";
   showCI: boolean;
   showCounts: boolean;
 }) {
@@ -1001,7 +1019,11 @@ function ChoiceGroup({
   const valFor = (x: Series[number]) => {
     if (!x.stats) return null;
     if (metric === "share") return tp(x.name)?.shareOfDecided ?? 0;
-    return metric === "chosen" ? x.stats.chosen : metric === "top3" ? x.stats.top3 : x.stats.named;
+    return metric === "chosen"
+      ? x.stats.chosen
+      : metric === "recommended"
+        ? x.stats.recommended
+        : x.stats.named;
   };
   const rows = [...g.series].sort((a, b) => (valFor(b) ?? 0) - (valFor(a) ?? 0));
   const unselected =
@@ -1074,19 +1096,18 @@ function ChoiceGroup({
           { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
             color: (r) => r.color,
             render: (r) => <span className="font-medium">{r.name}</span> },
-          { id: "named", label: "Named", num: true,
+          { id: "named", label: METRICS.mentioned.label, num: true,
+            tip: metricTip("mentionedRate"),
             val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
             render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-          { id: "top3", label: "Top-3", num: true,
-            val: (r) =>
-              r.stats?.top3 !== null && r.stats ? Math.round((r.stats.top3 ?? 0) * 100) : null,
-            render: (r) =>
-              r.stats?.top3 !== null && r.stats ? pct(r.stats.top3!) : "—" },
-          { id: "chosen", label: "Chosen", num: true,
-            val: (r) =>
-              r.stats?.chosen !== null && r.stats ? Math.round((r.stats.chosen ?? 0) * 100) : null,
-            render: (r) =>
-              r.stats?.chosen !== null && r.stats ? pct(r.stats.chosen!) : "—" },
+          { id: "recommended", label: METRICS.recommended.label, num: true,
+            tip: metricTip("recommended"),
+            val: (r) => (r.stats ? Math.round(r.stats.recommended * 100) : null),
+            render: (r) => (r.stats ? pct(r.stats.recommended) : "—") },
+          { id: "chosen", label: METRICS.chosen.label, num: true,
+            tip: metricTip("chosen"),
+            val: (r) => (r.stats ? Math.round(r.stats.chosen * 100) : null),
+            render: (r) => (r.stats ? pct(r.stats.chosen) : "—") },
           ...(showCI
             ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
                 val: (r: Series[number]) =>
@@ -1099,15 +1120,18 @@ function ChoiceGroup({
             : []),
           ...(showCounts
             ? [
-                { id: "coded", label: "Answers", num: true,
-                  val: (r: Series[number]) => r.stats?.m.firstPick?.of ?? null },
+                { id: "coded", label: METRICS.answers.label, num: true,
+                  tip: metricTip("answers"),
+                  val: (r: Series[number]) => r.stats?.m.unbrandedResponses ?? null },
                 { id: "chosenn", label: "Chosen n", num: true,
                   val: (r: Series[number]) => r.stats?.m.firstPick?.count ?? null },
               ]
             : []),
-          { id: "picks", label: "Picks", num: true,
+          { id: "picks", label: METRICS.picks.label, num: true,
+            tip: metricTip("picks"),
             val: (r) => tp(r.name)?.picks ?? 0 },
-          { id: "share", label: "Share of decided", num: true,
+          { id: "share", label: METRICS.shareOfDecided.label, num: true,
+            tip: metricTip("shareOfDecided"),
             val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
             render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
         ]}
@@ -1670,7 +1694,8 @@ function Risk({
                   render: (r) =>
                     r.stats && r.stats.count > 0
                       ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
-                { id: "neutral", label: "Neutral", num: true,
+                { id: "neutral", label: METRICS.neutral.label, num: true,
+                  tip: metricTip("neutral"),
                   val: (r) =>
                     r.stats && r.stats.count > 0
                       ? Math.round((r.stats.framing.mentioned / r.stats.count) * 100) : null,
@@ -1682,7 +1707,8 @@ function Risk({
                         </span>
                       </Tip>
                     ) : ("—") },
-                { id: "negpct", label: "Negative", num: true,
+                { id: "negpct", label: METRICS.negative.label, num: true,
+                  tip: metricTip("negative"),
                   val: (r) =>
                     r.stats && r.stats.count > 0
                       ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
@@ -1755,6 +1781,9 @@ function Style({ pooled }: { pooled: RunMetrics }) {
                 )}
               </span>
             ) },
+          { id: "brands", label: METRICS.brandsPerAnswer.label, num: true,
+            tip: metricTip("brandsPerAnswer"),
+            val: (e) => e.style.avgBrands },
           { id: "words", label: "Avg words", num: true, val: (e) => e.style.avgWords },
           { id: "rec", label: "Recommends", num: true,
             val: (e) => Math.round(e.style.recRate * 100),
@@ -1770,7 +1799,8 @@ function Style({ pooled }: { pooled: RunMetrics }) {
             render: (e) => pct(e.style.clarRate) },
           { id: "opts", label: "Options offered", num: true,
             val: (e) => Number(e.style.avgOptions.toFixed(1)) },
-          { id: "searched", label: "Searches", num: true,
+          { id: "searched", label: METRICS.searchRate.label, num: true,
+            tip: metricTip("searchRate"),
             val: (e) =>
               e.searchRate !== null ? Math.round(e.searchRate * 100) : null,
             render: (e) =>
