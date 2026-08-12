@@ -933,42 +933,73 @@ function Visibility({
           right: r.right,
         }))} />
       )}
-      {st.split === "engine" && (
-        <div className="grid gap-4">
-          {(series[0].stats?.m.engines ?? []).map((e) => (
-            <div key={e.model}>
-              <div className="section-label mb-1.5">{e.model}</div>
-              <SeriesBars rows={series.map((sr) => {
-                const row = sr.stats?.m.engines?.find((x) => x.model === e.model);
-                return {
-                  label: sr.name, color: sr.color, value: row?.namedRate ?? null,
-                  right: row ? pct(row.namedRate) : "—",
-                };
-              })} />
-            </div>
-          ))}
-        </div>
-      )}
-      {st.split === "mode" && (
-        <div className="grid gap-4">
-          {(series[0].stats?.m.modes ?? []).map((mo) => (
-            <div key={mo.mode}>
-              <div className="section-label mb-1.5">
-                {mo.mode === "search" ? "Search-enabled" : "Instinct"}
-              </div>
-              <SeriesBars rows={series.map((sr) => {
-                const row = sr.stats?.m.modes?.find((x) => x.mode === mo.mode);
-                return {
-                  label: sr.name, color: sr.color, value: row?.namedRate ?? null,
-                  right: row ? pct(row.namedRate) : "—",
-                };
-              })} />
-            </div>
-          ))}
-        </div>
-      )}
       {st.split !== "none" && (
-        <FacetTable series={series} split={st.split} />
+        <div className="grid gap-7">
+          {(st.split === "engine"
+            ? (series[0].stats?.m.engines ?? []).map((e) => ({
+                key: e.model,
+                label: e.model,
+              }))
+            : (series[0].stats?.m.modes ?? []).map((m) => ({
+                key: m.mode,
+                label: m.mode === "search" ? "Search-enabled" : "Instinct",
+              }))
+          ).map((facet) => {
+            const rows = series.flatMap((sr) => {
+              const f =
+                st.split === "engine"
+                  ? sr.stats?.m.engines?.find((x) => x.model === facet.key)
+                  : sr.stats?.m.modes?.find((x) => x.mode === facet.key);
+              return f ? [{ brand: sr.name, color: sr.color, f }] : [];
+            });
+            if (rows.length === 0) return null;
+            const searched = rows[0].f.searchRate;
+            return (
+              <div key={facet.key}>
+                <div className="section-label mb-1.5">
+                  {facet.label}
+                  {searched !== null && (
+                    <span className="ml-2 font-normal normal-case tracking-normal text-ink-3">
+                      searched on {pct(searched)} of answers
+                    </span>
+                  )}
+                </div>
+                <SeriesBars rows={rows.map((r) => ({
+                  label: r.brand,
+                  color: r.color,
+                  value: r.f.namedRate,
+                  right: pct(r.f.namedRate),
+                }))} />
+                <SortTable
+                  filename={`visibility_${facet.key}.csv`}
+                  defaultSort={{ id: "named", dir: -1 }}
+                  cols={[
+                    { id: "brand", label: "Brand",
+                      val: (r: (typeof rows)[number]) => r.brand,
+                      color: (r) => r.color,
+                      render: (r) => <span className="font-medium">{r.brand}</span> },
+                    { id: "answers", label: "Answers", num: true,
+                      val: (r) => r.f.answers },
+                    { id: "named", label: "Named", num: true,
+                      val: (r) => Math.round(r.f.namedRate * 100),
+                      render: (r) => pct(r.f.namedRate) },
+                    { id: "ci", label: "95% CI", num: true,
+                      val: (r) => Math.round(r.f.ciLow * 100),
+                      render: (r) => `${pct(r.f.ciLow)}–${pct(r.f.ciHigh)}` },
+                    { id: "pick", label: "First pick", num: true,
+                      val: (r) => Math.round(r.f.pickRate * 100),
+                      render: (r) => pct(r.f.pickRate) },
+                    { id: "pos", label: "Avg position", num: true,
+                      val: (r) => r.f.avgPosition,
+                      render: (r) =>
+                        r.f.avgPosition ? `#${r.f.avgPosition.toFixed(1)}` : "—" },
+                  ]}
+                  rows={rows}
+                />
+              </div>
+            );
+          })}
+        </div>
       )}
       {st.split === "none" && (
         <SortTable
@@ -1022,91 +1053,6 @@ function Visibility({
         />
       )}
     </>
-  );
-}
-
-/** The broken-out numbers: one row per brand x facet, same table norms. */
-function FacetTable({
-  series,
-  split,
-}: {
-  series: Series;
-  split: "engine" | "mode";
-}) {
-  type Row = {
-    facet: string;
-    brand: string;
-    color: string;
-    answers: number;
-    named: number;
-    namedRate: number;
-    ciLow: number;
-    ciHigh: number;
-    picks: number;
-    pickRate: number;
-    avgPosition: number | null;
-    searchRate: number | null;
-  };
-  const rows: Row[] = series.flatMap((s) => {
-    if (!s.stats) return [];
-    const facets =
-      split === "engine"
-        ? (s.stats.m.engines ?? []).map((e) => ({
-            facet: e.model,
-            answers: e.answers,
-            named: e.named,
-            namedRate: e.namedRate,
-            ciLow: e.ciLow,
-            ciHigh: e.ciHigh,
-            picks: e.picks,
-            pickRate: e.pickRate,
-            avgPosition: e.avgPosition,
-            searchRate: e.searchRate,
-          }))
-        : (s.stats.m.modes ?? []).map((m) => ({
-            facet: m.mode === "search" ? "search-enabled" : "instinct",
-            answers: m.answers,
-            named: m.named,
-            namedRate: m.namedRate,
-            ciLow: m.ciLow,
-            ciHigh: m.ciHigh,
-            picks: m.picks,
-            pickRate: m.pickRate,
-            avgPosition: m.avgPosition,
-            searchRate: m.searchRate,
-          }));
-    return facets.map((f) => ({ ...f, brand: s.name, color: s.color }));
-  });
-  if (rows.length === 0) return null;
-  return (
-    <SortTable
-      filename={`visibility_by_${split}.csv`}
-      defaultSort={{ id: "namedrate", dir: -1 }}
-      cols={[
-        { id: "facet", label: split === "engine" ? "Engine" : "Instrument",
-          val: (r: Row) => r.facet },
-        { id: "brand", label: "Brand", val: (r) => r.brand,
-          color: (r) => r.color,
-          render: (r) => <span className="font-medium">{r.brand}</span> },
-        { id: "answers", label: "Answers", num: true, val: (r) => r.answers },
-        { id: "namedrate", label: "Named", num: true,
-          val: (r) => Math.round(r.namedRate * 100),
-          render: (r) => pct(r.namedRate) },
-        { id: "ci", label: "95% CI", num: true,
-          val: (r) => Math.round(r.ciLow * 100),
-          render: (r) => `${pct(r.ciLow)}–${pct(r.ciHigh)}` },
-        { id: "pickrate", label: "First pick", num: true,
-          val: (r) => Math.round(r.pickRate * 100),
-          render: (r) => pct(r.pickRate) },
-        { id: "pos", label: "Avg position", num: true,
-          val: (r) => r.avgPosition,
-          render: (r) => (r.avgPosition ? `#${r.avgPosition.toFixed(1)}` : "—") },
-        { id: "searched", label: "Searched", num: true,
-          val: (r) => (r.searchRate !== null ? Math.round(r.searchRate * 100) : null),
-          render: (r) => (r.searchRate !== null ? pct(r.searchRate) : "—") },
-      ]}
-      rows={rows}
-    />
   );
 }
 
