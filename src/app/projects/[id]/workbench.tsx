@@ -382,14 +382,38 @@ function downloadCsv(
   URL.revokeObjectURL(a.href);
 }
 
-/** Instant tooltip — no native-title delay. */
+/** Instant tooltip. Rendered position:fixed so it escapes overflow-x
+ * scroll containers (tables) instead of being clipped at their edge. */
 function Tip({ tip, children }: { tip: string; children: React.ReactNode }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   return (
-    <span className="group/tip relative inline-block">
+    <span
+      className="inline-block"
+      onMouseEnter={(e) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        setPos({ x: r.left + r.width / 2, y: r.top });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
       {children}
-      <span className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-1.5 hidden w-max max-w-[22rem] -translate-x-1/2 rounded-lg border border-line bg-surface px-3 py-2 text-left text-[12px] font-normal normal-case tracking-normal text-ink-2 shadow-lg group-hover/tip:block">
-        {tip}
-      </span>
+      {pos && (
+        <span
+          style={{
+            position: "fixed",
+            left: Math.min(
+              Math.max(pos.x, Math.min(176, window.innerWidth / 2)),
+              window.innerWidth - Math.min(176, window.innerWidth / 2)
+            ),
+            top: pos.y - 8,
+            transform: "translate(-50%, -100%)",
+            zIndex: 50,
+            maxWidth: Math.min(336, window.innerWidth - 16),
+          }}
+          className="pointer-events-none w-max rounded-lg border border-line bg-surface px-3 py-2 text-left text-[12px] font-normal normal-case tracking-normal text-ink-2 shadow-lg"
+        >
+          {tip}
+        </span>
+      )}
     </span>
   );
 }
