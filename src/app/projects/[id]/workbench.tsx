@@ -51,7 +51,8 @@ interface WbState {
   compBrands: string[];
   grain: "brands" | "parents";
   split: "none" | "engine" | "mode";
-  modeFilter: "all" | "instinct" | "search";
+  /** Engine scope; empty = every engine in the run. */
+  engines: string[];
   measure: "named" | "firstNamed" | "sov" | "position";
 }
 
@@ -111,7 +112,7 @@ export default function Workbench({
     compBrands: [],
     grain: "brands",
     split: "none",
-    modeFilter: "all",
+    engines: [],
     measure: "named",
   });
   const [hydrated, setHydrated] = useState(false);
@@ -126,6 +127,10 @@ export default function Workbench({
     if (hydrated) window.localStorage.setItem(storageKey, JSON.stringify(st));
   }, [st, hydrated, storageKey]);
 
+  const runEngines = useMemo(
+    () => (pooled.engines ?? []).map((e) => ({ id: e.model, mode: e.mode })),
+    [pooled]
+  );
   const parents = pooled.parentRollup;
   const parentNames = useMemo(
     () => (parents ?? []).slice(0, 30).map((p) => p.parent),
@@ -156,20 +161,20 @@ export default function Workbench({
   // ---- slice fetching: one recompute per (mode, grain, name), cached ----
   const [slices, setSlices] = useState<Record<string, RunMetrics>>({});
   useEffect(() => setSlices({}), [runId, refreshToken]);
-  const keyFor = (name: string) =>
-    `${st.modeFilter}|${st.grain}|${name}`;
+  const engineKey = [...st.engines].sort().join(",");
+  const keyFor = (name: string) => `${engineKey}|${st.grain}|${name}`;
   useEffect(() => {
     let cancelled = false;
     for (const name of selected) {
       const key = keyFor(name);
       if (slices[key]) continue;
-      // The client at home state under no mode filter IS the pooled object.
-      if (st.grain === "brands" && name === project.brand && st.modeFilter === "all") {
+      // The client with every engine in scope IS the pooled object.
+      if (st.grain === "brands" && name === project.brand && st.engines.length === 0) {
         setSlices((prev) => ({ ...prev, [key]: pooled }));
         continue;
       }
       const params = new URLSearchParams();
-      if (st.modeFilter !== "all") params.set("mode", st.modeFilter);
+      if (st.engines.length > 0) params.set("engines", st.engines.join(","));
       params.set("focus", st.grain === "parents" ? `parent:${name}` : name);
       fetch(`/api/runs/${runId}/metrics?${params.toString()}`)
         .then((r) => r.json())
@@ -184,7 +189,7 @@ export default function Workbench({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, st.modeFilter, st.grain, runId, refreshToken, pooled]);
+  }, [selected, engineKey, st.grain, runId, refreshToken, pooled]);
 
   const series = selected.map((name, i) => ({
     name,
@@ -209,8 +214,8 @@ export default function Workbench({
       {/* ---------- control bar ---------- */}
       <div className="grid gap-2 border-b border-line px-4 py-3">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-12">
-            Mode
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
+            Compare
           </span>
           <button type="button" className={chip(st.brandMode === "solo")}
             onClick={() => set({ brandMode: "solo" })}>
@@ -218,7 +223,7 @@ export default function Workbench({
           </button>
           <button type="button" className={chip(st.brandMode === "comparative")}
             onClick={() => set({ brandMode: "comparative" })}>
-            Comparative
+            Multiple
           </button>
           {view === "style" ? (
             <span className="text-[12px] text-ink-3 ml-2">
@@ -282,7 +287,7 @@ export default function Workbench({
         <div className="flex flex-wrap items-center gap-1.5">
           {parents && parents.length > 0 && (
             <>
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-12">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
                 Grain
               </span>
               <button type="button" className={chip(st.grain === "brands")}
@@ -295,25 +300,21 @@ export default function Workbench({
               </button>
             </>
           )}
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-10 ml-1">
-            Split
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
+            Answers
           </span>
-          {(["none", "engine", "mode"] as const).map((sp) => (
-            <button key={sp} type="button"
-              className={chip(st.split === sp)}
-              onClick={() => set({ split: sp, measure: sp === "none" ? st.measure : "named" })}>
-              {sp === "none" ? "None" : sp === "engine" ? "Engine" : "Mode"}
-            </button>
-          ))}
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 ml-2">
-            Filter
-          </span>
-          {(["all", "instinct", "search"] as const).map((m) => (
-            <button key={m} type="button" className={chip(st.modeFilter === m)}
-              onClick={() => set({ modeFilter: m })}>
-              {m === "all" ? "All modes" : m === "instinct" ? "Instinct" : "Search"}
-            </button>
-          ))}
+          <ScopeControl
+            all={runEngines}
+            selected={st.engines}
+            split={st.split}
+            onChange={(engines, split) =>
+              set({
+                engines,
+                split,
+                measure: split === "none" ? st.measure : "named",
+              })
+            }
+          />
         </div>
       </div>
 
@@ -357,7 +358,7 @@ export default function Workbench({
               )}
               {view === "sources" && <Sources pooled={pooled} />}
               {view === "risk" && plan !== "free" && (
-                <Risk series={series} pooled={pooled} project={project}
+                <Risk series={series} pooled={pooled}
                   plan={plan} runId={runId} clientName={clientName} />
               )}
               {view === "style" && <Style pooled={pooled} />}
@@ -366,6 +367,148 @@ export default function Workbench({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The answer scope: which engines are in play, and whether the view pools
+ * them or breaks them out. One summary line in the bar, the detail on
+ * demand — so the control row stays calm as the engine panel grows.
+ */
+function ScopeControl({
+  all,
+  selected,
+  split,
+  onChange,
+}: {
+  all: { id: string; mode: "instinct" | "search" }[];
+  selected: string[];
+  split: "none" | "engine" | "mode";
+  onChange: (engines: string[], split: "none" | "engine" | "mode") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const live = selected.length > 0 ? selected : all.map((e) => e.id);
+  const liveModes = new Set(
+    all.filter((e) => live.includes(e.id)).map((e) => e.mode)
+  );
+  const allOn = selected.length === 0 || selected.length === all.length;
+  const onlyInstinct = liveModes.size === 1 && liveModes.has("instinct");
+  const onlySearch = liveModes.size === 1 && liveModes.has("search");
+
+  const summary = `${
+    allOn
+      ? `all ${all.length} engines`
+      : `${live.length} ${onlySearch ? "search " : onlyInstinct ? "instinct " : ""}engine${live.length === 1 ? "" : "s"}`
+  } · ${split === "none" ? "combined" : split === "engine" ? "by engine" : "by instrument"}`;
+
+  // A break-out with nothing left to break out collapses itself.
+  const commit = (engines: string[], nextSplit = split) => {
+    const nextLive = engines.length > 0 ? engines : all.map((e) => e.id);
+    const modes = new Set(
+      all.filter((e) => nextLive.includes(e.id)).map((e) => e.mode)
+    );
+    let resolved = nextSplit;
+    if (resolved === "engine" && nextLive.length < 2) resolved = "none";
+    if (resolved === "mode" && modes.size < 2) resolved = "none";
+    onChange(engines, resolved);
+  };
+  const pick = (mode: "all" | "instinct" | "search") =>
+    commit(
+      mode === "all" ? [] : all.filter((e) => e.mode === mode).map((e) => e.id)
+    );
+
+  const splitOpts = [
+    ["none", "Nothing"],
+    ["engine", "Engine"],
+    ["mode", "Instrument"],
+  ] as const;
+
+  return (
+    <span className="relative inline-block">
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-medium text-ink-2 hover:border-ink-3">
+        {summary} <span className="text-ink-3">▾</span>
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <span className="absolute left-0 top-full z-40 mt-1 block w-72 rounded-xl border border-line bg-surface p-4 shadow-lg">
+            <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+              Break out by
+            </span>
+            <span className="mb-1 flex flex-wrap gap-1.5">
+              {splitOpts.map(([id, label]) => {
+                const disabled =
+                  (id === "engine" && live.length < 2) ||
+                  (id === "mode" && liveModes.size < 2);
+                return (
+                  <button key={id} type="button" disabled={disabled}
+                    onClick={() => commit(selected, id)}
+                    className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium disabled:opacity-40 ${
+                      split === id
+                        ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                        : "border-line text-ink-3 hover:border-ink-3"
+                    }`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </span>
+            <span className="mb-1 block text-[12px] text-ink-3">
+              Show these answers as one number, or as separate rows.
+            </span>
+
+            <span className="mt-3 mb-2 flex items-baseline justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                Include
+              </span>
+              <span className="flex gap-1.5">
+                {(["all", "instinct", "search"] as const).map((m) => {
+                  const active =
+                    m === "all" ? allOn : m === "instinct" ? onlyInstinct : onlySearch;
+                  if (m !== "all" && !all.some((e) => e.mode === m)) return null;
+                  return (
+                    <button key={m} type="button" onClick={() => pick(m)}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                        active
+                          ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                          : "border-line text-ink-3 hover:border-ink-3"
+                      }`}>
+                      {m === "all" ? "All" : m === "instinct" ? "Instinct" : "Search"}
+                    </button>
+                  );
+                })}
+              </span>
+            </span>
+            <span className="grid gap-1">
+              {all.map((e) => {
+                const on = live.includes(e.id);
+                return (
+                  <label key={e.id}
+                    className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2">
+                    <input type="checkbox" checked={on}
+                      onChange={() => {
+                        const next = on
+                          ? live.filter((x) => x !== e.id)
+                          : [...live, e.id];
+                        if (next.length === 0) return;
+                        commit(next.length === all.length ? [] : next);
+                      }}
+                      className="h-3.5 w-3.5 accent-[var(--color-primary)]" />
+                    {e.id}
+                    {e.mode === "search" && (
+                      <span className="rounded-full bg-primary-soft px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
+                        search
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </span>
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 
@@ -838,8 +981,6 @@ function Visibility({
 /* ---------------- Choice ---------------- */
 function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st: WbState }) {
   const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
-  const colorOf = (brand: string) =>
-    series.find((s) => s.name === brand)?.color ?? null;
 
   // Decisiveness: the coder types every answer's outcome — a fixed,
   // study-independent typology from the extraction schema.
@@ -1324,11 +1465,10 @@ function Sources({ pooled }: { pooled: RunMetrics }) {
 
 /* ---------------- Risk ---------------- */
 function Risk({
-  series, pooled, project, plan, runId, clientName,
+  series, pooled, plan, runId, clientName,
 }: {
   series: Series;
   pooled: RunMetrics;
-  project: Project;
   plan: "free" | "pro" | "enterprise";
   runId: string;
   clientName: string;

@@ -20,9 +20,17 @@ export async function GET(
   // ?focus=<brand> is the brand lens — every cut recomputes with that brand
   // as the focus. Combines freely with ?mode=.
   const focus = url.searchParams.get("focus")?.trim().slice(0, 120) || undefined;
+  // ?engines=a,b,c scopes the slice to those engines.
+  const engines =
+    url.searchParams
+      .get("engines")
+      ?.split(",")
+      .map((e) => e.trim())
+      .filter(Boolean)
+      .slice(0, 20) || undefined;
   const metrics = await computeRunMetrics(
     id,
-    mode || focus ? { mode, focus } : undefined
+    mode || focus || engines ? { mode, focus, engines } : undefined
   );
   const plan = await getPlanFor(auth);
   return NextResponse.json({ metrics, project: loaded.project, plan });

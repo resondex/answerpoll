@@ -114,6 +114,10 @@ export async function computeRunMetrics(
   runId: string,
   opts?: {
     mode?: "instinct" | "search";
+    /** Explicit engine scope: only these engines' answers are in play, and
+     * they become the panel for this slice (a selection may include bonus
+     * engines the project's core panel excludes). */
+    engines?: string[];
     /** Brand lens: compute every cut with this brand as the focus instead
      * of the client — the workbook's Focus dropdown, server-side. Quotes
      * and verified prose stay client-coded and are nulled under a lens. */
@@ -130,11 +134,14 @@ export async function computeRunMetrics(
   // Optional instrument filter: every cut below recomputes over one mode's
   // answers only. Mentions need no prefilter — every downstream loop checks
   // membership in a response-id set derived from `responses`.
-  const responses = opts?.mode
-    ? allResponses.filter(
-        (r) => engineMode(r.model || run.model) === opts.mode
-      )
-    : allResponses;
+  const engineScope =
+    opts?.engines && opts.engines.length > 0 ? new Set(opts.engines) : null;
+  const responses = allResponses.filter((r) => {
+    const model = r.model || run.model;
+    if (opts?.mode && engineMode(model) !== opts.mode) return false;
+    if (engineScope && !engineScope.has(model)) return false;
+    return true;
+  });
   const project = projectMaybe!;
   const [prompts, dictionary] = await Promise.all([
     store.listPrompts(project.id),
@@ -163,8 +170,11 @@ export async function computeRunMetrics(
   const sampledModels = [
     ...new Set(responses.map((r) => r.model).filter(Boolean)),
   ];
-  const coreModels =
-    project.engine_set.length > 0
+  // An explicit engine scope IS the panel for that slice; otherwise the
+  // project's declared core panel decides what pools into headline rates.
+  const coreModels = engineScope
+    ? sampledModels
+    : project.engine_set.length > 0
       ? project.engine_set.filter(
           (m) => sampledModels.includes(m) || sampledModels.length === 0
         )
