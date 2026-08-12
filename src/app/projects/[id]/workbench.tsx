@@ -47,7 +47,7 @@ interface WbState {
   grain: "brands" | "parents";
   split: "none" | "engine" | "mode";
   modeFilter: "all" | "instinct" | "search";
-  measure: "named" | "firstNamed" | "sov";
+  measure: "named" | "firstNamed" | "sov" | "position";
 }
 
 function brandStats(m: RunMetrics | null) {
@@ -354,6 +354,133 @@ export default function Workbench({
   );
 }
 
+function downloadCsv(
+  filename: string,
+  header: string[],
+  rows: (string | number | null)[][]
+) {
+  const esc = (v: string | number | null) => {
+    const x = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x;
+  };
+  const csv = [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** Instant tooltip — no native-title delay. */
+function Tip({ tip, children }: { tip: string; children: React.ReactNode }) {
+  return (
+    <span className="group/tip relative inline-block">
+      {children}
+      <span className="pointer-events-none absolute left-1/2 bottom-full z-30 mb-1.5 hidden w-max max-w-[22rem] -translate-x-1/2 rounded-lg border border-line bg-surface px-3 py-2 text-left text-[12px] font-normal normal-case tracking-normal text-ink-2 shadow-lg group-hover/tip:block">
+        {tip}
+      </span>
+    </span>
+  );
+}
+
+interface Col<T> {
+  id: string;
+  label: string;
+  num?: boolean;
+  color?: (r: T) => string | undefined;
+  val: (r: T) => string | number | null;
+  render?: (r: T) => React.ReactNode;
+}
+
+/** Every workbench table: sortable headers, one-click CSV. */
+function SortTable<T>({
+  cols,
+  rows,
+  filename,
+  defaultSort,
+}: {
+  cols: Col<T>[];
+  rows: T[];
+  filename: string;
+  defaultSort?: { id: string; dir: 1 | -1 };
+}) {
+  const [sort, setSort] = useState<{ id: string; dir: 1 | -1 }>(
+    defaultSort ?? { id: cols[1]?.id ?? cols[0].id, dir: -1 }
+  );
+  const col = cols.find((c) => c.id === sort.id) ?? cols[0];
+  const sorted = [...rows].sort((a, b) => {
+    const va = col.val(a);
+    const vb = col.val(b);
+    if (va === null && vb === null) return 0;
+    if (va === null) return 1;
+    if (vb === null) return -1;
+    const cmp =
+      typeof va === "number" && typeof vb === "number"
+        ? va - vb
+        : String(va).localeCompare(String(vb));
+    return sort.dir === 1 ? cmp : -cmp;
+  });
+  return (
+    <div className="mt-3 grid gap-1">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              filename,
+              cols.map((c) => c.label),
+              rows.map((r) => cols.map((c) => c.val(r)))
+            )
+          }
+          className="text-[12px] font-medium text-primary hover:opacity-80"
+        >
+          ↓ csv
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+              {cols.map((c, i) => (
+                <th
+                  key={c.id}
+                  onClick={() =>
+                    setSort((prev) =>
+                      prev.id === c.id
+                        ? { id: c.id, dir: prev.dir === 1 ? -1 : 1 }
+                        : { id: c.id, dir: -1 }
+                    )
+                  }
+                  className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-right" : ""}`}
+                >
+                  {c.label}
+                  {sort.id === c.id ? (sort.dir === -1 ? " ↓" : " ↑") : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, ri) => (
+              <tr key={ri} className="border-b border-line/60">
+                {cols.map((c, i) => (
+                  <td
+                    key={c.id}
+                    className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} ${c.num ? "text-right tabular-nums" : ""}`}
+                    style={c.color ? { color: c.color(r) } : undefined}
+                  >
+                    {c.render ? c.render(r) : c.val(r) ?? "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 type Series = {
   name: string;
   isClient: boolean;
@@ -404,19 +531,16 @@ function Visibility({
     ["named", "Named rate"],
     ["firstNamed", "First-named"],
     ["sov", "Share of voice"],
+    ["position", "Avg position"],
   ] as const;
-  const valOf = (s: Series[number]) =>
-    st.measure === "named" ? s.stats!.named
-    : st.measure === "firstNamed" ? s.stats!.firstNamed
-    : s.stats!.sov;
-  const rightOf = (s: Series[number]) => {
-    const v = valOf(s);
-    if (v === null) return "—";
-    const pos = s.stats!.avgRank ? ` · #${s.stats!.avgRank.toFixed(1)}` : "";
-    return st.measure === "named"
-      ? `${pct(v)} · CI ${pct(s.stats!.ciLow)}–${pct(s.stats!.ciHigh)}${pos}`
-      : `${pct(v)}${pos}`;
-  };
+  const valOf = (s: Series[number]): number | null =>
+    !s.stats ? null
+    : st.measure === "named" ? s.stats.named
+    : st.measure === "firstNamed" ? s.stats.firstNamed
+    : st.measure === "sov" ? s.stats.sov
+    : s.stats.avgRank;
+  const fmt = (v: number | null) =>
+    v === null ? "—" : st.measure === "position" ? `#${v.toFixed(1)}` : pct(v);
 
   if (solo && solo.stats) {
     const s = solo.stats;
@@ -452,12 +576,12 @@ function Visibility({
             ))}
           </div>
           <div className="rounded-xl border border-line p-4">
-            <div className="section-label mb-2">Framing</div>
+            <div className="section-label mb-2">Framing · % of named answers</div>
             {(["recommended", "mentioned", "negative"] as const).map((f) => (
               <div key={f} className="flex justify-between text-sm py-0.5">
                 <span className="text-ink-2">{f === "mentioned" ? "neutral" : f}</span>
                 <span className={`font-semibold tabular-nums ${f === "negative" && s.framing[f] > 0 ? "text-danger" : ""}`}>
-                  {s.framing[f]}
+                  {s.count > 0 ? pct(s.framing[f] / s.count) : "—"}
                 </span>
               </div>
             ))}
@@ -468,7 +592,7 @@ function Visibility({
             <div className="section-label mb-2">Named rate by engine</div>
             <SeriesBars rows={s.m.engines.map((e) => ({
               label: e.model, color: solo.color, value: e.namedRate,
-              right: `${pct(e.namedRate)} · picks ${pct(e.pickRate)}`,
+              right: pct(e.namedRate),
             }))} />
           </div>
         )}
@@ -476,87 +600,57 @@ function Visibility({
     );
   }
 
+  const chartRows = series.map((sr) => {
+    const v = valOf(sr);
+    return { label: sr.name, color: sr.color, raw: v, right: fmt(v) };
+  });
+  const best = st.measure === "position"
+    ? Math.min(...chartRows.map((r) => r.raw ?? Infinity))
+    : null;
+
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Measure
+          Chart
         </span>
         {measures.map(([id, label]) => (
           <button key={id} type="button"
             disabled={st.split !== "none" && id !== "named"}
             onClick={() => set({ measure: id })}
-            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium disabled:opacity-40 ${
               st.measure === id
                 ? "border-[var(--color-primary)] bg-primary-soft text-primary"
-                : "border-line text-ink-3 hover:border-ink-3 disabled:opacity-40"
+                : "border-line text-ink-3 hover:border-ink-3"
             }`}>
             {label}
           </button>
         ))}
-        {st.split !== "none" ? (
-          <span className="text-[11px] text-ink-3">splits show named rate</span>
-        ) : (
-          <span className="text-[11px] text-ink-3">changes the chart — the table below always shows everything</span>
-        )}
       </div>
       {st.split === "none" && (
-        <SeriesBars rows={series.map((s) => ({
-          label: s.name, color: s.color, value: valOf(s), right: rightOf(s),
+        <SeriesBars rows={chartRows.map((r) => ({
+          label: r.label,
+          color: r.color,
+          // Position: lower is better, so the best position gets the full bar.
+          value:
+            st.measure === "position"
+              ? r.raw !== null && best !== null
+                ? best / r.raw
+                : null
+              : r.raw,
+          right: r.right,
         }))} />
-      )}
-      {st.split === "none" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                <th className="py-2 pr-4 font-semibold">Brand</th>
-                <th className="py-2 pr-4 font-semibold text-right">Named</th>
-                <th className="py-2 pr-4 font-semibold text-right">95% CI</th>
-                <th className="py-2 pr-4 font-semibold text-right">First-named</th>
-                <th className="py-2 pr-4 font-semibold text-right">Share of voice</th>
-                <th className="py-2 pr-4 font-semibold text-right">Avg position</th>
-                <th className="py-2 pr-4 font-semibold text-right">Recommended</th>
-                <th className="py-2 font-semibold text-right">Negative</th>
-              </tr>
-            </thead>
-            <tbody>
-              {series.map((s) =>
-                s.stats ? (
-                  <tr key={s.name} className="border-b border-line/60">
-                    <td className="py-2 pr-4 font-medium" style={{ color: s.color }}>{s.name}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.named)}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
-                      {pct(s.stats.ciLow)}–{pct(s.stats.ciHigh)}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {s.stats.firstNamed !== null ? pct(s.stats.firstNamed) : "—"}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.sov)}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {s.stats.avgRank ? `#${s.stats.avgRank.toFixed(1)}` : "—"}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">{s.stats.framing.recommended}</td>
-                    <td className={`py-2 text-right tabular-nums ${s.stats.framing.negative > 0 ? "text-danger" : ""}`}>
-                      {s.stats.framing.negative}
-                    </td>
-                  </tr>
-                ) : null
-              )}
-            </tbody>
-          </table>
-        </div>
       )}
       {st.split === "engine" && (
         <div className="grid gap-4">
           {(series[0].stats?.m.engines ?? []).map((e) => (
             <div key={e.model}>
               <div className="section-label mb-1.5">{e.model}</div>
-              <SeriesBars rows={series.map((s) => {
-                const row = s.stats?.m.engines?.find((x) => x.model === e.model);
+              <SeriesBars rows={series.map((sr) => {
+                const row = sr.stats?.m.engines?.find((x) => x.model === e.model);
                 return {
-                  label: s.name, color: s.color, value: row?.namedRate ?? null,
-                  right: row ? `${pct(row.namedRate)} · picks ${pct(row.pickRate)}` : "—",
+                  label: sr.name, color: sr.color, value: row?.namedRate ?? null,
+                  right: row ? pct(row.namedRate) : "—",
                 };
               })} />
             </div>
@@ -569,22 +663,68 @@ function Visibility({
             <div key={mo.mode}>
               <div className="section-label mb-1.5">
                 {mo.mode === "search" ? "Search-enabled" : "Instinct"}
-                {mo.searchRate !== null && mo.mode === "search"
-                  ? ` · searched on ${pct(mo.searchRate)} of answers`
-                  : ""}
               </div>
-              <SeriesBars rows={series.map((s) => {
-                const row = s.stats?.m.modes?.find((x) => x.mode === mo.mode);
+              <SeriesBars rows={series.map((sr) => {
+                const row = sr.stats?.m.modes?.find((x) => x.mode === mo.mode);
                 return {
-                  label: s.name, color: s.color, value: row?.namedRate ?? null,
-                  right: row
-                    ? `${pct(row.namedRate)} · CI ${pct(row.ciLow)}–${pct(row.ciHigh)} · picks ${pct(row.pickRate)}`
-                    : "—",
+                  label: sr.name, color: sr.color, value: row?.namedRate ?? null,
+                  right: row ? pct(row.namedRate) : "—",
                 };
               })} />
             </div>
           ))}
         </div>
+      )}
+      {st.split === "none" && (
+        <SortTable
+          filename="visibility.csv"
+          defaultSort={{ id: "named", dir: -1 }}
+          cols={[
+            { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+              color: (r) => r.color,
+              render: (r) => <span className="font-medium">{r.name}</span> },
+            { id: "named", label: "Named", num: true,
+              val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
+              render: (r) => (r.stats ? pct(r.stats.named) : "—") },
+            { id: "ci", label: "95% CI", num: true,
+              val: (r) => r.stats ? Math.round(r.stats.ciLow * 100) : null,
+              render: (r) =>
+                r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" },
+            { id: "fn", label: "First-named", num: true,
+              val: (r) =>
+                r.stats?.firstNamed !== null && r.stats
+                  ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
+              render: (r) =>
+                r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
+            { id: "sov", label: "Share of voice", num: true,
+              val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
+              render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
+            { id: "pos", label: "Avg position", num: true,
+              val: (r) => r.stats?.avgRank ?? null,
+              render: (r) =>
+                r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
+            { id: "rec", label: "Recommended", num: true,
+              val: (r) =>
+                r.stats && r.stats.count > 0
+                  ? Math.round((r.stats.framing.recommended / r.stats.count) * 100)
+                  : null,
+              render: (r) =>
+                r.stats && r.stats.count > 0
+                  ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+            { id: "neg", label: "Negative", num: true,
+              val: (r) =>
+                r.stats && r.stats.count > 0
+                  ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
+                  : null,
+              render: (r) =>
+                r.stats && r.stats.count > 0 ? (
+                  <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
+                    {pct(r.stats.framing.negative / r.stats.count)}
+                  </span>
+                ) : ("—") },
+          ]}
+          rows={series}
+        />
       )}
     </>
   );
@@ -600,16 +740,17 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
   // study-independent typology from the extraction schema.
   const strip = (o: { pick: number; no_pick: number; clarification: number }, label?: string) => {
     const total = o.pick + o.no_pick + o.clarification || 1;
-    const uncommitted = `Uncommitted breakdown: ${o.no_pick} (${pct(o.no_pick / total)}) explained the options without crowning one · ${o.clarification} (${pct(o.clarification / total)}) asked the user a question instead of answering`;
     return (
-      <div key={label ?? "run"} title={uncommitted} className="cursor-help">
+      <div key={label ?? "run"}>
         {label && <div className="section-label mb-1">{label}</div>}
-        <div className="flex items-baseline gap-2">
-          <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
-          <span className="text-[12px] text-ink-3">
-            of answers committed to a pick — hover for the uncommitted breakdown
-          </span>
-        </div>
+        <Tip tip={`${pct(o.no_pick / total)} explained the options without crowning one · ${pct(o.clarification / total)} asked the user a question instead of answering`}>
+          <div className="flex items-baseline gap-2 cursor-help">
+            <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
+            <span className="text-[12px] text-ink-3">
+              of answers committed to a pick
+            </span>
+          </div>
+        </Tip>
         <div className="flex h-4 overflow-hidden rounded-md mt-1">
           <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" />
           <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" />
@@ -676,9 +817,6 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
             {label}
           </button>
         ))}
-        <span className="text-[11px] text-ink-3">
-          changes the chart — the table below always shows everything
-        </span>
       </div>
       <div className="grid gap-1.5">
         {rows.map((s) => {
@@ -706,166 +844,171 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
         ))}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-              <th className="py-2 pr-4 font-semibold">Brand</th>
-              <th className="py-2 pr-4 font-semibold text-right">Named</th>
-              <th className="py-2 pr-4 font-semibold text-right">Top-3</th>
-              <th className="py-2 pr-4 font-semibold text-right">Chosen</th>
-              <th className="py-2 pr-4 font-semibold text-right">Picks</th>
-              <th className="py-2 font-semibold text-right">Share of decided</th>
-            </tr>
-          </thead>
-          <tbody>
-            {series.map((s) => {
-              const tp = pooled.topPicks?.find((t) => t.brand === s.name);
-              return s.stats ? (
-                <tr key={s.name} className="border-b border-line/60">
-                  <td className="py-2 pr-4 font-medium" style={{ color: s.color }}>{s.name}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.named)}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">
-                    {s.stats.top3 !== null ? pct(s.stats.top3) : "—"}
-                  </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">
-                    {s.stats.chosen !== null ? pct(s.stats.chosen) : "—"}
-                  </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{tp?.picks ?? 0}</td>
-                  <td className="py-2 text-right tabular-nums">
-                    {tp ? pct(tp.shareOfDecided) : "0%"}
-                  </td>
-                </tr>
-              ) : null;
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-[12px] text-ink-3">
-        Named and Chosen are shares of all coded answers; Share of decided is
-        the brand&apos;s slice of the answers that committed to a pick.
-      </p>
+      <ChoiceTable series={series} pooled={pooled} />
     </>
+  );
+}
+
+function ChoiceTable({ series, pooled }: { series: Series; pooled: RunMetrics }) {
+  const tp = (name: string) => pooled.topPicks?.find((t) => t.brand === name);
+  return (
+    <SortTable
+      filename="choice.csv"
+      defaultSort={{ id: "share", dir: -1 }}
+      cols={[
+        { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+          color: (r) => r.color,
+          render: (r) => <span className="font-medium">{r.name}</span> },
+        { id: "named", label: "Named", num: true,
+          val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
+          render: (r) => (r.stats ? pct(r.stats.named) : "—") },
+        { id: "top3", label: "Top-3", num: true,
+          val: (r) =>
+            r.stats?.top3 !== null && r.stats ? Math.round((r.stats.top3 ?? 0) * 100) : null,
+          render: (r) =>
+            r.stats?.top3 !== null && r.stats ? pct(r.stats.top3!) : "—" },
+        { id: "chosen", label: "Chosen", num: true,
+          val: (r) =>
+            r.stats?.chosen !== null && r.stats ? Math.round((r.stats.chosen ?? 0) * 100) : null,
+          render: (r) =>
+            r.stats?.chosen !== null && r.stats ? pct(r.stats.chosen!) : "—" },
+        { id: "picks", label: "Picks", num: true,
+          val: (r) => tp(r.name)?.picks ?? 0 },
+        { id: "share", label: "Share of decided", num: true,
+          val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
+          render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
+      ]}
+      rows={series}
+    />
   );
 }
 
 /* ---------------- Why ---------------- */
 function Why({ series }: { series: Series }) {
-  const [sortBy, setSortBy] = useState<string>(series[0]?.name ?? "");
-  const [dir, setDir] = useState<1 | -1>(-1);
-  const [killshot, setKillshot] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [metric, setMetric] = useState<"lift" | "wins" | "all" | "absent">("lift");
+  const [sortBy, setSortBy] = useState<{ name: string; dir: 1 | -1 } | null>(null);
   const first = series[0]?.stats?.m.reasonLift ?? [];
   const liftOf = (s: Series[number], code: string) =>
     s.stats?.m.reasonLift?.find((r) => r.code === code) ?? null;
-  const sortSeries = series.find((x) => x.name === sortBy) ?? series[0];
+  const cell = (s: Series[number], code: string): number | null => {
+    const r = liftOf(s, code);
+    if (!r) return null;
+    return metric === "lift" ? r.lift : metric === "wins" ? r.shareWins
+      : metric === "all" ? r.shareAll : r.shareAbsent;
+  };
+  const sortSeries = series.find((x) => x.name === sortBy?.name) ?? series[0];
   const codes = [...first]
     .map((r) => r.code)
     .sort((a, b) => {
-      if (killshot) {
-        const ra = liftOf(sortSeries, a);
-        const rb = liftOf(sortSeries, b);
-        return (rb?.shareAbsent ?? 0) - (ra?.shareAbsent ?? 0);
-      }
-      const la = liftOf(sortSeries, a)?.lift ?? 0;
-      const lb = liftOf(sortSeries, b)?.lift ?? 0;
-      return dir === -1 ? lb - la : la - lb;
+      const va = cell(sortSeries, a) ?? -Infinity;
+      const vb = cell(sortSeries, b) ?? -Infinity;
+      return (vb - va) * (sortBy?.dir === 1 ? -1 : 1);
     });
   if (codes.length === 0)
     return <p className="text-sm text-ink-3">No argument coding in this run.</p>;
-  const clickHeader = (name: string) => {
-    setKillshot(false);
-    if (sortBy === name) setDir((d) => (d === -1 ? 1 : -1));
-    else {
-      setSortBy(name);
-      setDir(-1);
-    }
-  };
+  const metricDefs = [
+    ["lift", "Lift", "the argument's share in that brand's wins, minus its share overall"],
+    ["wins", "In their wins", "share of the brand's winning answers using the argument"],
+    ["all", "Overall", "share of all answers using the argument"],
+    ["absent", "Where they're missing", "share of answers that never mention the brand — the arguments of conversations they're excluded from"],
+  ] as const;
+  const fmtCell = (v: number | null) =>
+    v === null ? "—" : metric === "lift" ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}` : pct(v);
   return (
     <>
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Sort</span>
-        <span className="text-[12px] text-ink-3">
-          click a brand column to sort by their lift, or
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+          Chart
         </span>
-        <button type="button" onClick={() => setKillshot((k) => !k)}
-          className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-            killshot
-              ? "border-[var(--color-primary)] bg-primary-soft text-primary"
-              : "border-line text-ink-3 hover:border-ink-3"
-          }`}>
-          kill-shots vs {sortSeries.name}
-        </button>
+        {metricDefs.map(([id, label, tip]) => (
+          <Tip key={id} tip={tip}>
+            <button type="button" onClick={() => setMetric(id)}
+              className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+                metric === id
+                  ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                  : "border-line text-ink-3 hover:border-ink-3"
+              }`}>
+              {label}
+            </button>
+          </Tip>
+        ))}
       </div>
-      {killshot && (
-        <p className="text-[12px] text-ink-2 rounded-lg bg-primary-soft/30 px-3 py-2 -mt-1">
-          Kill-shot sort: arguments ranked by how often they appear in answers
-          that never mention <b>{sortSeries.name}</b> at all. These are the
-          talking points of the conversations {sortSeries.name} is excluded
-          from — win the argument, enter the conversation.
-        </p>
-      )}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-              <th className="py-2 pr-4 font-semibold">Argument · lift in each brand&apos;s wins</th>
-              {series.map((s) => (
-                <th key={s.name}
-                  className="py-2 pr-3 font-semibold text-right cursor-pointer select-none hover:opacity-70"
-                  style={{ color: s.color }}
-                  onClick={() => clickHeader(s.name)}
-                  title={`Sort by ${s.name}'s lift`}>
-                  {s.name}
-                  {!killshot && sortBy === s.name ? (dir === -1 ? " ↓" : " ↑") : ""}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {codes.map((code) => (
-              <>
-                <tr key={code} className="border-b border-line/60 cursor-pointer hover:bg-primary-soft/20"
-                  onClick={() => setOpen(open === code ? null : code)}>
-                  <td className="py-2 pr-4 font-medium">
-                    {open === code ? "▾ " : "▸ "}{code}
-                  </td>
+      <div className="mt-3 grid gap-1">
+        <div className="flex justify-end">
+          <button type="button"
+            onClick={() =>
+              downloadCsv(
+                "arguments.csv",
+                ["argument", ...series.flatMap((s) => [
+                  `${s.name} lift`, `${s.name} in wins`, `${s.name} overall`, `${s.name} where missing`,
+                ])],
+                first.map((r0) => [
+                  r0.code,
+                  ...series.flatMap((s) => {
+                    const r = liftOf(s, r0.code);
+                    return r
+                      ? [Math.round(r.lift * 100), Math.round(r.shareWins * 100), Math.round(r.shareAll * 100), Math.round(r.shareAbsent * 100)]
+                      : [null, null, null, null];
+                  }),
+                ])
+              )
+            }
+            className="text-[12px] font-medium text-primary hover:opacity-80">
+            ↓ csv
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+                <th className="py-2 pr-4 font-semibold">Argument</th>
+                {series.map((s) => (
+                  <th key={s.name}
+                    className="py-2 pr-3 font-semibold text-right cursor-pointer select-none hover:opacity-70"
+                    style={{ color: s.color }}
+                    onClick={() =>
+                      setSortBy((prev) =>
+                        prev?.name === s.name
+                          ? { name: s.name, dir: prev.dir === 1 ? -1 : 1 }
+                          : { name: s.name, dir: -1 }
+                      )
+                    }>
+                    {s.name}
+                    {sortBy?.name === s.name ? (sortBy.dir === -1 ? " ↓" : " ↑") : ""}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((code) => (
+                <tr key={code} className="border-b border-line/60">
+                  <td className="py-2 pr-4 font-medium">{code}</td>
                   {series.map((s) => {
+                    const v = cell(s, code);
                     const r = liftOf(s, code);
                     return (
                       <td key={s.name}
-                        className={`py-2 pr-3 text-right tabular-nums font-semibold ${
-                          !r ? "text-ink-3" : r.lift > 0.02 ? "text-success" : r.lift < -0.02 ? "text-danger" : "text-ink-2"
+                        className={`py-2 pr-3 text-right tabular-nums ${
+                          metric !== "lift" ? "text-ink-2"
+                          : v === null ? "text-ink-3"
+                          : v > 0.02 ? "text-success font-semibold"
+                          : v < -0.02 ? "text-danger font-semibold"
+                          : "text-ink-2"
                         }`}>
-                        {r ? `${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}` : "—"}
+                        {r ? (
+                          <Tip tip={`in wins ${pct(r.shareWins)} · overall ${pct(r.shareAll)} · where missing ${pct(r.shareAbsent)} · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
+                            <span className="cursor-help">{fmtCell(v)}</span>
+                          </Tip>
+                        ) : ("—")}
                       </td>
                     );
                   })}
                 </tr>
-                {open === code && (
-                  <tr key={`${code}-detail`} className="border-b border-line/60 bg-primary-soft/10">
-                    <td className="py-2 pr-4 text-[12px] text-ink-3">
-                      share of answers using it: in wins / overall / when absent
-                    </td>
-                    {series.map((s) => {
-                      const r = liftOf(s, code);
-                      return (
-                        <td key={s.name} className="py-2 pr-3 text-right tabular-nums text-[12px] text-ink-2">
-                          {r ? `${pct(r.shareWins)} / ${pct(r.shareAll)} / ${pct(r.shareAbsent)}` : "—"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                )}
-              </>
-            ))}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <p className="text-[12px] text-ink-3">
-        Lift = the argument&apos;s share in answers that brand wins, minus its
-        share overall. Positive = the argument travels with their wins.
-      </p>
     </>
   );
 }
@@ -876,19 +1019,27 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
   const base = pooled.promptGrid ?? [];
   if (base.length === 0)
     return <p className="text-sm text-ink-3">No prompt coding in this run.</p>;
+  const gridFor = (s: Series[number], promptId: string) =>
+    s.stats?.m.promptGrid?.find((g) => g.promptId === promptId) ?? null;
   const badgeFor = (s: Series[number], promptId: string) =>
-    s.stats?.m.promptGrid?.find((g) => g.promptId === promptId)?.badge ?? null;
+    gridFor(s, promptId)?.badge ?? null;
   const dot = (b: string | null) => (
     <span className="inline-block h-2.5 w-2.5 rounded-full"
       style={{
         background: b === "win" ? "var(--color-success, #2e7d4f)"
           : b === "contested" ? "var(--color-warning, #b3822a)"
           : "var(--color-line, #d8dfe2)",
-      }}
-      title={b === "win" ? "wins it: their most common pick, majority of decided answers"
-        : b === "contested" ? "contested: named, but no majority winner"
-        : "not named in this prompt's answers"} />
+      }} />
   );
+  const cellDot = (s: Series[number], promptId: string) => {
+    const g = gridFor(s, promptId);
+    if (!g) return dot(null);
+    return (
+      <Tip tip={`named in ${g.targetNamed}/${g.answers} · picked in ${g.targetPicks}/${g.decided} decided${g.modalPick ? ` · consensus: ${g.modalPick}` : ""}`}>
+        <span className="cursor-help">{dot(g.badge)}</span>
+      </Tip>
+    );
+  };
   const contestScore = (promptId: string) =>
     series.filter((s) => badgeFor(s, promptId) === "contested").length * 2 +
     series.filter((s) => badgeFor(s, promptId) === "win").length;
@@ -922,6 +1073,31 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
             {label}
           </button>
         ))}
+      </div>
+      <div className="mt-3 flex justify-end">
+        <button type="button"
+          onClick={() =>
+            downloadCsv(
+              "battleground.csv",
+              ["prompt", "topic", "brand", "answers", "named", "decided", "picked", "status", "consensus_pick", "consensus_share"],
+              base.flatMap((g0) =>
+                series.map((s) => {
+                  const g = gridFor(s, g0.promptId);
+                  return [
+                    g0.text, g0.theme, s.name,
+                    g?.answers ?? null, g?.targetNamed ?? null,
+                    g?.decided ?? null, g?.targetPicks ?? null,
+                    g?.badge ?? null, g?.modalPick ?? null,
+                    g?.modalShare !== null && g?.modalShare !== undefined
+                      ? Math.round(g.modalShare * 100) : null,
+                  ];
+                })
+              )
+            )
+          }
+          className="text-[12px] font-medium text-primary hover:opacity-80">
+          ↓ csv
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -966,7 +1142,7 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
                       </td>
                       {series.map((s) => (
                         <td key={s.name} className="py-2 pr-3 text-center">
-                          {dot(badgeFor(s, g.promptId))}
+                          {cellDot(s, g.promptId)}
                         </td>
                       ))}
                     </tr>
@@ -1049,27 +1225,46 @@ function Sources({ pooled }: { pooled: RunMetrics }) {
 function Risk({ series, pooled, project }: { series: Series; pooled: RunMetrics; project: Project }) {
   return (
     <>
-      <div className="grid gap-1.5">
-        {series.map((s) =>
-          s.stats ? (
-            <div key={s.name} className="flex items-baseline gap-3 text-sm">
-              <span className="w-40 truncate text-right font-medium" style={{ color: s.color }}>
-                {s.name}
-              </span>
-              <span className={`font-semibold tabular-nums ${s.stats.framing.negative > 0 ? "text-danger" : "text-ink-2"}`}>
-                {s.stats.framing.negative}
-              </span>
-              <span className="text-ink-3 text-[13px]">
-                negative framings · {s.stats.framing.recommended} recommended
-              </span>
-            </div>
-          ) : null
-        )}
-      </div>
+      <SortTable
+        filename="risk.csv"
+        defaultSort={{ id: "negpct", dir: -1 }}
+        cols={[
+          { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+            color: (r) => r.color,
+            render: (r) => <span className="font-medium">{r.name}</span> },
+          { id: "named", label: "Named answers", num: true,
+            val: (r) => r.stats?.count ?? null },
+          { id: "neg", label: "Negative", num: true,
+            val: (r) => r.stats?.framing.negative ?? null,
+            render: (r) =>
+              r.stats ? (
+                <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
+                  {r.stats.framing.negative}
+                </span>
+              ) : ("—") },
+          { id: "negpct", label: "% of named", num: true,
+            val: (r) =>
+              r.stats && r.stats.count > 0
+                ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
+            render: (r) =>
+              r.stats && r.stats.count > 0
+                ? pct(r.stats.framing.negative / r.stats.count) : "—" },
+          { id: "rec", label: "Recommended", num: true,
+            val: (r) => r.stats?.framing.recommended ?? null },
+          { id: "recpct", label: "% of named ", num: true,
+            val: (r) =>
+              r.stats && r.stats.count > 0
+                ? Math.round((r.stats.framing.recommended / r.stats.count) * 100) : null,
+            render: (r) =>
+              r.stats && r.stats.count > 0
+                ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+        ]}
+        rows={series}
+      />
       {pooled.negatives && pooled.negatives.length > 0 && (
-        <div>
+        <div className="mt-2">
           <div className="section-label mb-2">
-            Verbatims — coded for {project.brand}
+            Verbatims — {project.brand}
           </div>
           <div className="grid gap-3">
             {pooled.negatives.slice(0, 8).map((n, i) => (
@@ -1092,52 +1287,45 @@ function Risk({ series, pooled, project }: { series: Series; pooled: RunMetrics;
 function Style({ pooled }: { pooled: RunMetrics }) {
   if (!pooled.engines || pooled.engines.length === 0)
     return <p className="text-sm text-ink-3">No per-engine data in this run.</p>;
+  type E = NonNullable<RunMetrics["engines"]>[number];
   return (
     <>
       <p className="text-[13px] text-ink-3 -mb-1">
-        How each engine answers — length, decisiveness, and what it volunteers.
-        These are traits of the instrument, identical for every brand.
+        How each engine answers — identical for every brand.
       </p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-              <th className="py-2 pr-4 font-semibold">Engine</th>
-              <th className="py-2 pr-4 font-semibold text-right">Avg words</th>
-              <th className="py-2 pr-4 font-semibold text-right">Recommends</th>
-              <th className="py-2 pr-4 font-semibold text-right">Quotes prices</th>
-              <th className="py-2 pr-4 font-semibold text-right">Quotes specs</th>
-              <th className="py-2 pr-4 font-semibold text-right">Asks back</th>
-              <th className="py-2 font-semibold text-right">Options offered</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pooled.engines.map((e) => (
-              <tr key={e.model} className="border-b border-line/60">
-                <td className="py-2 pr-4 font-medium">
-                  {e.model}
-                  {e.mode === "search" && (
-                    <span className="ml-1.5 rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                      search
-                    </span>
-                  )}
-                </td>
-                <td className="py-2 pr-4 text-right tabular-nums">{e.style.avgWords}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{pct(e.style.recRate)}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{pct(e.style.priceRate)}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{pct(e.style.specRate)}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{pct(e.style.clarRate)}</td>
-                <td className="py-2 text-right tabular-nums">{e.style.avgOptions.toFixed(1)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-[12px] text-ink-3">
-        &quot;Asks back&quot; counts answers that pose any question to the user;
-        &quot;options offered&quot; is the average number of distinct
-        recommendations per answer.
-      </p>
+      <SortTable
+        filename="style.csv"
+        defaultSort={{ id: "words", dir: -1 }}
+        cols={[
+          { id: "engine", label: "Engine", val: (e: E) => e.model,
+            render: (e) => (
+              <span className="font-medium">
+                {e.model}
+                {e.mode === "search" && (
+                  <span className="ml-1.5 rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                    search
+                  </span>
+                )}
+              </span>
+            ) },
+          { id: "words", label: "Avg words", num: true, val: (e) => e.style.avgWords },
+          { id: "rec", label: "Recommends", num: true,
+            val: (e) => Math.round(e.style.recRate * 100),
+            render: (e) => pct(e.style.recRate) },
+          { id: "price", label: "Quotes prices", num: true,
+            val: (e) => Math.round(e.style.priceRate * 100),
+            render: (e) => pct(e.style.priceRate) },
+          { id: "spec", label: "Quotes specs", num: true,
+            val: (e) => Math.round(e.style.specRate * 100),
+            render: (e) => pct(e.style.specRate) },
+          { id: "clar", label: "Asks back", num: true,
+            val: (e) => Math.round(e.style.clarRate * 100),
+            render: (e) => pct(e.style.clarRate) },
+          { id: "opts", label: "Options offered", num: true,
+            val: (e) => Number(e.style.avgOptions.toFixed(1)) },
+        ]}
+        rows={pooled.engines}
+      />
     </>
   );
 }
