@@ -265,6 +265,8 @@ export interface RunMetrics {
           answers: number;
           share: number;
           brand: string | null;
+          /** Brands most co-occurring in the answers that cite this domain. */
+          topBrands: { brand: string; answers: number }[];
         }[];
       }
     | null;
@@ -290,6 +292,16 @@ export interface RunMetrics {
          * vendor doesn't report search counts (e.g. Perplexity). */
         searchRate: number | null;
         citedAnswers: number;
+        /** How the engine's answers behave — the Style view. */
+        outcomes: { pick: number; no_pick: number; clarification: number };
+        style: {
+          avgWords: number;
+          recRate: number;
+          priceRate: number;
+          specRate: number;
+          clarRate: number;
+          avgOptions: number;
+        };
       }[]
     | null;
   /** The instinct-vs-search cut: the same headline questions, split by

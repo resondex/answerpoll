@@ -6,9 +6,9 @@ import type { InsightsBundle } from "@/lib/engine/insights";
 import {
   BoardroomView,
   QuestionsView,
-  WorkbenchView,
   type WorkbenchTab,
 } from "./views";
+import Workbench from "./workbench";
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
@@ -40,10 +40,7 @@ export default function RunResults({
   const [view, setView] = useState<
     "brief" | "boardroom" | "workbench" | "questions"
   >("brief");
-  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTab>("overview");
-  const [modeFilter, setModeFilter] = useState<"all" | "instinct" | "search">(
-    "all"
-  );
+  const [workbenchTab, setWorkbenchTab] = useState<string>("visibility");
   useEffect(() => {
     const saved = window.localStorage.getItem("answerpoll_view");
     if (
@@ -62,36 +59,6 @@ export default function RunResults({
     setWorkbenchTab(tab);
     switchView("workbench");
   };
-  // Workbench slices are real: the server recomputes every cut for a mode
-  // filter, a brand lens, or both. Cached per (mode, focus); cleared on
-  // refetch so dictionary edits invalidate them.
-  const [focus, setFocus] = useState<string | null>(null);
-  const [sliceMetrics, setSliceMetrics] = useState<Record<string, RunMetrics>>(
-    {}
-  );
-  const sliceKey = `${modeFilter}|${focus ?? ""}`;
-  const sliceActive = modeFilter !== "all" || focus !== null;
-  useEffect(() => {
-    setSliceMetrics({});
-  }, [runId, refreshToken]);
-  useEffect(() => {
-    if (!sliceActive || sliceMetrics[sliceKey]) return;
-    let cancelled = false;
-    const params = new URLSearchParams();
-    if (modeFilter !== "all") params.set("mode", modeFilter);
-    if (focus) params.set("focus", focus);
-    fetch(`/api/runs/${runId}/metrics?${params.toString()}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (!cancelled && d.metrics) {
-          setSliceMetrics((prev) => ({ ...prev, [sliceKey]: d.metrics }));
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [sliceActive, sliceKey, modeFilter, focus, runId, refreshToken, sliceMetrics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,20 +204,13 @@ export default function RunResults({
         />
       )}
       {view === "workbench" && (
-        <WorkbenchView
-          metrics={sliceActive ? (sliceMetrics[sliceKey] ?? metrics) : metrics}
+        <Workbench
+          runId={runId}
           pooled={metrics}
-          filterPending={sliceActive && !sliceMetrics[sliceKey]}
-          focus={focus}
-          setFocus={setFocus}
           project={project}
-          insights={insights}
-          brandSet={brandSet}
-          openWorkbench={openWorkbench}
-          tab={workbenchTab}
-          setTab={setWorkbenchTab}
-          modeFilter={modeFilter}
-          setModeFilter={setModeFilter}
+          view={workbenchTab}
+          setView={setWorkbenchTab}
+          refreshToken={refreshToken}
         />
       )}
       {view === "questions" && (

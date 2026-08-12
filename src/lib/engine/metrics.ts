@@ -22,6 +22,10 @@ const THEME_ORDER: PromptTheme[] = [
   "branded",
 ];
 
+function rate(rows: ResponseRow[], test: (r: ResponseRow) => boolean): number {
+  return rows.length > 0 ? rows.filter(test).length / rows.length : 0;
+}
+
 /** Wilson 95% score interval for a binomial proportion. */
 export function wilson(k: number, n: number): { low: number; high: number } {
   if (n === 0) return { low: 0, high: 0 };
@@ -137,11 +141,16 @@ export async function computeRunMetrics(
     store.getDictionary(project.id),
   ]);
   const canon = buildCanonicalizer(dictionary);
-  // A lens naming the client is just the home state.
+  // A lens naming the client is just the home state. "parent:X" makes the
+  // parent company the focus: any member brand counts as the target.
+  const parentFocus = opts?.focus?.startsWith("parent:")
+    ? opts.focus.slice(7).trim()
+    : undefined;
   const focus =
-    opts?.focus && canon.norm(opts.focus) !== canon.norm(project.brand)
+    parentFocus ||
+    (opts?.focus && canon.norm(opts.focus) !== canon.norm(project.brand)
       ? opts.focus.trim()
-      : undefined;
+      : undefined);
 
   const promptById = new Map(prompts.map((p) => [p.id, p]));
   const brandedPromptIds = new Set(
@@ -172,7 +181,20 @@ export async function computeRunMetrics(
   );
   const unbrandedIds = new Set(unbranded.map((r) => r.id));
 
-  const targetNorm = canon.norm(focus ?? project.brand);
+  // The target identity is a SET of norms: one brand normally, every member
+  // brand under a parent lens. isT() is the only test used downstream.
+  const targetNorms = parentFocus
+    ? new Set(
+        dictionary
+          .filter(
+            (e) =>
+              e.status === "active" &&
+              (e.parent ?? e.display_name ?? e.canonical) === parentFocus
+          )
+          .map((e) => e.canonical.trim().toLowerCase())
+      )
+    : new Set([canon.norm(focus ?? project.brand)]);
+  const isT = (norm: string) => targetNorms.has(norm);
   const roleOf = dictionaryRoles(dictionary, project, canon);
 
   // --- per-brand stats over unbranded responses (canonicalized) ---
@@ -212,8 +234,8 @@ export async function computeRunMetrics(
     };
     for (const row of rows) framing[row.framing as Framing]++;
     return {
-      brand: norm === targetNorm && !focus ? project.brand : entry.display,
-      isTarget: norm === targetNorm,
+      brand: isT(norm) && !focus ? project.brand : entry.display,
+      isTarget: isT(norm),
       isCompetitor: roleOf(norm) === "competitor",
       mentionCount: k,
       mentionRate: n > 0 ? k / n : 0,
@@ -225,6 +247,45 @@ export async function computeRunMetrics(
     };
   });
   brands.sort((a, b) => b.mentionRate - a.mentionRate);
+
+  // Parent lens: the target entry must be the ROLLUP — distinct answers
+  // naming any member, best rank per answer — not the largest member. The
+  // member rows stay, demoted to non-target.
+  if (parentFocus) {
+    const per = new Map<string, MentionRow>();
+    let mentionTotal = 0;
+    for (const m of mentions) {
+      if (!unbrandedIds.has(m.response_id)) continue;
+      if (!isT(canon.norm(m.brand))) continue;
+      mentionTotal++;
+      const prev = per.get(m.response_id);
+      if (!prev || m.rank < prev.rank) per.set(m.response_id, m);
+    }
+    const rows = [...per.values()];
+    const ci = wilson(rows.length, unbranded.length);
+    const framing: Record<Framing, number> = {
+      recommended: 0,
+      mentioned: 0,
+      negative: 0,
+    };
+    for (const row of rows) framing[row.framing as Framing]++;
+    for (const b of brands) b.isTarget = false;
+    brands.unshift({
+      brand: parentFocus,
+      isTarget: true,
+      isCompetitor: false,
+      mentionCount: rows.length,
+      mentionRate: unbranded.length > 0 ? rows.length / unbranded.length : 0,
+      ciLow: ci.low,
+      ciHigh: ci.high,
+      avgRank:
+        rows.length > 0
+          ? rows.reduce((a, r) => a + r.rank, 0) / rows.length
+          : null,
+      shareOfVoice: totalMentions > 0 ? mentionTotal / totalMentions : 0,
+      framing,
+    });
+  }
 
   // --- per-engine breakdown: the same headline questions, engine by engine ---
   const allUnbranded = responses.filter(
@@ -242,7 +303,7 @@ export async function computeRunMetrics(
           const bestRank = new Map<string, number>();
           for (const m of mentions) {
             if (!ids.has(m.response_id)) continue;
-            if (canon.norm(m.brand) !== targetNorm) continue;
+            if (!isT(canon.norm(m.brand))) continue;
             const prev = bestRank.get(m.response_id);
             if (prev === undefined || m.rank < prev) {
               bestRank.set(m.response_id, m.rank);
@@ -250,7 +311,7 @@ export async function computeRunMetrics(
           }
           const named = bestRank.size;
           const picks = rows.filter(
-            (r) => r.top_pick_brand && canon.norm(r.top_pick_brand) === targetNorm
+            (r) => r.top_pick_brand && isT(canon.norm(r.top_pick_brand))
           ).length;
           const ci = wilson(named, rows.length);
           const ranks = [...bestRank.values()];
@@ -275,6 +336,34 @@ export async function computeRunMetrics(
                   reported.length
                 : null,
             citedAnswers: rows.filter((r) => r.citations && r.citations.length > 0).length,
+            outcomes: {
+              pick: rows.filter((r) => r.outcome === "pick").length,
+              no_pick: rows.filter((r) => r.outcome === "no_pick").length,
+              clarification: rows.filter((r) => r.outcome === "clarification")
+                .length,
+            },
+            style: {
+              avgWords:
+                rows.length > 0
+                  ? Math.round(
+                      rows.reduce(
+                        (a, r) => a + r.text.split(/\s+/).length,
+                        0
+                      ) / rows.length
+                    )
+                  : 0,
+              recRate: rate(rows, (r) => r.gives_recommendation === 1),
+              priceRate: rate(rows, (r) => r.includes_prices === 1),
+              specRate: rate(rows, (r) => r.includes_specs === 1),
+              clarRate: rate(rows, (r) => r.clarification_requested === 1),
+              avgOptions:
+                rows.length > 0
+                  ? rows.reduce(
+                      (a, r) => a + (r.total_recommendations ?? 0),
+                      0
+                    ) / rows.length
+                  : 0,
+            },
           };
         })
       : null;
@@ -294,13 +383,13 @@ export async function computeRunMetrics(
       const bestRank = new Map<string, number>();
       for (const m of mentions) {
         if (!ids.has(m.response_id)) continue;
-        if (canon.norm(m.brand) !== targetNorm) continue;
+        if (!isT(canon.norm(m.brand))) continue;
         const prev = bestRank.get(m.response_id);
         if (prev === undefined || m.rank < prev) bestRank.set(m.response_id, m.rank);
       }
       const named = bestRank.size;
       const picks = rows.filter(
-        (r) => r.top_pick_brand && canon.norm(r.top_pick_brand) === targetNorm
+        (r) => r.top_pick_brand && isT(canon.norm(r.top_pick_brand))
       ).length;
       const ci = wilson(named, rows.length);
       const ranks = [...bestRank.values()];
@@ -371,15 +460,38 @@ export async function computeRunMetrics(
           byDomain.set(domain, set);
         }
       }
+      // Which brands co-occur in each domain's citing answers — the seed of
+      // owned-vs-earned per brand. Distinct answers per (domain, brand).
+      const citedIds = new Set(cited.map((r) => r.id));
+      const brandsByResponse = new Map<string, Set<string>>();
+      for (const m of mentions) {
+        if (!citedIds.has(m.response_id)) continue;
+        if (canon.isRejected(m.brand)) continue;
+        const set = brandsByResponse.get(m.response_id) ?? new Set<string>();
+        set.add(canon.canonical(m.brand));
+        brandsByResponse.set(m.response_id, set);
+      }
       sources = {
         citedAnswers: cited.length,
         domains: [...byDomain.entries()]
-          .map(([domain, ids]) => ({
-            domain,
-            answers: ids.size,
-            share: ids.size / cited.length,
-            brand: brandForDomain(domain),
-          }))
+          .map(([domain, ids]) => {
+            const counts = new Map<string, number>();
+            for (const id of ids) {
+              for (const b of brandsByResponse.get(id) ?? []) {
+                counts.set(b, (counts.get(b) ?? 0) + 1);
+              }
+            }
+            return {
+              domain,
+              answers: ids.size,
+              share: ids.size / cited.length,
+              brand: brandForDomain(domain),
+              topBrands: [...counts.entries()]
+                .map(([brand, answers]) => ({ brand, answers }))
+                .sort((a, b) => b.answers - a.answers)
+                .slice(0, 3),
+            };
+          })
           .sort((a, b) => b.answers - a.answers)
           .slice(0, 30),
       };
@@ -417,7 +529,7 @@ export async function computeRunMetrics(
         { responseIds: new Set<string>(), mentionCount: 0, hasTarget: false };
       for (const row of entry.rows) s.responseIds.add(row.response_id);
       s.mentionCount += entry.rows.length;
-      if (norm === targetNorm) s.hasTarget = true;
+      if (isT(norm)) s.hasTarget = true;
       stats.set(parent, s);
     }
     parentRollup = [...parentMembers.entries()]
@@ -469,7 +581,7 @@ export async function computeRunMetrics(
   // --- per-prompt stats for the target brand ---
   const targetByResponse = new Map<string, MentionRow>();
   for (const m of mentions) {
-    if (mentionNorm.get(m.id) === targetNorm) {
+    if (isT(mentionNorm.get(m.id) ?? "")) {
       const prev = targetByResponse.get(m.response_id);
       if (!prev || m.rank < prev.rank) targetByResponse.set(m.response_id, m);
     }
@@ -544,7 +656,7 @@ export async function computeRunMetrics(
 
   if (coded) {
     const isTargetPick = (r: ResponseRow) =>
-      r.top_pick_brand !== null && canon.norm(r.top_pick_brand) === targetNorm;
+      r.top_pick_brand !== null && isT(canon.norm(r.top_pick_brand));
 
     outcomes = {
       pick: codedRows.filter((r) => r.outcome === "pick").length,
@@ -581,8 +693,8 @@ export async function computeRunMetrics(
     }
     topPicks = [...pickCounts.entries()]
       .map(([norm, e]) => ({
-        brand: norm === targetNorm && !focus ? project.brand : e.display,
-        isTarget: norm === targetNorm,
+        brand: isT(norm) && !focus ? project.brand : e.display,
+        isTarget: isT(norm),
         isCompetitor: roleOf(norm) === "competitor",
         picks: e.n,
         shareOfDecided: decided.length > 0 ? e.n / decided.length : 0,
@@ -651,7 +763,8 @@ export async function computeRunMetrics(
           named === 0
             ? "absent"
             : !tie &&
-                modalNorm === targetNorm &&
+                modalNorm !== null &&
+                isT(modalNorm) &&
                 decidedRows.length > 0 &&
                 modalN / decidedRows.length >= 0.5
               ? "win"
@@ -664,7 +777,7 @@ export async function computeRunMetrics(
           decided: decidedRows.length,
           modalPick:
             modalNorm && !tie
-              ? modalNorm === targetNorm
+              ? isT(modalNorm)
                 ? project.brand
                 : counts.get(modalNorm)!.display
               : null,
