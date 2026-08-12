@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth, requireRun } from "@/lib/auth";
+import { getPlanFor, requireAuth, requireRun } from "@/lib/auth";
 import { computeRunMetrics } from "@/lib/engine/metrics";
 
 export async function GET(
@@ -24,5 +24,6 @@ export async function GET(
     id,
     mode || focus ? { mode, focus } : undefined
   );
-  return NextResponse.json({ metrics, project: loaded.project });
+  const plan = await getPlanFor(auth);
+  return NextResponse.json({ metrics, project: loaded.project, plan });
 }

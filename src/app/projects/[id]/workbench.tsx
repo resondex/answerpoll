@@ -75,6 +75,7 @@ export default function Workbench({
   runId,
   pooled,
   project,
+  plan,
   view: rawView,
   setView,
   refreshToken,
@@ -82,6 +83,7 @@ export default function Workbench({
   runId: string;
   pooled: RunMetrics;
   project: Project;
+  plan: "free" | "pro" | "enterprise";
   view: string;
   setView: (v: string) => void;
   refreshToken: number;
@@ -312,19 +314,26 @@ export default function Workbench({
 
       <div className="grid md:grid-cols-[11.5rem_1fr]">
         <nav className="border-b md:border-b-0 md:border-r border-line py-2 flex md:grid content-start overflow-x-auto">
-          {VIEWS.map((v) => (
-            <button key={v.id} type="button" onClick={() => setView(v.id)}
+          {VIEWS.map((v) => {
+            const locked = v.id === "risk" && plan === "free";
+            return (
+            <button key={v.id} type="button" disabled={locked}
+              title={locked ? "Risk analysis is a paid feature" : undefined}
+              onClick={() => setView(v.id)}
               className={`px-4 py-2 text-left whitespace-nowrap ${
-                view === v.id
-                  ? "font-semibold text-primary md:border-r-2 border-[var(--color-primary)] bg-primary-soft/40"
-                  : "text-ink-2 hover:text-ink"
+                locked
+                  ? "text-ink-3 opacity-40 cursor-not-allowed"
+                  : view === v.id
+                    ? "font-semibold text-primary md:border-r-2 border-[var(--color-primary)] bg-primary-soft/40"
+                    : "text-ink-2 hover:text-ink"
               }`}>
               <span className="text-sm">{v.label}</span>
               <span className="block text-[10px] text-ink-3 font-normal">
                 {v.sub}
               </span>
             </button>
-          ))}
+            );
+          })}
         </nav>
         <div className="p-5 grid gap-4 content-start min-h-[24rem]">
           {loading && view !== "style" ? (
@@ -342,8 +351,9 @@ export default function Workbench({
                 <Battleground series={series} pooled={pooled} />
               )}
               {view === "sources" && <Sources pooled={pooled} />}
-              {view === "risk" && (
-                <Risk series={series} pooled={pooled} project={project} />
+              {view === "risk" && plan !== "free" && (
+                <Risk series={series} pooled={pooled} project={project}
+                  plan={plan} runId={runId} clientName={clientName} />
               )}
               {view === "style" && <Style pooled={pooled} />}
             </>
@@ -399,11 +409,15 @@ function SortTable<T>({
   rows,
   filename,
   defaultSort,
+  onRowClick,
+  activeRow,
 }: {
   cols: Col<T>[];
   rows: T[];
   filename: string;
   defaultSort?: { id: string; dir: 1 | -1 };
+  onRowClick?: (r: T) => void;
+  activeRow?: (r: T) => boolean;
 }) {
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 }>(
     defaultSort ?? { id: cols[1]?.id ?? cols[0].id, dir: -1 }
@@ -462,7 +476,9 @@ function SortTable<T>({
           </thead>
           <tbody>
             {sorted.map((r, ri) => (
-              <tr key={ri} className="border-b border-line/60">
+              <tr key={ri}
+                onClick={onRowClick ? () => onRowClick(r) : undefined}
+                className={`border-b border-line/60 ${onRowClick ? "cursor-pointer hover:bg-primary-soft/20" : ""} ${activeRow?.(r) ? "bg-primary-soft/25" : ""}`}>
                 {cols.map((c, i) => (
                   <td
                     key={c.id}
@@ -1222,52 +1238,109 @@ function Sources({ pooled }: { pooled: RunMetrics }) {
 }
 
 /* ---------------- Risk ---------------- */
-function Risk({ series, pooled, project }: { series: Series; pooled: RunMetrics; project: Project }) {
+function Risk({
+  series, pooled, project, plan, runId, clientName,
+}: {
+  series: Series;
+  pooled: RunMetrics;
+  project: Project;
+  plan: "free" | "pro" | "enterprise";
+  runId: string;
+  clientName: string;
+}) {
+  const [verbBrand, setVerbBrand] = useState<string>(clientName);
+  const [verbCache, setVerbCache] = useState<
+    Record<string, { promptText: string; quote: string | null; interpretation: string | null }[]>
+  >({});
+  const [verbLoading, setVerbLoading] = useState(false);
+  const isClient = verbBrand === clientName;
+  const allowed = plan === "enterprise" || isClient;
+
+  useEffect(() => {
+    if (isClient || !allowed || verbCache[verbBrand]) return;
+    let cancelled = false;
+    setVerbLoading(true);
+    fetch(`/api/runs/${runId}/verbatims?brand=${encodeURIComponent(verbBrand)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d?.verbatims) {
+          setVerbCache((prev) => ({ ...prev, [verbBrand]: d.verbatims }));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setVerbLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [verbBrand, isClient, allowed, runId, verbCache]);
+
+  const verbatims = isClient
+    ? (pooled.negatives ?? [])
+    : (verbCache[verbBrand] ?? []);
+
   return (
     <>
       <SortTable
         filename="risk.csv"
         defaultSort={{ id: "negpct", dir: -1 }}
+        onRowClick={(r) => setVerbBrand(r.name)}
+        activeRow={(r) => r.name === verbBrand}
         cols={[
           { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
             color: (r) => r.color,
             render: (r) => <span className="font-medium">{r.name}</span> },
           { id: "named", label: "Named answers", num: true,
             val: (r) => r.stats?.count ?? null },
-          { id: "neg", label: "Negative", num: true,
-            val: (r) => r.stats?.framing.negative ?? null,
-            render: (r) =>
-              r.stats ? (
-                <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
-                  {r.stats.framing.negative}
-                </span>
-              ) : ("—") },
-          { id: "negpct", label: "% of named", num: true,
-            val: (r) =>
-              r.stats && r.stats.count > 0
-                ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
-            render: (r) =>
-              r.stats && r.stats.count > 0
-                ? pct(r.stats.framing.negative / r.stats.count) : "—" },
           { id: "rec", label: "Recommended", num: true,
-            val: (r) => r.stats?.framing.recommended ?? null },
-          { id: "recpct", label: "% of named ", num: true,
             val: (r) =>
               r.stats && r.stats.count > 0
                 ? Math.round((r.stats.framing.recommended / r.stats.count) * 100) : null,
             render: (r) =>
               r.stats && r.stats.count > 0
                 ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+          { id: "neutral", label: "Neutral", num: true,
+            val: (r) =>
+              r.stats && r.stats.count > 0
+                ? Math.round((r.stats.framing.mentioned / r.stats.count) * 100) : null,
+            render: (r) =>
+              r.stats && r.stats.count > 0 ? (
+                <Tip tip="Named without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
+                  <span className="cursor-help">
+                    {pct(r.stats.framing.mentioned / r.stats.count)}
+                  </span>
+                </Tip>
+              ) : ("—") },
+          { id: "negpct", label: "Negative", num: true,
+            val: (r) =>
+              r.stats && r.stats.count > 0
+                ? Math.round((r.stats.framing.negative / r.stats.count) * 100) : null,
+            render: (r) =>
+              r.stats && r.stats.count > 0 ? (
+                <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
+                  {pct(r.stats.framing.negative / r.stats.count)}
+                </span>
+              ) : ("—") },
+          { id: "negn", label: "Negative n", num: true,
+            val: (r) => r.stats?.framing.negative ?? null },
         ]}
         rows={series}
       />
-      {pooled.negatives && pooled.negatives.length > 0 && (
-        <div className="mt-2">
-          <div className="section-label mb-2">
-            Verbatims — {project.brand}
-          </div>
+      <div className="mt-2">
+        <div className="section-label mb-2">Verbatims — {verbBrand}</div>
+        {!allowed ? (
+          <p className="text-sm text-ink-3">
+            Competitor verbatims are available on higher tiers.
+          </p>
+        ) : verbLoading ? (
+          <p className="text-sm text-ink-3">Reading {verbBrand}&apos;s negative answers…</p>
+        ) : verbatims.length === 0 ? (
+          <p className="text-sm text-ink-3">
+            No answers framed {verbBrand} negatively in this run.
+          </p>
+        ) : (
           <div className="grid gap-3">
-            {pooled.negatives.slice(0, 8).map((n, i) => (
+            {verbatims.slice(0, 8).map((n, i) => (
               <div key={i} className="border-l-2 border-danger/50 pl-4">
                 <p className="text-[13px] text-ink-3 mb-1">“{n.promptText}”</p>
                 {n.quote && <p className="text-sm text-ink-2 italic">“{n.quote}”</p>}
@@ -1277,8 +1350,8 @@ function Risk({ series, pooled, project }: { series: Series; pooled: RunMetrics;
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </>
   );
 }

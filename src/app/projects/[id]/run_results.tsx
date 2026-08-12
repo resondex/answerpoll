@@ -31,6 +31,7 @@ export default function RunResults({
   // The verified narrative — the same gate-checked bundle the workbooks and
   // deck carry, so every written insight is discoverable here too.
   const [insights, setInsights] = useState<InsightsBundle | null>(null);
+  const [plan, setPlan] = useState<"free" | "pro" | "enterprise">("free");
   const [loaded, setLoaded] = useState(false);
   // Which competitive set the brand tables show. The target always stays.
   const [brandSet, setBrandSet] = useState<"all" | "competitors" | "discovered">(
@@ -68,6 +69,7 @@ export default function RunResults({
         if (cancelled) return;
         setMetrics(d.metrics);
         setProject(d.project);
+        if (d.plan) setPlan(d.plan);
       })
       .finally(() => {
         if (!cancelled) setLoaded(true);
@@ -208,6 +210,7 @@ export default function RunResults({
           runId={runId}
           pooled={metrics}
           project={project}
+          plan={plan}
           view={workbenchTab}
           setView={setWorkbenchTab}
           refreshToken={refreshToken}
