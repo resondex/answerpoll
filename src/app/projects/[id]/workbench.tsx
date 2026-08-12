@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import { METRICS, metricTip } from "@/lib/metrics_dictionary";
+import AnswersView, {
+  EMPTY_FILTER,
+  type AnswersFilter,
+} from "./answers_view";
 import {
   Download,
   HeadLabel,
@@ -36,6 +40,7 @@ export type WbView =
   | "battleground"
   | "sources"
   | "risk"
+  | "answers"
   | "style";
 
 const VIEWS: { id: WbView; label: string; sub: string }[] = [
@@ -45,6 +50,7 @@ const VIEWS: { id: WbView; label: string; sub: string }[] = [
   { id: "battleground", label: "Battleground", sub: "by prompt" },
   { id: "sources", label: "Sources", sub: "what feeds it" },
   { id: "risk", label: "Risk", sub: "negatives" },
+  { id: "answers", label: "Answers", sub: "what they said" },
   { id: "style", label: "Style", sub: "how engines answer" },
 ];
 
@@ -74,6 +80,8 @@ interface WbState {
   /** Table-only disclosures — charts never carry them. */
   showCI: boolean;
   showCounts: boolean;
+  /** The reader's filters — set directly, or by a link from Battleground. */
+  answers: AnswersFilter;
 }
 
 function brandStats(m: RunMetrics | null) {
@@ -143,6 +151,7 @@ export default function Workbench({
     measure: "named",
     showCI: false,
     showCounts: false,
+    answers: EMPTY_FILTER,
   });
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
@@ -175,7 +184,7 @@ export default function Workbench({
   const options = st.grain === "parents" ? parentNames : topBrands;
   const clientName = st.grain === "parents" ? clientParent : project.brand;
   const selected = useMemo(() => {
-    if (view === "style") return [clientName];
+    if (view === "style" || view === "answers") return [clientName];
     if (st.brandMode === "solo") {
       const solo = options.includes(st.soloBrand) || st.soloBrand === clientName
         ? st.soloBrand
@@ -304,7 +313,9 @@ export default function Workbench({
     }
   );
   const loading =
-    view !== "style" && groups.some((g) => g.series.some((x) => !x.stats));
+    view !== "style" &&
+    view !== "answers" &&
+    groups.some((g) => g.series.some((x) => !x.stats));
   const solo = st.brandMode === "solo";
 
   const set = (patch: Partial<WbState>) => setSt((p) => ({ ...p, ...patch }));
@@ -332,9 +343,11 @@ export default function Workbench({
             onClick={() => set({ brandMode: "comparative" })}>
             Multiple
           </button>
-          {view === "style" ? (
+          {view === "style" || view === "answers" ? (
             <span className="text-[12px] text-ink-3 ml-2">
-              this view is about the engines — brand selection doesn&apos;t apply
+              {view === "style"
+                ? "this view is about the engines — brand selection doesn't apply"
+                : "this view has its own filters below"}
             </span>
           ) : st.brandMode === "solo" ? (
             <select
@@ -473,11 +486,26 @@ export default function Workbench({
               )}
               {view === "choice" && <Choice groups={groups} st={st} />}
               {view === "why" && <Why groups={groups} />}
-              {view === "battleground" && <Battleground groups={groups} st={st} />}
+              {view === "battleground" && (
+                <Battleground groups={groups} st={st}
+                  openAnswers={(promptId) => {
+                    set({ answers: { ...EMPTY_FILTER, promptId } });
+                    setView("answers");
+                  }} />
+              )}
               {view === "sources" && <Sources groups={groups} />}
               {view === "risk" && plan !== "free" && (
                 <Risk groups={groups} pooled={pooled}
                   plan={plan} runId={runId} clientName={clientName} />
+              )}
+              {view === "answers" && (
+                <AnswersView
+                  runId={runId}
+                  filter={st.answers}
+                  setFilter={(f) => set({ answers: f })}
+                  brands={topBrands}
+                  clientBrand={project.brand}
+                />
               )}
               {view === "style" && <Style pooled={pooled} />}
             </>
@@ -1301,7 +1329,13 @@ function WhyGroup({
 }
 
 /* ---------------- Battleground ---------------- */
-function Battleground({ groups, st }: { groups: Group[]; st: WbState }) {
+function Battleground({
+  groups, st, openAnswers,
+}: {
+  groups: Group[];
+  st: WbState;
+  openAnswers: (promptId: string) => void;
+}) {
   const [sort, setSort] = useState<"contested" | "owned" | "theme">("contested");
   const [display, setDisplay] = useState<"grid" | "table">("grid");
   const firstName = groups[0]?.series[0]?.name ?? "";
@@ -1347,7 +1381,7 @@ function Battleground({ groups, st }: { groups: Group[]; st: WbState }) {
       <div className="grid gap-8">
         {groups.map((g) => (
           <BattlegroundGroup key={g.label ?? "all"} g={g} sort={sort}
-            display={display} showCI={st.showCI} />
+            display={display} showCI={st.showCI} openAnswers={openAnswers} />
         ))}
       </div>
     </>
@@ -1355,12 +1389,13 @@ function Battleground({ groups, st }: { groups: Group[]; st: WbState }) {
 }
 
 function BattlegroundGroup({
-  g, sort, display, showCI,
+  g, sort, display, showCI, openAnswers,
 }: {
   g: Group;
   sort: "contested" | "owned" | "theme";
   display: "grid" | "table";
   showCI: boolean;
+  openAnswers: (promptId: string) => void;
 }) {
   const series = g.series;
   const base = g.m?.promptGrid ?? [];
@@ -1530,6 +1565,11 @@ function BattlegroundGroup({
                     <tr key={pg.promptId} className="border-b border-line/60">
                       <td className="py-2 pr-4 text-ink-2 max-w-[24rem]">
                         <span className="line-clamp-2">{pg.text}</span>
+                        <button type="button"
+                          onClick={() => openAnswers(pg.promptId)}
+                          className="mt-0.5 text-[12px] font-medium text-primary hover:opacity-80">
+                          read the {pg.answers} answers ↗
+                        </button>
                       </td>
                       <td className="py-2 pr-4 text-[12px] text-ink-3 whitespace-nowrap">
                         {pg.theme.replace("_", " ")}

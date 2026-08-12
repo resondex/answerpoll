@@ -7,7 +7,27 @@
  * deliberately small subset: anything unrecognized falls through as text,
  * and nothing is ever treated as HTML.
  */
-function inline(text: string, key: string) {
+function highlightBrand(node: string, terms: string[], key: string) {
+  const live = terms.filter(Boolean);
+  if (live.length === 0) return node;
+  const pattern = new RegExp(
+    `(${live.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "gi"
+  );
+  const parts = node.split(pattern);
+  if (parts.length === 1) return node;
+  return parts.map((part, i) =>
+    live.some((t) => t.toLowerCase() === part.toLowerCase()) ? (
+      <mark key={`${key}-h-${i}`} className="rounded bg-primary-soft px-0.5 text-primary">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
+}
+
+function inline(text: string, key: string, highlight: string[] = []) {
   // **bold**, *italic*, `code`, and bare [n] citation markers.
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
   return parts.filter(Boolean).map((part, i) => {
@@ -28,11 +48,20 @@ function inline(text: string, key: string) {
         </code>
       );
     }
-    return <span key={`${key}-${i}`}>{part}</span>;
+    return (
+      <span key={`${key}-${i}`}>{highlightBrand(part, highlight, `${key}-${i}`)}</span>
+    );
   });
 }
 
-export default function AnswerText({ text }: { text: string }) {
+export default function AnswerText({
+  text,
+  highlight = [],
+}: {
+  text: string;
+  /** Brand names to mark in the prose — the reason you opened the answer. */
+  highlight?: string[];
+}) {
   const lines = text.split("\n");
   const blocks: React.ReactNode[] = [];
   let list: string[] = [];
@@ -42,7 +71,7 @@ export default function AnswerText({ text }: { text: string }) {
       <ul key={`ul-${key}`} className="my-1.5 grid gap-1 pl-4">
         {list.map((item, i) => (
           <li key={i} className="list-disc text-sm leading-relaxed text-ink-2">
-            {inline(item, `${key}-${i}`)}
+            {inline(item, `${key}-${i}`, highlight)}
           </li>
         ))}
       </ul>
@@ -62,7 +91,7 @@ export default function AnswerText({ text }: { text: string }) {
       if (cells.length > 0) {
         blocks.push(
           <p key={key} className="text-sm leading-relaxed text-ink-2">
-            {inline(cells.join(" · "), key)}
+            {inline(cells.join(" · "), key, highlight)}
           </p>
         );
       }
@@ -73,7 +102,7 @@ export default function AnswerText({ text }: { text: string }) {
       flushList(key);
       blocks.push(
         <p key={key} className="mt-2.5 text-sm font-semibold text-ink">
-          {inline(heading[2], key)}
+          {inline(heading[2], key, highlight)}
         </p>
       );
       return;
@@ -92,7 +121,7 @@ export default function AnswerText({ text }: { text: string }) {
     if (line.trim() === "") return;
     blocks.push(
       <p key={key} className="my-1 text-sm leading-relaxed text-ink-2">
-        {inline(line, key)}
+        {inline(line, key, highlight)}
       </p>
     );
   });
