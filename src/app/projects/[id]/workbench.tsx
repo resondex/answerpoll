@@ -494,14 +494,58 @@ function Visibility({
             {label}
           </button>
         ))}
-        {st.split !== "none" && (
+        {st.split !== "none" ? (
           <span className="text-[11px] text-ink-3">splits show named rate</span>
+        ) : (
+          <span className="text-[11px] text-ink-3">changes the chart — the table below always shows everything</span>
         )}
       </div>
       {st.split === "none" && (
         <SeriesBars rows={series.map((s) => ({
           label: s.name, color: s.color, value: valOf(s), right: rightOf(s),
         }))} />
+      )}
+      {st.split === "none" && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+                <th className="py-2 pr-4 font-semibold">Brand</th>
+                <th className="py-2 pr-4 font-semibold text-right">Named</th>
+                <th className="py-2 pr-4 font-semibold text-right">95% CI</th>
+                <th className="py-2 pr-4 font-semibold text-right">First-named</th>
+                <th className="py-2 pr-4 font-semibold text-right">Share of voice</th>
+                <th className="py-2 pr-4 font-semibold text-right">Avg position</th>
+                <th className="py-2 pr-4 font-semibold text-right">Recommended</th>
+                <th className="py-2 font-semibold text-right">Negative</th>
+              </tr>
+            </thead>
+            <tbody>
+              {series.map((s) =>
+                s.stats ? (
+                  <tr key={s.name} className="border-b border-line/60">
+                    <td className="py-2 pr-4 font-medium" style={{ color: s.color }}>{s.name}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.named)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-ink-3 whitespace-nowrap">
+                      {pct(s.stats.ciLow)}–{pct(s.stats.ciHigh)}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">
+                      {s.stats.firstNamed !== null ? pct(s.stats.firstNamed) : "—"}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.sov)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">
+                      {s.stats.avgRank ? `#${s.stats.avgRank.toFixed(1)}` : "—"}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{s.stats.framing.recommended}</td>
+                    <td className={`py-2 text-right tabular-nums ${s.stats.framing.negative > 0 ? "text-danger" : ""}`}>
+                      {s.stats.framing.negative}
+                    </td>
+                  </tr>
+                ) : null
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
       {st.split === "engine" && (
         <div className="grid gap-4">
@@ -548,32 +592,65 @@ function Visibility({
 
 /* ---------------- Choice ---------------- */
 function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st: WbState }) {
+  const [metric, setMetric] = useState<"share" | "chosen" | "top3" | "named">("share");
+  const colorOf = (brand: string) =>
+    series.find((s) => s.name === brand)?.color ?? null;
+
+  // Decisiveness: the coder types every answer's outcome — a fixed,
+  // study-independent typology from the extraction schema.
   const strip = (o: { pick: number; no_pick: number; clarification: number }, label?: string) => {
     const total = o.pick + o.no_pick + o.clarification || 1;
+    const uncommitted = `Uncommitted breakdown: ${o.no_pick} (${pct(o.no_pick / total)}) explained the options without crowning one · ${o.clarification} (${pct(o.clarification / total)}) asked the user a question instead of answering`;
     return (
-      <div key={label ?? "run"}>
+      <div key={label ?? "run"} title={uncommitted} className="cursor-help">
         {label && <div className="section-label mb-1">{label}</div>}
-        <div className="flex h-5 overflow-hidden rounded-md">
-          <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" title={`committed to a pick: ${o.pick}`} />
-          <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" title={`explained without picking: ${o.no_pick}`} />
-          <div style={{ width: `${(o.clarification / total) * 100}%` }} className="bg-warning/60" title={`asked a question: ${o.clarification}`} />
+        <div className="flex items-baseline gap-2">
+          <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
+          <span className="text-[12px] text-ink-3">
+            of answers committed to a pick — hover for the uncommitted breakdown
+          </span>
         </div>
-        <div className="text-[12px] text-ink-3 mt-1">
-          {o.pick} committed · {o.no_pick} explained without picking · {o.clarification} asked a question
+        <div className="flex h-4 overflow-hidden rounded-md mt-1">
+          <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" />
+          <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" />
+          <div style={{ width: `${(o.clarification / total) * 100}%` }} className="bg-warning/60" />
         </div>
       </div>
     );
   };
-  const colorOf = (brand: string) =>
-    series.find((s) => s.name === brand)?.color ?? null;
-  const top = (pooled.topPicks ?? []).slice(0, 8);
-  const maxShare = top[0]?.shareOfDecided ?? 1;
+
+  const metricDefs = [
+    ["share", "Share of decided"],
+    ["chosen", "Chosen rate"],
+    ["top3", "Top-3 rate"],
+    ["named", "Named rate"],
+  ] as const;
+  const valFor = (s: Series[number]) => {
+    if (!s.stats) return null;
+    if (metric === "share") {
+      return pooled.topPicks?.find((t) => t.brand === s.name)?.shareOfDecided ?? 0;
+    }
+    return metric === "chosen" ? s.stats.chosen : metric === "top3" ? s.stats.top3 : s.stats.named;
+  };
+  const rows = [...series].sort((a, b) => (valFor(b) ?? 0) - (valFor(a) ?? 0));
+  const unselected =
+    metric === "share"
+      ? (pooled.topPicks ?? [])
+          .filter((t) => !series.some((s) => s.name === t.brand))
+          .slice(0, Math.max(0, 8 - series.length))
+      : [];
+  const maxV = Math.max(
+    ...rows.map((s) => valFor(s) ?? 0),
+    ...unselected.map((t) => t.shareOfDecided),
+    0.01
+  );
+
   return (
     <>
       {pooled.outcomes && st.split !== "engine" && (
         <div className="rounded-xl border border-line p-4">
           <div className="section-label mb-2">
-            Decisiveness — the leaderboard below shares out the committed segment
+            Decisiveness — committed = the answer crowned ONE product as its pick
           </div>
           {strip(pooled.outcomes)}
         </div>
@@ -584,82 +661,15 @@ function Choice({ series, pooled, st }: { series: Series; pooled: RunMetrics; st
           {pooled.engines.map((e) => strip(e.outcomes, e.model))}
         </div>
       )}
-      {top.length > 0 && (
-        <div>
-          <div className="section-label mb-2">Share of decided answers</div>
-          <div className="grid gap-1.5">
-            {top.map((t) => {
-              const c = colorOf(t.brand);
-              return (
-                <div key={t.brand} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
-                  <span className="truncate text-sm text-right font-medium"
-                    style={{ color: c ?? "var(--color-ink-2, inherit)" }}>
-                    {t.brand}
-                  </span>
-                  <Bar w={t.shareOfDecided / maxShare} color={c ?? "var(--color-neutral-bar, #c3ced4)"} />
-                  <span className="text-[13px] tabular-nums text-ink-2">
-                    {t.picks} picks · {pct(t.shareOfDecided)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {series.map((s) =>
-          s.stats ? (
-            <div key={s.name} className="rounded-xl border border-line p-4">
-              <div className="text-sm font-semibold mb-1.5" style={{ color: s.color }}>
-                {s.name}
-              </div>
-              {[
-                ["Named", s.stats.named],
-                ["Top-3", s.stats.top3],
-                ["Chosen", s.stats.chosen],
-              ].map(([l, v]) => (
-                <div key={l as string} className="flex justify-between text-sm py-0.5">
-                  <span className="text-ink-2">{l}</span>
-                  <span className="font-semibold tabular-nums">
-                    {v !== null ? pct(v as number) : "—"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : null
-        )}
-      </div>
-    </>
-  );
-}
 
-/* ---------------- Why ---------------- */
-function Why({ series }: { series: Series }) {
-  const [sort, setSort] = useState<"lift" | "killshot">("lift");
-  const [open, setOpen] = useState<string | null>(null);
-  const first = series[0]?.stats?.m.reasonLift ?? [];
-  const liftOf = (s: Series[number], code: string) =>
-    s.stats?.m.reasonLift?.find((r) => r.code === code) ?? null;
-  const codes = [...first]
-    .sort((a, b) =>
-      sort === "lift" ? b.lift - a.lift : b.shareAbsent - a.shareAbsent
-    )
-    .map((r) => r.code);
-  if (codes.length === 0)
-    return <p className="text-sm text-ink-3">No argument coding in this run.</p>;
-  return (
-    <>
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Sort</span>
-        {(
-          [
-            ["lift", `${series[0].name}'s biggest lifts`],
-            ["killshot", "biggest kill-shots"],
-          ] as const
-        ).map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setSort(id)}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+          Chart
+        </span>
+        {metricDefs.map(([id, label]) => (
+          <button key={id} type="button" onClick={() => setMetric(id)}
             className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-              sort === id
+              metric === id
                 ? "border-[var(--color-primary)] bg-primary-soft text-primary"
                 : "border-line text-ink-3 hover:border-ink-3"
             }`}>
@@ -667,17 +677,147 @@ function Why({ series }: { series: Series }) {
           </button>
         ))}
         <span className="text-[11px] text-ink-3">
-          kill-shot = travels with answers where {series[0].name} is absent
+          changes the chart — the table below always shows everything
         </span>
       </div>
+      <div className="grid gap-1.5">
+        {rows.map((s) => {
+          const v = valFor(s);
+          return (
+            <div key={s.name} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
+              <span className="truncate text-sm text-right font-medium" style={{ color: s.color }}>
+                {s.name}
+              </span>
+              <Bar w={(v ?? 0) / maxV} color={s.color} />
+              <span className="text-[13px] tabular-nums text-ink-2">
+                {v !== null ? pct(v) : "—"}
+              </span>
+            </div>
+          );
+        })}
+        {unselected.map((t) => (
+          <div key={t.brand} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
+            <span className="truncate text-sm text-right text-ink-3">{t.brand}</span>
+            <Bar w={t.shareOfDecided / maxV} color="var(--color-neutral-bar, #c3ced4)" />
+            <span className="text-[13px] tabular-nums text-ink-3">
+              {t.picks} picks · {pct(t.shareOfDecided)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
+              <th className="py-2 pr-4 font-semibold">Brand</th>
+              <th className="py-2 pr-4 font-semibold text-right">Named</th>
+              <th className="py-2 pr-4 font-semibold text-right">Top-3</th>
+              <th className="py-2 pr-4 font-semibold text-right">Chosen</th>
+              <th className="py-2 pr-4 font-semibold text-right">Picks</th>
+              <th className="py-2 font-semibold text-right">Share of decided</th>
+            </tr>
+          </thead>
+          <tbody>
+            {series.map((s) => {
+              const tp = pooled.topPicks?.find((t) => t.brand === s.name);
+              return s.stats ? (
+                <tr key={s.name} className="border-b border-line/60">
+                  <td className="py-2 pr-4 font-medium" style={{ color: s.color }}>{s.name}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{pct(s.stats.named)}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">
+                    {s.stats.top3 !== null ? pct(s.stats.top3) : "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-right tabular-nums">
+                    {s.stats.chosen !== null ? pct(s.stats.chosen) : "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-right tabular-nums">{tp?.picks ?? 0}</td>
+                  <td className="py-2 text-right tabular-nums">
+                    {tp ? pct(tp.shareOfDecided) : "0%"}
+                  </td>
+                </tr>
+              ) : null;
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[12px] text-ink-3">
+        Named and Chosen are shares of all coded answers; Share of decided is
+        the brand&apos;s slice of the answers that committed to a pick.
+      </p>
+    </>
+  );
+}
+
+/* ---------------- Why ---------------- */
+function Why({ series }: { series: Series }) {
+  const [sortBy, setSortBy] = useState<string>(series[0]?.name ?? "");
+  const [dir, setDir] = useState<1 | -1>(-1);
+  const [killshot, setKillshot] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const first = series[0]?.stats?.m.reasonLift ?? [];
+  const liftOf = (s: Series[number], code: string) =>
+    s.stats?.m.reasonLift?.find((r) => r.code === code) ?? null;
+  const sortSeries = series.find((x) => x.name === sortBy) ?? series[0];
+  const codes = [...first]
+    .map((r) => r.code)
+    .sort((a, b) => {
+      if (killshot) {
+        const ra = liftOf(sortSeries, a);
+        const rb = liftOf(sortSeries, b);
+        return (rb?.shareAbsent ?? 0) - (ra?.shareAbsent ?? 0);
+      }
+      const la = liftOf(sortSeries, a)?.lift ?? 0;
+      const lb = liftOf(sortSeries, b)?.lift ?? 0;
+      return dir === -1 ? lb - la : la - lb;
+    });
+  if (codes.length === 0)
+    return <p className="text-sm text-ink-3">No argument coding in this run.</p>;
+  const clickHeader = (name: string) => {
+    setKillshot(false);
+    if (sortBy === name) setDir((d) => (d === -1 ? 1 : -1));
+    else {
+      setSortBy(name);
+      setDir(-1);
+    }
+  };
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Sort</span>
+        <span className="text-[12px] text-ink-3">
+          click a brand column to sort by their lift, or
+        </span>
+        <button type="button" onClick={() => setKillshot((k) => !k)}
+          className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+            killshot
+              ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+              : "border-line text-ink-3 hover:border-ink-3"
+          }`}>
+          kill-shots vs {sortSeries.name}
+        </button>
+      </div>
+      {killshot && (
+        <p className="text-[12px] text-ink-2 rounded-lg bg-primary-soft/30 px-3 py-2 -mt-1">
+          Kill-shot sort: arguments ranked by how often they appear in answers
+          that never mention <b>{sortSeries.name}</b> at all. These are the
+          talking points of the conversations {sortSeries.name} is excluded
+          from — win the argument, enter the conversation.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
               <th className="py-2 pr-4 font-semibold">Argument · lift in each brand&apos;s wins</th>
               {series.map((s) => (
-                <th key={s.name} className="py-2 pr-3 font-semibold text-right" style={{ color: s.color }}>
+                <th key={s.name}
+                  className="py-2 pr-3 font-semibold text-right cursor-pointer select-none hover:opacity-70"
+                  style={{ color: s.color }}
+                  onClick={() => clickHeader(s.name)}
+                  title={`Sort by ${s.name}'s lift`}>
                   {s.name}
+                  {!killshot && sortBy === s.name ? (dir === -1 ? " ↓" : " ↑") : ""}
                 </th>
               ))}
             </tr>
@@ -722,13 +862,17 @@ function Why({ series }: { series: Series }) {
           </tbody>
         </table>
       </div>
+      <p className="text-[12px] text-ink-3">
+        Lift = the argument&apos;s share in answers that brand wins, minus its
+        share overall. Positive = the argument travels with their wins.
+      </p>
     </>
   );
 }
 
 /* ---------------- Battleground ---------------- */
 function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }) {
-  const [group, setGroup] = useState<"contested" | "theme">("contested");
+  const [sort, setSort] = useState<"contested" | "owned" | "theme">("contested");
   const base = pooled.promptGrid ?? [];
   if (base.length === 0)
     return <p className="text-sm text-ink-3">No prompt coding in this run.</p>;
@@ -741,29 +885,37 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           : b === "contested" ? "var(--color-warning, #b3822a)"
           : "var(--color-line, #d8dfe2)",
       }}
-      title={b ?? "—"} />
+      title={b === "win" ? "wins it: their most common pick, majority of decided answers"
+        : b === "contested" ? "contested: named, but no majority winner"
+        : "not named in this prompt's answers"} />
   );
   const contestScore = (promptId: string) =>
     series.filter((s) => badgeFor(s, promptId) === "contested").length * 2 +
     series.filter((s) => badgeFor(s, promptId) === "win").length;
+  const ownedScore = (promptId: string) =>
+    (badgeFor(series[0], promptId) === "win" ? 100 : 0) +
+    series.filter((s) => badgeFor(s, promptId) === "win").length;
   const rows =
-    group === "contested"
+    sort === "contested"
       ? [...base].sort((a, b) => contestScore(b.promptId) - contestScore(a.promptId))
-      : base;
-  const themes = group === "theme" ? [...new Set(base.map((g) => g.theme))] : [null];
+      : sort === "owned"
+        ? [...base].sort((a, b) => ownedScore(b.promptId) - ownedScore(a.promptId))
+        : base;
+  const themes = sort === "theme" ? [...new Set(base.map((g) => g.theme))] : [null];
   return (
     <>
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Group</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">Sort</span>
         {(
           [
-            ["contested", "most contested first"],
+            ["contested", "most contested"],
+            ["owned", `most owned by ${series[0]?.name ?? ""}`],
             ["theme", "by topic"],
           ] as const
         ).map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setGroup(id)}
+          <button key={id} type="button" onClick={() => setSort(id)}
             className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-              group === id
+              sort === id
                 ? "border-[var(--color-primary)] bg-primary-soft text-primary"
                 : "border-line text-ink-3 hover:border-ink-3"
             }`}>
@@ -776,6 +928,7 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
               <th className="py-2 pr-4 font-semibold">Prompt</th>
+              <th className="py-2 pr-4 font-semibold">Topic</th>
               {series.map((s) => (
                 <th key={s.name} className="py-2 pr-3 font-semibold text-center" style={{ color: s.color }}>
                   {s.name}
@@ -788,8 +941,8 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
               <>
                 {theme && (
                   <tr key={`t-${theme}`} className="bg-primary-soft/20">
-                    <td className="py-1.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-primary">
-                      {theme.replace("_", " ")}
+                    <td colSpan={2} className="py-1.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                      {theme.replace("_", " ")} — named rate at topic grain
                     </td>
                     {series.map((s) => {
                       const th = s.stats?.m.themes.find((x) => x.theme === theme);
@@ -805,8 +958,11 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
                   .filter((g) => !theme || g.theme === theme)
                   .map((g) => (
                     <tr key={g.promptId} className="border-b border-line/60">
-                      <td className="py-2 pr-4 text-ink-2 max-w-[26rem]">
+                      <td className="py-2 pr-4 text-ink-2 max-w-[24rem]">
                         <span className="line-clamp-2">{g.text}</span>
+                      </td>
+                      <td className="py-2 pr-4 text-[12px] text-ink-3 whitespace-nowrap">
+                        {g.theme.replace("_", " ")}
                       </td>
                       {series.map((s) => (
                         <td key={s.name} className="py-2 pr-3 text-center">
@@ -820,11 +976,18 @@ function Battleground({ series, pooled }: { series: Series; pooled: RunMetrics }
           </tbody>
         </table>
       </div>
-      <div className="flex gap-4 text-[12px] text-ink-3">
-        <span>{dot("win")} wins it</span>
-        <span>{dot("contested")} contested</span>
-        <span>{dot(null)} absent from picks</span>
-        {group === "theme" && <span>topic rows: named rate at topic grain</span>}
+      <div className="grid gap-1 text-[12px] text-ink-3">
+        <div className="flex gap-4">
+          <span>{dot("win")} wins it</span>
+          <span>{dot("contested")} contested</span>
+          <span>{dot(null)} not named</span>
+        </div>
+        <p>
+          Win = the brand is the prompt&apos;s most common pick AND takes a
+          majority (50%+) of its decided answers, with no tie. Contested =
+          named in the answers but nobody holds a majority (or someone else
+          does). Not named = absent from this prompt&apos;s answers entirely.
+        </p>
       </div>
     </>
   );
