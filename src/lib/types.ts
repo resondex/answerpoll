@@ -236,6 +236,13 @@ export interface RunMetrics {
         shareWins: number;
         shareAbsent: number;
         lift: number;
+        /** The counts behind the shares — small denominators should read
+         * loosely, so every surface can show them. */
+        of: number;
+        winsN: number;
+        winsOf: number;
+        absentN: number;
+        absentOf: number;
       }[]
     | null;
   promptGrid:

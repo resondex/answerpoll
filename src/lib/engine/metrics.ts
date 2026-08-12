@@ -760,6 +760,11 @@ export function computeRunMetricsFromData(
             shareWins,
             shareAbsent,
             lift: shareWins - shareAll,
+            of: codedRows.length,
+            winsN: inWins,
+            winsOf: wins.length,
+            absentN: inAbsent,
+            absentOf: absent.length,
           };
         })
         .filter((r) => r.n > 0)

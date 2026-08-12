@@ -1361,7 +1361,7 @@ function WhyGroup({
                         : "text-ink-2"
                       }`}>
                       {r ? (
-                        <Tip tip={`in wins ${pct(r.shareWins)} · overall ${pct(r.shareAll)} · where missing ${pct(r.shareAbsent)} · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
+                        <Tip tip={`in wins ${pct(r.shareWins)} (${r.winsN} of ${r.winsOf}) · overall ${pct(r.shareAll)} (${r.n} of ${r.of}) · where missing ${pct(r.shareAbsent)} (${r.absentN} of ${r.absentOf}) · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
                           <span className="cursor-help">{fmtCell(v)}</span>
                         </Tip>
                       ) : ("—")}
