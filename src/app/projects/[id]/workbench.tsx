@@ -490,10 +490,14 @@ function SortTable<T>({
                         : { id: c.id, dir: -1 }
                     )
                   }
-                  className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-right" : ""}`}
+                  className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-center" : ""}`}
                 >
                   {c.label}
-                  {sort.id === c.id ? (sort.dir === -1 ? " ↓" : " ↑") : ""}
+                  {/* The arrow always occupies its slot, so sorting a
+                      different column never re-measures the header. */}
+                  <span className="inline-block w-2.5 text-left">
+                    {sort.id === c.id ? (sort.dir === -1 ? "↓" : "↑") : ""}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -506,7 +510,7 @@ function SortTable<T>({
                 {cols.map((c, i) => (
                   <td
                     key={c.id}
-                    className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} ${c.num ? "text-right tabular-nums" : ""}`}
+                    className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} ${c.num ? "text-center tabular-nums" : ""}`}
                     style={c.color ? { color: c.color(r) } : undefined}
                   >
                     {c.render ? c.render(r) : c.val(r) ?? "—"}
@@ -1004,7 +1008,7 @@ function Why({ series }: { series: Series }) {
                 <th className="py-2 pr-4 font-semibold">Argument</th>
                 {series.map((s) => (
                   <th key={s.name}
-                    className="py-2 pr-3 font-semibold text-right cursor-pointer select-none hover:opacity-70"
+                    className="py-2 pr-3 font-semibold text-center cursor-pointer select-none hover:opacity-70"
                     style={{ color: s.color }}
                     onClick={() =>
                       setSortBy((prev) =>
@@ -1014,7 +1018,9 @@ function Why({ series }: { series: Series }) {
                       )
                     }>
                     {s.name}
-                    {sortBy?.name === s.name ? (sortBy.dir === -1 ? " ↓" : " ↑") : ""}
+                    <span className="inline-block w-2.5 text-left">
+                      {sortBy?.name === s.name ? (sortBy.dir === -1 ? "↓" : "↑") : ""}
+                    </span>
                   </th>
                 ))}
               </tr>
@@ -1028,7 +1034,7 @@ function Why({ series }: { series: Series }) {
                     const r = liftOf(s, code);
                     return (
                       <td key={s.name}
-                        className={`py-2 pr-3 text-right tabular-nums ${
+                        className={`py-2 pr-3 text-center tabular-nums ${
                           metric !== "lift" ? "text-ink-2"
                           : v === null ? "text-ink-3"
                           : v > 0.02 ? "text-success font-semibold"
