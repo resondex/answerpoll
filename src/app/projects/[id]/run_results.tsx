@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Project, RunMetrics } from "@/lib/types";
+import type { BrandStats, Project, RunMetrics } from "@/lib/types";
 import type { InsightsBundle } from "@/lib/engine/insights";
 import {
   BoardroomView,
@@ -9,6 +9,8 @@ import {
   type WorkbenchTab,
 } from "./views";
 import Workbench, { type WbPreset } from "./workbench";
+import { SortTable } from "./table";
+import AnswerText from "./answer_text";
 
 const pct = (x: number) =>
   x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
@@ -264,7 +266,6 @@ export default function RunResults({
         <section className="card p-6 border-l-4 border-l-[var(--color-primary)]">
           <div className="flex items-baseline justify-between gap-3 flex-wrap mb-3">
             <h2 className="section-label">Key takeaways</h2>
-            <VerifiedChip figures={insights.verification.figuresSupplied} />
           </div>
           <ol className="grid gap-2">
             {[
@@ -314,10 +315,6 @@ export default function RunResults({
               </div>
             </details>
           )}
-          <p className="text-[11px] text-ink-3 mt-3">
-            The same verified narrative ships in the workbooks and deck —
-            nothing here exists only on this screen.
-          </p>
         </section>
       )}
 
@@ -368,59 +365,41 @@ export default function RunResults({
             engine; coding comes from one fixed coder, so these differences are
             the engines, not the measurement.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                  <th className="py-2 pr-4 font-semibold">Engine</th>
-                  <th className="py-2 pr-4 font-semibold text-right">Answers</th>
-                  <th className="py-2 pr-4 font-semibold text-right">Named</th>
-                  <th className="py-2 pr-4 font-semibold text-right">
-                    First pick
-                  </th>
-                  <th className="py-2 pr-4 font-semibold text-right">
-                    Avg position
-                  </th>
-                  <th className="py-2 font-semibold text-right">Searched</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.engines.map((e) => (
-                  <tr key={e.model} className="border-b border-line/60">
-                    <td className="py-2 pr-4 font-medium">
-                      {e.model}
-                      {e.mode === "search" && (
-                        <span className="ml-1.5 rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                          search
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums text-ink-2">
-                      {e.answers}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {pct(e.namedRate)}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {pct(e.pickRate)}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums text-ink-2">
-                      {e.avgPosition ? `#${e.avgPosition.toFixed(1)}` : "—"}
-                    </td>
-                    <td className="py-2 text-right tabular-nums text-ink-2">
-                      {e.mode === "search"
-                        ? e.searchRate !== null
-                          ? pct(e.searchRate)
-                          : e.citedAnswers > 0
-                            ? "always"
-                            : "—"
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <SortTable
+            filename="by_engine.csv"
+            defaultSort={{ id: "named", dir: -1 }}
+            cols={[
+              { id: "engine", label: "Engine",
+                val: (e: NonNullable<RunMetrics["engines"]>[number]) => e.model,
+                render: (e) => (
+                  <span className="font-medium whitespace-nowrap">
+                    {e.model}
+                    {e.mode === "search" && (
+                      <span className="ml-1.5 rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                        search
+                      </span>
+                    )}
+                  </span>
+                ) },
+              { id: "answers", label: "Answers", num: true, val: (e) => e.answers },
+              { id: "named", label: "Named", num: true,
+                val: (e) => Math.round(e.namedRate * 100),
+                render: (e) => pct(e.namedRate) },
+              { id: "pick", label: "First pick", num: true,
+                val: (e) => Math.round(e.pickRate * 100),
+                render: (e) => pct(e.pickRate) },
+              { id: "pos", label: "Avg position", num: true,
+                val: (e) => e.avgPosition,
+                render: (e) => (e.avgPosition ? `#${e.avgPosition.toFixed(1)}` : "—") },
+              { id: "searched", label: "Searched", num: true,
+                val: (e) => (e.searchRate !== null ? Math.round(e.searchRate * 100) : null),
+                render: (e) =>
+                  e.mode !== "search" ? "—"
+                  : e.searchRate !== null ? pct(e.searchRate)
+                  : e.citedAnswers > 0 ? "always" : "—" },
+            ]}
+            rows={metrics.engines}
+          />
         </section>
       )}
 
@@ -552,47 +531,29 @@ export default function RunResults({
             argument, in your first-pick wins vs overall. Positive lift =
             arguments to feed; negative = the conversations you&apos;re losing.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                  <th className="py-2 pr-4 font-semibold">Argument</th>
-                  <th className="py-2 pr-4 font-semibold text-right">
-                    In all answers
-                  </th>
-                  <th className="py-2 pr-4 font-semibold text-right">
-                    In your wins
-                  </th>
-                  <th className="py-2 font-semibold text-right">Lift</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.reasonLift.slice(0, 12).map((r) => (
-                  <tr key={r.code} className="border-b border-line/60">
-                    <td className="py-2 pr-4 text-ink-2">{r.code}</td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {pct(r.shareAll)}
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums">
-                      {pct(r.shareWins)}
-                    </td>
-                    <td
-                      className={`py-2 text-right tabular-nums font-medium ${
-                        r.lift > 0.02
-                          ? "text-success"
-                          : r.lift < -0.02
-                            ? "text-danger"
-                            : "text-ink-3"
-                      }`}
-                    >
-                      {r.lift >= 0 ? "+" : ""}
-                      {(r.lift * 100).toFixed(0)} pts
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <SortTable
+            filename="arguments.csv"
+            defaultSort={{ id: "lift", dir: -1 }}
+            cols={[
+              { id: "code", label: "Argument",
+                val: (r: NonNullable<RunMetrics["reasonLift"]>[number]) => r.code,
+                render: (r) => <span className="font-medium">{r.code}</span> },
+              { id: "all", label: "In all answers", num: true,
+                val: (r) => Math.round(r.shareAll * 100),
+                render: (r) => pct(r.shareAll) },
+              { id: "wins", label: "In your wins", num: true,
+                val: (r) => Math.round(r.shareWins * 100),
+                render: (r) => pct(r.shareWins) },
+              { id: "lift", label: "Lift", num: true,
+                val: (r) => Math.round(r.lift * 100),
+                render: (r) => (
+                  <span className={r.lift > 0.02 ? "text-success font-semibold" : r.lift < -0.02 ? "text-danger font-semibold" : ""}>
+                    {r.lift >= 0 ? "+" : ""}{(r.lift * 100).toFixed(0)} pts
+                  </span>
+                ) },
+            ]}
+            rows={metrics.reasonLift}
+          />
         </section>
       )}
 
@@ -728,69 +689,34 @@ export default function RunResults({
           {setBrands.length > 25 ? ` — top 25 of ${setBrands.length} shown` : ""}
           .
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                <th className="py-2.5 pr-4 font-semibold">Brand</th>
-                <th className="py-2.5 pr-4 font-semibold">Type</th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  Mention rate
-                </th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  Avg position
-                </th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  Share of voice
-                </th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  Recommended
-                </th>
-                <th className="py-2.5 font-semibold text-right">Negative</th>
-              </tr>
-            </thead>
-            <tbody>
-              {setBrands.slice(0, 25).map((b) => (
-                <tr
-                  key={b.brand}
-                  className={`border-b border-line/60 ${
-                    b.isTarget ? "bg-primary-soft/50" : ""
-                  }`}
-                >
-                  <td
-                    className={`py-2.5 pr-4 ${
-                      b.isTarget ? "font-semibold text-primary" : "text-ink-2"
-                    }`}
-                  >
-                    {b.brand}
-                  </td>
-                  <td className="py-2.5 pr-4 text-xs text-ink-3 whitespace-nowrap">
-                    {b.isTarget
-                      ? "you"
-                      : b.isCompetitor
-                        ? "competitor"
-                        : "emerged"}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    {pct(b.mentionRate)}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    {b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—"}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    {pct(b.shareOfVoice)}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right tabular-nums">
-                    {b.framing.recommended}
-                  </td>
-                  <td className="py-2.5 text-right tabular-nums">
-                    {b.framing.negative}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SortTable
+          filename="brands.csv"
+          defaultSort={{ id: "rate", dir: -1 }}
+          cols={[
+            { id: "brand", label: "Brand", val: (b: BrandStats) => b.brand,
+              render: (b) => (
+                <span className={b.isTarget ? "font-semibold text-primary" : "text-ink-2"}>
+                  {b.brand}
+                </span>
+              ) },
+            { id: "type", label: "Type",
+              val: (b) => (b.isTarget ? "you" : b.isCompetitor ? "competitor" : "emerged") },
+            { id: "rate", label: "Mention rate", num: true,
+              val: (b) => Math.round(b.mentionRate * 100),
+              render: (b) => pct(b.mentionRate) },
+            { id: "pos", label: "Avg position", num: true,
+              val: (b) => b.avgRank,
+              render: (b) => (b.avgRank ? `#${b.avgRank.toFixed(1)}` : "—") },
+            { id: "sov", label: "Share of voice", num: true,
+              val: (b) => Math.round(b.shareOfVoice * 100),
+              render: (b) => pct(b.shareOfVoice) },
+            { id: "rec", label: "Recommended", num: true,
+              val: (b) => b.framing.recommended },
+            { id: "neg", label: "Negative", num: true,
+              val: (b) => b.framing.negative },
+          ]}
+          rows={setBrands}
+        />
       </details>
 
       <section className="card p-6">
@@ -838,77 +764,54 @@ export default function RunResults({
         <h2 className="section-label mb-4">Where you show up — by prompt</h2>
           <InsightNote sentences={notesFor("prompts")}
             onVerify={() => openWorkbench(...cite("prompts"))} />
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3 border-b border-line">
-                <th className="py-2.5 pr-4 font-semibold">Prompt</th>
-                <th className="py-2.5 pr-4 font-semibold">Theme</th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  You appear
-                </th>
-                <th className="py-2.5 pr-4 font-semibold text-right">
-                  Avg position
-                </th>
-                {metrics.coded && (
-                  <>
-                    <th className="py-2.5 pr-4 font-semibold">
-                      Consensus pick
-                    </th>
-                    <th className="py-2.5 font-semibold">Status</th>
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {metrics.prompts.map((p) => {
-                const g = metrics.promptGrid?.find(
-                  (x) => x.promptId === p.promptId
-                );
+        <SortTable
+          filename="by_prompt.csv"
+          defaultSort={{ id: "appear", dir: -1 }}
+          cols={[
+            { id: "prompt", label: "Prompt",
+              val: (p: (typeof metrics.prompts)[number]) => p.text,
+              render: (p) => (
+                <span className="line-clamp-2 max-w-[24rem]" title={p.text}>
+                  {p.text}
+                </span>
+              ) },
+            { id: "theme", label: "Theme", val: (p) => p.theme,
+              render: (p) => (
+                <span className="whitespace-nowrap text-xs text-ink-3">
+                  {p.theme.replace("_", " ")}
+                </span>
+              ) },
+            { id: "appear", label: "You appear", num: true,
+              val: (p) => (p.responses > 0 ? Math.round((p.targetMentions / p.responses) * 100) : null),
+              render: (p) => (
+                <span className={`whitespace-nowrap ${p.targetMentions > 0 ? "font-medium" : "text-ink-3"}`}>
+                  {p.targetMentions}/{p.responses}
+                </span>
+              ) },
+            { id: "pos", label: "Avg position", num: true,
+              val: (p) => p.targetAvgRank,
+              render: (p) => (p.targetAvgRank ? `#${p.targetAvgRank.toFixed(1)}` : "—") },
+            { id: "consensus", label: "Consensus pick",
+              val: (p) =>
+                metrics.promptGrid?.find((x) => x.promptId === p.promptId)?.modalPick ?? null,
+              render: (p) => {
+                const g = metrics.promptGrid?.find((x) => x.promptId === p.promptId);
                 return (
-                  <tr key={p.promptId} className="border-b border-line/60">
-                    <td className="py-2.5 pr-4 text-ink-2">{p.text}</td>
-                    <td className="py-2.5 pr-4 text-xs text-ink-3 whitespace-nowrap">
-                      {p.theme.replace("_", " ")}
-                    </td>
-                    <td
-                      className={`py-2.5 pr-4 text-right tabular-nums ${
-                        p.targetMentions > 0 ? "font-medium" : "text-ink-3"
-                      }`}
-                    >
-                      {p.targetMentions}/{p.responses}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right tabular-nums text-ink-2">
-                      {p.targetAvgRank ? `#${p.targetAvgRank.toFixed(1)}` : "—"}
-                    </td>
-                    {metrics.coded && (
-                      <>
-                        <td className="py-2.5 pr-4 text-ink-2 whitespace-nowrap">
-                          {g?.modalPick ? (
-                            <>
-                              {g.modalPick}
-                              <span className="text-xs text-ink-3">
-                                {" "}
-                                ({pct(g.modalShare ?? 0)} of {g.decided})
-                              </span>
-                            </>
-                          ) : g && p.theme !== "branded" ? (
-                            <span className="text-ink-3">split / no pick</span>
-                          ) : (
-                            <span className="text-ink-3">—</span>
-                          )}
-                        </td>
-                        <td className="py-2.5">
-                          {g ? <Badge badge={g.badge} /> : null}
-                        </td>
-                      </>
-                    )}
-                  </tr>
+                  <span className="whitespace-nowrap text-ink-2">
+                    {g?.modalPick ?? (g && p.theme !== "branded" ? "split / no pick" : "—")}
+                  </span>
                 );
-              })}
-            </tbody>
-          </table>
-        </div>
+              } },
+            { id: "status", label: "Status",
+              val: (p) =>
+                metrics.promptGrid?.find((x) => x.promptId === p.promptId)?.badge ?? null,
+              render: (p) => {
+                const g = metrics.promptGrid?.find((x) => x.promptId === p.promptId);
+                return g ? <Badge badge={g.badge} /> : null;
+              } },
+          ]}
+          rows={metrics.prompts}
+        />
       </section>
 
       {metrics.sources && metrics.sources.domains.length > 0 && (
@@ -1002,9 +905,9 @@ export default function RunResults({
                   {v.mentionsTarget ? "names you" : "you're absent"}
                 </span>
               </p>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap text-ink-2 border-l-2 border-line pl-4">
-                {v.text}
-              </p>
+              <div className="border-l-2 border-line pl-4">
+                <AnswerText text={v.text} />
+              </div>
             </div>
           ))}
         </div>
@@ -1061,18 +964,6 @@ function LegendSwatch({ color, label }: { color: string; label: string }) {
   );
 }
 
-/** "Verified" chip explaining the placeholder gate in one hover. */
-function VerifiedChip({ figures }: { figures: number }) {
-  return (
-    <span
-      className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-primary cursor-help"
-      title={`AI-written, gate-verified: every figure was substituted from the run's registry of ${figures} computed facts, and any sentence carrying an unsourced number was deleted before display. The prose cannot disagree with the data.`}
-    >
-      AI · verified
-    </span>
-  );
-}
-
 /** A section's verified reading — the deck-caption pattern, in the app. */
 function InsightNote({
   sentences,
@@ -1086,9 +977,6 @@ function InsightNote({
     <div className="my-3 rounded-lg bg-primary-soft/40 px-3.5 py-2.5 grid gap-1">
       {sentences.map((t, i) => (
         <p key={i} className="text-[13px] leading-snug text-ink-2">
-          <span className="font-semibold text-primary">
-            {i === 0 ? "AI reading (verified): " : ""}
-          </span>
           {t}
           {i === sentences.length - 1 && onVerify && (
             <button type="button" onClick={onVerify}
