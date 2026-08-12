@@ -12,7 +12,14 @@ const pct = (x: number) => {
 
 /** Series colors: the client is always the primary blue; rivals take the
  * fixed order after it — color follows the entity, never its rank. */
-const SERIES = ["var(--color-primary)", "#56809a", "#c0702f", "#7c6aa6", "#4e8f6e"];
+const SERIES = [
+  "var(--series-1)",
+  "var(--series-2)",
+  "var(--series-3)",
+  "var(--series-4)",
+  "var(--series-5)",
+  "var(--series-6)",
+];
 
 export type WbView =
   | "visibility"
@@ -150,7 +157,7 @@ export default function Workbench({
       return [solo];
     }
     const list = st.compBrands.filter((b) => options.includes(b));
-    if (list.length > 0) return list.slice(0, 5);
+    if (list.length > 0) return list;
     if (st.grain === "parents") {
       const top5 = parentNames.slice(0, 5);
       return top5.includes(clientParent) ? top5 : [clientParent, ...top5.slice(0, 4)];
@@ -194,7 +201,10 @@ export default function Workbench({
   const series = selected.map((name, i) => ({
     name,
     isClient: name === clientName,
-    color: name === clientName ? SERIES[0] : SERIES[(i % 4) + 1],
+    // The client always holds slot 1; rivals take the remaining hues in
+    // order and wrap — every row is name-labeled, so color is redundant.
+    color:
+      name === clientName ? SERIES[0] : SERIES[1 + (i % (SERIES.length - 1))],
     stats: brandStats(slices[keyFor(name)] ?? null),
   }));
   const loading = series.some((s) => !s.stats);
@@ -262,25 +272,10 @@ export default function Workbench({
                   {name} ✕
                 </button>
               ))}
-              {selected.length < 5 && (
-                <select
-                  value=""
-                  onChange={(e) => {
-                    if (e.target.value)
-                      set({ compBrands: [...selected, e.target.value] });
-                  }}
-                  className="input w-auto py-0.5 text-[12px]"
-                >
-                  <option value="">+ add</option>
-                  {options
-                    .filter((o) => !selected.includes(o))
-                    .map((o) => (
-                      <option key={o} value={o}>
-                        {o}
-                      </option>
-                    ))}
-                </select>
-              )}
+              <AddBrand
+                options={options.filter((o) => !selected.includes(o))}
+                onAdd={(b) => set({ compBrands: [...selected, b] })}
+              />
             </>
           )}
         </div>
@@ -370,6 +365,58 @@ export default function Workbench({
   );
 }
 
+/** "+ add" wears the same pill as the brands it adds to. */
+function AddBrand({
+  options,
+  onAdd,
+}: {
+  options: string[];
+  onAdd: (brand: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  if (options.length === 0) return null;
+  const shown = options.filter((o) =>
+    o.toLowerCase().includes(q.trim().toLowerCase())
+  );
+  return (
+    <span className="relative inline-block">
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="rounded-full border border-dashed border-line px-2.5 py-0.5 text-[12px] font-medium text-ink-3 hover:border-ink-3 hover:text-ink-2">
+        + add
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <span className="absolute left-0 top-full z-40 mt-1 block w-56 rounded-xl border border-line bg-surface p-2 shadow-lg">
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Find a brand"
+              className="input mb-1 w-full py-1 text-[12px]" />
+            <span className="block max-h-56 overflow-y-auto">
+              {shown.map((o) => (
+                <button key={o} type="button"
+                  onClick={() => {
+                    onAdd(o);
+                    setQ("");
+                    setOpen(false);
+                  }}
+                  className="block w-full rounded-md px-2 py-1 text-left text-[13px] text-ink-2 hover:bg-primary-soft/40 hover:text-primary">
+                  {o}
+                </button>
+              ))}
+              {shown.length === 0 && (
+                <span className="block px-2 py-1 text-[12px] text-ink-3">
+                  Nothing matches
+                </span>
+              )}
+            </span>
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 /**
  * The answer scope: which engines are in play, and whether the view pools
  * them or breaks them out. One summary line in the bar, the detail on
@@ -453,9 +500,6 @@ function ScopeControl({
                   </button>
                 );
               })}
-            </span>
-            <span className="mb-1 block text-[12px] text-ink-3">
-              Show these answers as one number, or as separate rows.
             </span>
 
             <span className="mt-3 mb-2 flex items-baseline justify-between">
@@ -923,6 +967,9 @@ function Visibility({
           ))}
         </div>
       )}
+      {st.split !== "none" && (
+        <FacetTable series={series} split={st.split} />
+      )}
       {st.split === "none" && (
         <SortTable
           filename="visibility.csv"
@@ -975,6 +1022,91 @@ function Visibility({
         />
       )}
     </>
+  );
+}
+
+/** The broken-out numbers: one row per brand x facet, same table norms. */
+function FacetTable({
+  series,
+  split,
+}: {
+  series: Series;
+  split: "engine" | "mode";
+}) {
+  type Row = {
+    facet: string;
+    brand: string;
+    color: string;
+    answers: number;
+    named: number;
+    namedRate: number;
+    ciLow: number;
+    ciHigh: number;
+    picks: number;
+    pickRate: number;
+    avgPosition: number | null;
+    searchRate: number | null;
+  };
+  const rows: Row[] = series.flatMap((s) => {
+    if (!s.stats) return [];
+    const facets =
+      split === "engine"
+        ? (s.stats.m.engines ?? []).map((e) => ({
+            facet: e.model,
+            answers: e.answers,
+            named: e.named,
+            namedRate: e.namedRate,
+            ciLow: e.ciLow,
+            ciHigh: e.ciHigh,
+            picks: e.picks,
+            pickRate: e.pickRate,
+            avgPosition: e.avgPosition,
+            searchRate: e.searchRate,
+          }))
+        : (s.stats.m.modes ?? []).map((m) => ({
+            facet: m.mode === "search" ? "search-enabled" : "instinct",
+            answers: m.answers,
+            named: m.named,
+            namedRate: m.namedRate,
+            ciLow: m.ciLow,
+            ciHigh: m.ciHigh,
+            picks: m.picks,
+            pickRate: m.pickRate,
+            avgPosition: m.avgPosition,
+            searchRate: m.searchRate,
+          }));
+    return facets.map((f) => ({ ...f, brand: s.name, color: s.color }));
+  });
+  if (rows.length === 0) return null;
+  return (
+    <SortTable
+      filename={`visibility_by_${split}.csv`}
+      defaultSort={{ id: "namedrate", dir: -1 }}
+      cols={[
+        { id: "facet", label: split === "engine" ? "Engine" : "Instrument",
+          val: (r: Row) => r.facet },
+        { id: "brand", label: "Brand", val: (r) => r.brand,
+          color: (r) => r.color,
+          render: (r) => <span className="font-medium">{r.brand}</span> },
+        { id: "answers", label: "Answers", num: true, val: (r) => r.answers },
+        { id: "namedrate", label: "Named", num: true,
+          val: (r) => Math.round(r.namedRate * 100),
+          render: (r) => pct(r.namedRate) },
+        { id: "ci", label: "95% CI", num: true,
+          val: (r) => Math.round(r.ciLow * 100),
+          render: (r) => `${pct(r.ciLow)}–${pct(r.ciHigh)}` },
+        { id: "pickrate", label: "First pick", num: true,
+          val: (r) => Math.round(r.pickRate * 100),
+          render: (r) => pct(r.pickRate) },
+        { id: "pos", label: "Avg position", num: true,
+          val: (r) => r.avgPosition,
+          render: (r) => (r.avgPosition ? `#${r.avgPosition.toFixed(1)}` : "—") },
+        { id: "searched", label: "Searched", num: true,
+          val: (r) => (r.searchRate !== null ? Math.round(r.searchRate * 100) : null),
+          render: (r) => (r.searchRate !== null ? pct(r.searchRate) : "—") },
+      ]}
+      rows={rows}
+    />
   );
 }
 

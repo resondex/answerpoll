@@ -2,6 +2,14 @@
 
 /* Design tokens — muted, quiet-premium palette on a warm off-white canvas. */
 :root {
+  /* Comparison series — validated for CVD separation and contrast in both
+     themes (dataviz six-checks). Slot 1 is always the client's brand. */
+  --series-1: #1f72a0;
+  --series-2: #c0702f;
+  --series-3: #3f9163;
+  --series-4: #8c5aa0;
+  --series-5: #7a8b2a;
+  --series-6: #b1567f;
   --canvas: #f6f6f4;
   --surface: #ffffff;
   --ink: #1a1d1f;
@@ -19,6 +27,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --series-1: #2f83b4;
+    --series-2: #c47a37;
+    --series-3: #3c9a6b;
+    --series-4: #9670b5;
+    --series-5: #7f9430;
+    --series-6: #c06f92;
     --canvas: #131517;
     --surface: #1b1e21;
     --ink: #f2f2f0;
