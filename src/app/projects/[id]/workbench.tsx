@@ -1223,29 +1223,33 @@ function Why({ groups }: { groups: Group[] }) {
   const [metric, setMetric] = useState<"lift" | "wins" | "all" | "absent">("lift");
   const [sortBy, setSortBy] = useState<{ name: string; dir: 1 | -1 } | null>(null);
   const metricDefs = [
-    ["lift", "Lift", "the argument's share in that brand's wins, minus its share overall"],
-    ["wins", "In their wins", "share of the brand's winning answers using the argument"],
-    ["all", "Overall", "share of all answers using the argument"],
-    ["absent", "Where they're missing", "share of answers that never mention the brand — the arguments of conversations they're excluded from"],
+    ["lift", "Lift", "How much more often the argument shows up in answers the brand wins than in answers overall. Positive = it travels with their wins."],
+    ["wins", "In their wins", "Of the answers that crown the brand, the share that use this argument — their winning story."],
+    ["all", "Overall", "The share of all answers that use this argument, whoever wins — the category's background conversation."],
+    ["absent", "Where they're missing", "Of the answers that never mention the brand, the share using this argument — the talking points of conversations they're excluded from."],
   ] as const;
+  const activeDef = metricDefs.find(([id]) => id === metric)!;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Chart
-        </span>
-        {metricDefs.map(([id, label, tip]) => (
-          <Tip key={id} tip={tip}>
-            <button type="button" onClick={() => setMetric(id)}
-              className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-                metric === id
-                  ? "border-[var(--color-primary)] bg-primary-soft text-primary"
-                  : "border-line text-ink-3 hover:border-ink-3"
-              }`}>
-              {label}
-            </button>
-          </Tip>
-        ))}
+      <div className="grid gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+            Metric
+          </span>
+          {metricDefs.map(([id, label, tip]) => (
+            <Tip key={id} tip={tip}>
+              <button type="button" onClick={() => setMetric(id)}
+                className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+                  metric === id
+                    ? "border-[var(--color-primary)] bg-primary-soft text-primary"
+                    : "border-line text-ink-3 hover:border-ink-3"
+                }`}>
+                {label}
+              </button>
+            </Tip>
+          ))}
+        </div>
+        <p className="text-[12px] text-ink-3">{activeDef[2]}</p>
       </div>
       <div className="grid gap-8">
         {groups.map((g) => (
