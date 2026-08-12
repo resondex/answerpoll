@@ -411,6 +411,7 @@ export function computeRunMetricsFromData(
             citedAnswers: rows.filter((r) => r.citations && r.citations.length > 0).length,
             outcomes: {
               pick: rows.filter((r) => r.outcome === "pick").length,
+              conditional: rows.filter((r) => r.outcome === "conditional").length,
               no_pick: rows.filter((r) => r.outcome === "no_pick").length,
               clarification: rows.filter((r) => r.outcome === "clarification")
                 .length,
@@ -754,6 +755,7 @@ export function computeRunMetricsFromData(
 
     outcomes = {
       pick: codedRows.filter((r) => r.outcome === "pick").length,
+      conditional: codedRows.filter((r) => r.outcome === "conditional").length,
       no_pick: codedRows.filter((r) => r.outcome === "no_pick").length,
       clarification: codedRows.filter((r) => r.outcome === "clarification")
         .length,

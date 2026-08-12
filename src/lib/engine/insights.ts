@@ -106,7 +106,7 @@ function buildFacts(
   if (metrics.outcomes) {
     add(
       "answer outcomes",
-      `${metrics.outcomes.pick} committed to a pick, ${metrics.outcomes.no_pick} explained without picking, ${metrics.outcomes.clarification} asked a question instead`
+      `${metrics.outcomes.pick} committed to one pick, ${metrics.outcomes.conditional} recommended different options for different situations, ${metrics.outcomes.no_pick} explained without recommending, ${metrics.outcomes.clarification} asked a question instead`
     );
   }
   for (const b of metrics.brands.slice(0, 5)) {

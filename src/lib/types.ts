@@ -77,7 +77,13 @@ export interface Run {
   created_at: string;
 }
 
-export type AnswerOutcome = "pick" | "no_pick" | "clarification";
+/** How decisive an answer was. "conditional" = recommends different
+ * options for different situations, so it crowns nobody. */
+export type AnswerOutcome =
+  | "pick"
+  | "conditional"
+  | "no_pick"
+  | "clarification";
 
 export interface ResponseRow {
   id: string;
@@ -222,7 +228,12 @@ export interface RunMetrics {
     count: number;
     of: number;
   } | null;
-  outcomes: { pick: number; no_pick: number; clarification: number } | null;
+  outcomes: {
+    pick: number;
+    conditional: number;
+    no_pick: number;
+    clarification: number;
+  } | null;
   /** Target position distribution among answers where it appears. */
   positionDist: { r1: number; r2: number; r3: number; r4plus: number } | null;
   /** Who wins instead: first-pick leaderboard over decided unbranded answers. */
@@ -307,7 +318,12 @@ export interface RunMetrics {
         searchRate: number | null;
         citedAnswers: number;
         /** How the engine's answers behave — the Style view. */
-        outcomes: { pick: number; no_pick: number; clarification: number };
+        outcomes: {
+          pick: number;
+          conditional: number;
+          no_pick: number;
+          clarification: number;
+        };
         style: {
           avgWords: number;
           /** Distinct brands the engine names per answer — category crowding. */

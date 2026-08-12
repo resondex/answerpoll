@@ -287,7 +287,10 @@ function extractSchema(reasonCodes: string[]) {
         },
       },
       top_pick_brand: { type: ["string", "null"] },
-      outcome: { type: "string", enum: ["pick", "no_pick", "clarification"] },
+      outcome: {
+        type: "string",
+        enum: ["pick", "conditional", "no_pick", "clarification"],
+      },
       reasons:
         reasonCodes.length > 0
           ? { type: "array", items: { type: "string", enum: reasonCodes } }
@@ -297,8 +300,6 @@ function extractSchema(reasonCodes: string[]) {
       includes_prices: { type: "boolean" },
       includes_specs: { type: "boolean" },
       total_recommendations: { type: "integer" },
-      focus_quote: { type: ["string", "null"] },
-      focus_interpretation: { type: ["string", "null"] },
     },
     required: [
       "mentions",
@@ -310,8 +311,6 @@ function extractSchema(reasonCodes: string[]) {
       "includes_prices",
       "includes_specs",
       "total_recommendations",
-      "focus_quote",
-      "focus_interpretation",
     ],
   } as const;
 }
@@ -348,41 +347,48 @@ const openaiProvider: CompletionProvider = {
           {
             role: "system",
             content:
-              "You code an AI assistant's answer for a brand-visibility study. " +
-              `The focus brand is "${ctx.targetBrand}". Return:\n` +
-              "- mentions: every company, brand, product, or provider named, in " +
-              "order of first appearance. ONLY proper-noun names — a generic " +
-              "descriptor ('a self-hosted server', 'open-source tools', " +
-              "'spreadsheets', 'a custom build') is NEVER a mention, even when " +
-              "the answer recommends it as an alternative. A phrase naming " +
-              "several brands at once ('Trello / Asana', 'Jira or Linear') is " +
-              "listed as one mention PER brand, never as a compound. A feature " +
-              "fragment without its brand ('Issue Boards') is attributed to " +
-              "the full product name when the answer makes it clear, otherwise " +
-              "omitted. framing: " +
-              "'recommended' if endorsed or ranked favorably, 'negative' if " +
-              "criticized or advised against, else 'mentioned'.\n" +
-              "- top_pick_brand: the ONE brand the answer explicitly crowns as " +
-              "its choice ('my pick', 'best overall', the one it would get). " +
-              "This is about endorsement, not order — it may differ from the " +
-              "first brand mentioned. Must be a proper-noun brand/product; if " +
-              "the answer's choice is a generic approach rather than a named " +
-              "product, top_pick_brand is null. null too if the answer commits " +
-              "to none.\n" +
-              "- outcome: 'pick' when a top pick exists; 'clarification' when " +
-              "the answer mainly asks a question instead of answering; " +
-              "'no_pick' when it explains options without committing.\n" +
-              "- reasons: which of the allowed argument codes the answer uses " +
-              "to justify or compare options. Only codes from the list.\n" +
-              "- clarification_requested: does it ask the user anything?\n" +
-              "- gives_recommendation: does it recommend at least one option?\n" +
-              "- includes_prices: any price, fee, or cost figure quoted?\n" +
-              "- includes_specs: any concrete spec/feature figures quoted?\n" +
-              "- total_recommendations: how many distinct options it recommends.\n" +
-              `- focus_quote: a verbatim sentence (max 200 chars) about ` +
-              `"${ctx.targetBrand}" from the answer; null if the brand is absent.\n` +
-              `- focus_interpretation: one plain sentence on how the answer ` +
-              `positions "${ctx.targetBrand}"; null if absent.\n` +
+              // Deliberately blind: naming the study's focus brand here made
+              // the coder crown it — measured at 28% of picks moving when the
+              // focus changed. This pass never learns whose study it is.
+              "You are coding one AI assistant answer for a brand study. Be " +
+              "literal: code only what the text says.\n\n" +
+              "mentions — every company, brand, product, or service named, in " +
+              "order of first appearance, including ones named only as " +
+              "integrations or adjacent tools. Completeness matters; relevance " +
+              "is decided later. ONLY proper-noun names: a generic descriptor " +
+              "('a self-hosted server', 'open-source tools', 'spreadsheets') is " +
+              "never a mention. A phrase naming several brands ('Trello / " +
+              "Asana') is one mention PER brand. A feature fragment without its " +
+              "brand ('Issue Boards') is attributed to the full product when " +
+              "the answer makes it clear, otherwise omitted.\n" +
+              "framing per mention — 'recommended' only when the answer " +
+              "endorses it for the reader's situation (a pick, a 'best for " +
+              "you', a clear favourable ranking). 'negative' when criticized, " +
+              "warned about, or advised against — including a caveat like " +
+              "'powerful but too heavy for a small team'. 'mentioned' when it " +
+              "is merely listed, compared factually, or named as an " +
+              "integration. Being included in a list is NOT an endorsement.\n" +
+              "outcome — 'pick' ONLY when the answer commits to ONE option " +
+              "overall, for everyone. 'conditional' when it recommends " +
+              "different options for different situations or says the choice " +
+              "depends ('X for enterprises, Y for startups', 'there is no " +
+              "single best'), even if it names a favourite in passing. " +
+              "'no_pick' when it explains options without recommending. " +
+              "'clarification' when it mainly asks the user a question.\n" +
+              "top_pick_brand — the ONE brand crowned as THE choice for " +
+              "everyone. MUST be null unless outcome is 'pick'. A conditional " +
+              "answer has no top pick, however prominent a brand is.\n" +
+              "reasons — which allowed argument codes the answer uses.\n" +
+              "clarification_requested — does it ask the user anything?\n" +
+              "gives_recommendation — does it recommend at least one option?\n" +
+              "includes_prices — true ONLY if an actual figure appears (a " +
+              "number with a currency or a per-seat/per-month rate). 'Pricing " +
+              "varies' or 'it is expensive' is false.\n" +
+              "includes_specs — true ONLY if concrete numeric limits or " +
+              "quantities appear (storage, seats, API limits, versions). " +
+              "Feature names without numbers are false.\n" +
+              "total_recommendations — how many distinct options it actually " +
+              "recommends (0 when it recommends none).\n" +
               `Known brands (extract others too): ${ctx.knownBrands.join(", ")}.`,
           },
           { role: "user", content: responseText },
@@ -398,6 +404,48 @@ const openaiProvider: CompletionProvider = {
       });
       const raw = res.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as ExtractionResult;
+      // The focus brand is needed only for the quote fields, so it is asked
+      // for in its own call — after the judgement calls are already made.
+      let focusQuote: string | null = null;
+      let focusInterpretation: string | null = null;
+      try {
+        const f = await client().chat.completions.create({
+          model: EXTRACT_MODEL,
+          messages: [
+            {
+              role: "system",
+              content:
+                `Read this AI assistant answer and report how it treats ` +
+                `"${ctx.targetBrand}". focus_quote: one verbatim sentence ` +
+                `(max 200 chars) about that brand, or null if it never ` +
+                `appears. focus_interpretation: one plain sentence on how the ` +
+                `answer positions it, or null if absent. Quote exactly.`,
+            },
+            { role: "user", content: responseText },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "focus_read",
+              strict: true,
+              schema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  focus_quote: { type: ["string", "null"] },
+                  focus_interpretation: { type: ["string", "null"] },
+                },
+                required: ["focus_quote", "focus_interpretation"],
+              },
+            },
+          },
+        });
+        const fp = JSON.parse(f.choices[0]?.message?.content ?? "{}");
+        focusQuote = fp.focus_quote ?? null;
+        focusInterpretation = fp.focus_interpretation ?? null;
+      } catch {
+        // A failed focus read costs quotes, never the coding itself.
+      }
       // Structured outputs guarantee the TYPE, not the semantics: the model
       // occasionally writes the string "null" where it means no pick.
       const pick =
@@ -407,9 +455,13 @@ const openaiProvider: CompletionProvider = {
           : null;
       return {
         ...parsed,
-        top_pick_brand: pick,
+        // A conditional or undecided answer crowns nobody, whatever the
+        // model volunteered.
+        top_pick_brand: parsed.outcome === "pick" ? pick : null,
         mentions: dedupeMentions(parsed.mentions ?? []),
         reasons: [...new Set(parsed.reasons ?? [])],
+        focus_quote: focusQuote,
+        focus_interpretation: focusInterpretation,
       };
     });
   },

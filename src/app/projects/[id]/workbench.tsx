@@ -1071,14 +1071,19 @@ function ChoiceGroup({
     ...unselected.map((t) => t.shareOfDecided),
     0.01
   );
-  const strip = (o: { pick: number; no_pick: number; clarification: number }) => {
-    const total = o.pick + o.no_pick + o.clarification || 1;
+  const strip = (o: {
+    pick: number;
+    conditional: number;
+    no_pick: number;
+    clarification: number;
+  }) => {
+    const total = o.pick + o.conditional + o.no_pick + o.clarification || 1;
     return (
       <div className="rounded-xl border border-line p-4">
         <div className="section-label mb-2">
           Decisiveness — committed = the answer crowned ONE product as its pick
         </div>
-        <Tip tip={`${pct(o.no_pick / total)} explained the options without crowning one · ${pct(o.clarification / total)} asked the user a question instead of answering`}>
+        <Tip tip={`${pct(o.conditional / total)} recommended different options for different situations · ${pct(o.no_pick / total)} explained the options without recommending · ${pct(o.clarification / total)} asked the user a question instead`}>
           <div className="flex items-baseline gap-2 cursor-help">
             <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
             <span className="text-[12px] text-ink-3">
@@ -1088,6 +1093,7 @@ function ChoiceGroup({
         </Tip>
         <div className="flex h-4 overflow-hidden rounded-md mt-1">
           <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" />
+          <div style={{ width: `${(o.conditional / total) * 100}%` }} className="bg-primary/40" />
           <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" />
           <div style={{ width: `${(o.clarification / total) * 100}%` }} className="bg-warning/60" />
         </div>
