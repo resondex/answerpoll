@@ -313,6 +313,19 @@ export function QuestionsView({
       <Q n={3} q="Who wins instead, and why?" tab="why" preset={soloPreset}>
         {metrics.topPicks ? (
           <div className="grid gap-2">
+            {/* Q2's percentage divides by every answer; these divide by only
+                the answers that committed to a pick. Saying the base out loud
+                is what stops 4% and 31% reading as a contradiction. */}
+            {metrics.outcomes && (
+              <p className="text-[13px] text-ink-3">
+                Shares below are of the{" "}
+                <span className="font-medium text-ink-2">
+                  {metrics.outcomes.pick} answers that committed to a single
+                  pick
+                </span>{" "}
+                — the rest hedged, so nobody won them.
+              </p>
+            )}
             {[...(you ? [you] : []), ...rivals]
               .sort((a, b) => b.shareOfDecided - a.shareOfDecided)
               .map((t) => (
