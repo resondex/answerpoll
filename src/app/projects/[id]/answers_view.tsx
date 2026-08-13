@@ -276,8 +276,8 @@ export default function AnswersView({
           Nothing here — widen the prompt or engine above.
         </p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
-          <div className="grid gap-1 content-start max-h-[34rem] overflow-y-auto pr-1">
+        <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:h-[38rem]">
+          <div className="grid gap-1 content-start max-h-[34rem] lg:max-h-none lg:h-full overflow-y-auto pr-1">
             {answers.map((a) => {
               const mine = a.brands.find((b) => b.brand === subject);
               const on = current?.id === a.id;
@@ -307,7 +307,7 @@ export default function AnswersView({
             })}
           </div>
           {current && (
-            <div className="rounded-xl border border-line p-4 grid gap-2 content-start">
+            <div className="rounded-xl border border-line p-4 grid gap-2 content-start lg:h-full lg:overflow-y-auto lg:min-h-0">
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-3">
                 <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-semibold text-primary">
                   {current.model}
