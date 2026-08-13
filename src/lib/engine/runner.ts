@@ -1,5 +1,6 @@
 import { store } from "../store";
 import {
+  CoderUnavailableError,
   completeWithEngine,
   engineAvailable,
   extractCodingConsensus,
@@ -101,6 +102,9 @@ export async function driveRunChunk(
   const deadline = Date.now() + budgetMs;
   let cursor = 0;
   let inserted = 0;
+  // Holder object: a plain `let` assigned only inside the worker closure
+  // gets narrowed to `never` by control-flow analysis.
+  const outage: { err: CoderUnavailableError | null } = { err: null };
 
   async function worker(): Promise<void> {
     while (cursor < pending.length && Date.now() < deadline) {
@@ -126,6 +130,13 @@ export async function driveRunChunk(
         });
         inserted++;
       } catch (err) {
+        if (err instanceof CoderUnavailableError) {
+          // Systemic, not transient: every remaining answer would be coded by
+          // half the methodology. Stop rather than bank unusable data.
+          outage.err = err;
+          cursor = pending.length;
+          return;
+        }
         console.error(`answerpoll run ${runId} task failed:`, err);
       }
     }
@@ -134,6 +145,12 @@ export async function driveRunChunk(
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker)
   );
+
+  if (outage.err) {
+    await store.updateRunStatus(runId, "failed", outage.err.message);
+    console.error(`answerpoll run ${runId} halted: ${outage.err.message}`);
+    return "failed";
+  }
 
   const remaining = pending.length - inserted;
   if (remaining === 0) {
@@ -188,6 +205,9 @@ export async function recodeRun(runId: string): Promise<number> {
   const responses = await store.listResponses(runId);
   let cursor = 0;
   let recoded = 0;
+  // Holder object: a plain `let` assigned only inside the worker closure
+  // gets narrowed to `never` by control-flow analysis.
+  const outage: { err: CoderUnavailableError | null } = { err: null };
   async function worker(): Promise<void> {
     while (cursor < responses.length) {
       const r = responses[cursor++];
@@ -201,6 +221,11 @@ export async function recodeRun(runId: string): Promise<number> {
         );
         recoded++;
       } catch (err) {
+        if (err instanceof CoderUnavailableError) {
+          outage.err = err;
+          cursor = responses.length;
+          return;
+        }
         // One answer failing keeps its previous coding rather than losing it.
         console.error(`recode of response ${r.id} failed:`, err);
       }
@@ -209,6 +234,13 @@ export async function recodeRun(runId: string): Promise<number> {
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, responses.length) }, worker)
   );
+  if (outage.err) {
+    // Loud: a partially re-coded run is worse than an un-re-coded one, so the
+    // caller has to know rather than read it off a provenance column later.
+    throw new CoderUnavailableError(
+      `${outage.err.message} Re-code stopped after ${recoded} of ${responses.length} answers.`
+    );
+  }
   console.log(`recoded ${recoded}/${responses.length} answers for run ${runId}`);
   return recoded;
 }

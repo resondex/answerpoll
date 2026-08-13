@@ -622,18 +622,67 @@ function singleBrand(
   const clean = raw?.trim();
   if (!clean) return null;
   const pool = [...mentions.map((m) => m.brand), ...known];
-  const whole = pool.find((p) => matchKey(p) === matchKey(clean));
-  if (whole) return whole;
-  if (!/[(),/]|\bor\b|\+/i.test(clean)) return clean;
-  const parts = clean
-    .split(/\s*(?:[(),/+]|\bor\b)\s*/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // A trailing qualifier is part of one name ("Acme Projects (v2)"), not a
+  // join, so drop it before deciding whether two names are being welded
+  // together.
+  const base = clean.replace(/\s*\([^)]*\)\s*$/, "").trim() || clean;
+  const JOIN = /\s*(?:\+|\/|,|\bor\b)\s*/i;
+  if (!JOIN.test(base)) {
+    return pool.find((p) => matchKey(p) === matchKey(base)) ?? base;
+  }
+  // Compound. The whole-string match is NOT an escape hatch here: once a
+  // compound name is itself extracted as a mention, matching against mentions
+  // would wave it straight through, which is how "GitHub Issues + Projects"
+  // survived the first version of this guard.
+  const parts = base.split(JOIN).map((s) => s.trim()).filter(Boolean);
   for (const part of parts) {
     const hit = pool.find((p) => matchKey(p) === matchKey(part));
     if (hit) return hit;
   }
-  return parts[0] ?? clean;
+  // No fragment names a brand the answer actually discussed, so this is not a
+  // crown at all ("PR/task-list-first"). Better no winner than a fake one.
+  return null;
+}
+
+/**
+ * A coder that fails on one answer is noise; a coder that fails on most of
+ * them is an outage, and quietly degrading to solo coding across a whole run
+ * silently halves the methodology. Track the rate and stop the run once it is
+ * unambiguous, so the failure is loud instead of buried in a provenance
+ * string.
+ */
+export class CoderUnavailableError extends Error {}
+const secondCoder = { attempts: 0, failures: 0, lastError: "" };
+const OUTAGE_MIN_ATTEMPTS = 20;
+const OUTAGE_FAILURE_RATE = 0.5;
+
+function noteSecondCoder(ok: boolean, err?: unknown): void {
+  secondCoder.attempts++;
+  if (ok) {
+    // A success proves the vendor is reachable; forget earlier blips so a
+    // long healthy run cannot accumulate its way into a false alarm.
+    secondCoder.failures = 0;
+    return;
+  }
+  secondCoder.failures++;
+  secondCoder.lastError = err instanceof Error ? err.message : String(err);
+  console.error(
+    `second coder (${CODER_B}) failed — ${secondCoder.failures} consecutive:`,
+    secondCoder.lastError
+  );
+}
+
+function assertSecondCoderHealthy(): void {
+  if (
+    secondCoder.attempts >= OUTAGE_MIN_ATTEMPTS &&
+    secondCoder.failures / secondCoder.attempts > OUTAGE_FAILURE_RATE
+  ) {
+    throw new CoderUnavailableError(
+      `consensus coding is degraded: ${CODER_B} failed on ` +
+        `${secondCoder.failures} of ${secondCoder.attempts} answers. ` +
+        `Last error: ${secondCoder.lastError}`
+    );
+  }
 }
 
 export async function extractCodingConsensus(
@@ -646,13 +695,24 @@ export async function extractCodingConsensus(
   // and every answer paid for two serial round trips it did not need.
   const [a, b, focus] = await Promise.all([
     provider.extractCoding(responseText, ctx, CODER_A, true),
-    provider.extractCoding(responseText, ctx, CODER_B, true).catch(() => null),
+    provider
+      .extractCoding(responseText, ctx, CODER_B, true)
+      .then((r) => {
+        noteSecondCoder(true);
+        return r;
+      })
+      .catch((err) => {
+        noteSecondCoder(false, err);
+        return null;
+      }),
     readFocus(responseText, ctx).catch(() => ({
       focus_quote: null,
       focus_interpretation: null,
     })),
   ]);
   if (!b) {
+    // Throws once the failures stop looking like bad luck.
+    assertSecondCoderHealthy();
     return {
       ...a,
       focus_quote: focus.focus_quote,
