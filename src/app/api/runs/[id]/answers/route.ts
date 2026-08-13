@@ -132,7 +132,7 @@ export async function GET(
     nopick: narrowed.filter((r) => r.outcome !== "pick").length,
   };
 
-  const page = matched.slice(offset, offset + limit).map((r) => {
+  const shape = (r: (typeof matched)[number]) => {
     const p = promptById.get(r.prompt_id)!;
     return {
       id: r.id,
@@ -147,7 +147,41 @@ export async function GET(
       brands: byResponse.get(r.id) ?? [],
       text: r.text,
     };
-  });
+  };
+
+  // Server-side export: the whole filtered lens as CSV, not just whatever
+  // groups the reader happened to expand. Answers carry commas, quotes, and
+  // newlines, so every field is quoted.
+  if (q.get("format") === "csv") {
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = [
+      "response_id", "engine", "mode", "prompt", "round",
+      "outcome", "chose", "brands_named", "answer",
+    ];
+    const lines = [header.map(esc).join(",")];
+    for (const r of matched) {
+      const a = shape(r);
+      lines.push(
+        [
+          a.id, a.model, a.mode, a.promptText, a.repeat,
+          a.outcome ?? "", a.topPick ?? "",
+          a.brands.map((b) => b.brand).join(" | "), a.text,
+        ]
+          .map(esc)
+          .join(",")
+      );
+    }
+    return new NextResponse(lines.join("\r\n"), {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="answers_${
+          outcome ?? framing ?? "all"
+        }.csv"`,
+      },
+    });
+  }
+
+  const page = matched.slice(offset, offset + limit).map(shape);
 
   // True per-prompt counts over the full filtered set — the rail's accordion
   // shows every prompt with its real count and fetches a group's answers only

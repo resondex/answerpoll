@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import AnswerText from "./answer_text";
-import { Download } from "./table";
 
 interface Answer {
   id: string;
@@ -292,32 +291,18 @@ export default function AnswersView({
             </>
           )}
         </p>
-        {loadedAnswers.length > 0 && (
-          <Download
-            name="answers"
-            header={[
-              "response_id",
-              "engine",
-              "prompt",
-              "repeat",
-              "outcome",
-              "chose",
-              "brands_named",
-              "answer",
-            ]}
-            rows={() =>
-              loadedAnswers.map((a) => [
-                a.id,
-                a.model,
-                a.promptText,
-                a.repeat,
-                a.outcome,
-                a.topPick,
-                a.brands.map((b) => b.brand).join(" | "),
-                a.text,
-              ])
-            }
-          />
+        {(meta?.total ?? 0) > 0 && (
+          <a
+            href={`/api/runs/${runId}/answers?${(() => {
+              const q = baseQuery();
+              q.set("format", "csv");
+              return q.toString();
+            })()}`}
+            download
+            className="shrink-0 rounded-full border border-line px-2.5 py-0.5 text-[12px] font-medium text-ink-2 hover:border-ink-3"
+          >
+            ↓ csv · all {meta?.total}
+          </a>
         )}
       </div>
 
