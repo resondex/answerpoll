@@ -3,7 +3,6 @@ import {
   completeWithEngine,
   engineAvailable,
   extractCodingConsensus,
-  getProvider,
 } from "./providers";
 import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
@@ -102,7 +101,6 @@ export async function driveRunChunk(
     return "complete";
   }
 
-  const provider = getProvider();
   const deadline = Date.now() + budgetMs;
   let cursor = 0;
   let inserted = 0;
@@ -195,13 +193,12 @@ export async function driveRunChunk(
     } catch (err) {
       console.error("dictionary queue failed:", err);
     }
-    // First completed run: health-check the battery before the study is
-    // trusted for scheduled measurement.
+    // Health-check the battery on every completed run. It used to fire only
+    // after a project's first run, which assumed prompts can only be born
+    // defective — but a prompt drifts off-category when the assistants change
+    // underneath it, which is the whole premise of tracking. One cheap call.
     try {
-      const allRuns = await store.listRuns(project.id);
-      if (allRuns.filter((r) => r.status === "complete").length === 1) {
-        await analyzePromptHealth(project.id, runId);
-      }
+      await analyzePromptHealth(project.id, runId);
     } catch (err) {
       console.error("prompt health check failed:", err);
     }
