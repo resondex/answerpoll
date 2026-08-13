@@ -17,7 +17,7 @@ import { getDictionarySuggestions } from "./dict_suggest";
 // how many run at once, so this number IS the run duration. 32 lands near
 // four minutes; raise it if the vendors tolerate more, but watch for 429s —
 // retries make an over-subscribed run slower, not faster.
-const CONCURRENCY = Number(process.env.RUN_CONCURRENCY ?? 32);
+const CONCURRENCY = Number(process.env.RUN_CONCURRENCY ?? 64);
 
 // Serverless functions cap at maxDuration=300s; leave headroom for in-flight
 // completions to finish and the chain handoff to fire.

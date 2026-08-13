@@ -667,13 +667,66 @@ export async function extractCodingConsensus(
   };
 }
 
-/** One focus read per answer, shared by both coders. */
+/**
+ * One focus read per answer, shared by both coders.
+ *
+ * Runs on Anthropic rather than the OpenAI coder: this is quotation, not
+ * judgement — it never touches outcome, crown, mentions, or framing — and
+ * OpenAI's tokens-per-minute bucket is the run's binding constraint, while
+ * Anthropic's is thirty times larger.
+ */
+const FOCUS_MODEL = process.env.EXTRACT_FOCUS_MODEL ?? CODER_B;
+
 async function readFocus(
   responseText: string,
   ctx: ExtractionContext
 ): Promise<{ focus_quote: string | null; focus_interpretation: string | null }> {
+  if (FOCUS_MODEL.startsWith("claude")) {
+    const a = await anthropicClient();
+    const res = await a.messages.create({
+      model: FOCUS_MODEL,
+      max_tokens: 400,
+      system:
+        `Read this AI assistant answer and report how it treats ` +
+        `"${ctx.targetBrand}". Quote exactly; invent nothing.`,
+      tools: [
+        {
+          name: "emit_focus",
+          description: "Return the focus read.",
+          input_schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              focus_quote: {
+                type: ["string", "null"],
+                description:
+                  "One verbatim sentence (max 200 chars) about the brand, or null if it never appears.",
+              },
+              focus_interpretation: {
+                type: ["string", "null"],
+                description:
+                  "One plain sentence on how the answer positions the brand, or null if absent.",
+              },
+            },
+            required: ["focus_quote", "focus_interpretation"],
+          } as unknown as { type: "object" },
+        },
+      ],
+      tool_choice: { type: "tool", name: "emit_focus" },
+      messages: [{ role: "user", content: responseText }],
+    });
+    const block = res.content.find((b) => b.type === "tool_use");
+    const fp = (block && "input" in block ? block.input : {}) as {
+      focus_quote?: string | null;
+      focus_interpretation?: string | null;
+    };
+    return {
+      focus_quote: fp.focus_quote ?? null,
+      focus_interpretation: fp.focus_interpretation ?? null,
+    };
+  }
   const res = await client().chat.completions.create({
-    model: CODER_A,
+    model: FOCUS_MODEL,
     messages: [
       {
         role: "system",
