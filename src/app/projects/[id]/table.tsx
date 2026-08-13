@@ -138,6 +138,19 @@ export interface Col<T> {
   color?: (r: T) => string | undefined;
   val: (r: T) => string | number | null;
   render?: (r: T) => React.ReactNode;
+  /**
+   * Makes this cell a handle on its own evidence. The cell declares which
+   * metric and brand it represents; the table turns it into a button and the
+   * page opens the drawer. Cells without a descriptor render as plain text,
+   * so adding the drawer to a new table is one line per column.
+   */
+  evidence?: (r: T) => { metric: EvidenceMetric; brand: string } | null;
+}
+
+export type EvidenceMetric = "mentioned" | "recommended" | "chosen";
+export interface EvidenceTarget {
+  metric: EvidenceMetric;
+  brand: string;
 }
 
 /** Every workbench table: sortable headers, one-click CSV. */
@@ -148,6 +161,7 @@ export function SortTable<T>({
   defaultSort,
   onRowClick,
   activeRow,
+  onEvidence,
 }: {
   cols: Col<T>[];
   rows: T[];
@@ -155,6 +169,8 @@ export function SortTable<T>({
   defaultSort?: { id: string; dir: 1 | -1 };
   onRowClick?: (r: T) => void;
   activeRow?: (r: T) => boolean;
+  /** Absent = the drawer is off for this project; cells stay plain text. */
+  onEvidence?: (t: EvidenceTarget) => void;
 }) {
   const [sort, setSort] = useState<{ id: string; dir: 1 | -1 }>(
     defaultSort ?? { id: cols[1]?.id ?? cols[0].id, dir: -1 }
@@ -227,7 +243,26 @@ export function SortTable<T>({
                     className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} ${c.num ? "text-center tabular-nums" : ""}`}
                     style={c.color ? { color: c.color(r) } : undefined}
                   >
-                    {c.render ? c.render(r) : c.val(r) ?? "—"}
+                    {(() => {
+                      const body = c.render ? c.render(r) : c.val(r) ?? "—";
+                      const target = onEvidence ? c.evidence?.(r) : null;
+                      if (!target) return body;
+                      return (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            // Row clicks change the whole view's brand; a cell
+                            // click is the narrower ask, so it wins.
+                            e.stopPropagation();
+                            onEvidence!(target);
+                          }}
+                          title={`See the answers behind this — ${target.metric}, ${target.brand}`}
+                          className="underline decoration-dotted decoration-ink-3/60 underline-offset-2 hover:decoration-[var(--color-primary)] hover:text-primary"
+                        >
+                          {body}
+                        </button>
+                      );
+                    })()}
                   </td>
                 ))}
               </tr>

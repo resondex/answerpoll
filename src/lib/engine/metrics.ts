@@ -2,9 +2,11 @@ import { store } from "../store";
 import { matchKey } from "../brand_key";
 import { engineMode } from "./providers";
 import type {
+  AnswerLabel,
   BrandStats,
   DictionaryEntry,
   Framing,
+  LabelMetric,
   MentionRow,
   Project,
   Prompt,
@@ -137,6 +139,49 @@ export interface RunData {
   mentions: MentionRow[];
   prompts: Prompt[];
   dictionary: DictionaryEntry[];
+  /** Human verdicts from the evidence drawer. Only consulted when the
+   * project has human override switched on. */
+  labels: AnswerLabel[];
+}
+
+/**
+ * Human labels as a lookup, or null when the project has override off — in
+ * which case labels are recorded and scored but never move a figure.
+ *
+ * Returns undefined for an unlabelled cell, so a caller can tell "reviewed
+ * and rejected" from "never reviewed" and keep the coder's value for the
+ * latter. That distinction is what makes an overridden figure a defensible
+ * blend rather than a silent edit.
+ */
+function buildOverride(
+  labels: AnswerLabel[],
+  project: Project
+): ((responseId: string, metric: LabelMetric, norm: string) => boolean | undefined) | null {
+  if (!project.human_override) return null;
+  const map = new Map<string, boolean>();
+  for (const l of labels) {
+    map.set(`${l.response_id}|${l.metric}|${l.brand_norm}`, l.verdict === 1);
+  }
+  return (responseId, metric, norm) => map.get(`${responseId}|${metric}|${norm}`);
+}
+
+/** Apply verdicts to one metric's answer set; returns how many it changed. */
+function applyOverride(
+  ids: Set<string>,
+  candidates: string[],
+  metric: LabelMetric,
+  norm: string,
+  lookup: ReturnType<typeof buildOverride>
+): number {
+  if (!lookup) return 0;
+  let changed = 0;
+  for (const id of candidates) {
+    const verdict = lookup(id, metric, norm);
+    if (verdict === undefined) continue;
+    if (verdict && !ids.has(id)) { ids.add(id); changed++; }
+    else if (!verdict && ids.has(id)) { ids.delete(id); changed++; }
+  }
+  return changed;
 }
 
 export async function loadRunData(runId: string): Promise<RunData | null> {
@@ -148,11 +193,12 @@ export async function loadRunData(runId: string): Promise<RunData | null> {
     store.listMentionsForRun(runId),
   ]);
   const project = projectMaybe!;
-  const [prompts, dictionary] = await Promise.all([
+  const [prompts, dictionary, labels] = await Promise.all([
     store.listPrompts(project.id),
     store.getDictionary(project.id),
+    store.listLabelsForRun(runId),
   ]);
-  return { run, project, responses, mentions, prompts, dictionary };
+  return { run, project, responses, mentions, prompts, dictionary, labels };
 }
 
 export async function computeRunMetrics(
@@ -169,6 +215,7 @@ export function computeRunMetricsFromData(
   opts?: SliceOpts
 ): RunMetrics {
   const { run, project, responses: allResponses, mentions, prompts, dictionary } = data;
+  const override = buildOverride(data.labels ?? [], project);
   const runId = run.id;
   // Optional instrument filter: every cut below recomputes over one mode's
   // answers only. Mentions need no prefilter — every downstream loop checks
@@ -270,9 +317,7 @@ export function computeRunMetricsFromData(
       if (!prev || row.rank < prev.rank) perResponse.set(row.response_id, row);
     }
     const rows = [...perResponse.values()];
-    const k = rows.length;
     const n = unbranded.length;
-    const ci = wilson(k, n);
     const framing: Record<Framing, number> = {
       recommended: 0,
       mentioned: 0,
@@ -292,19 +337,36 @@ export function computeRunMetricsFromData(
     for (const row of rows) {
       if (row.framing === "recommended") recommendedIds.add(row.response_id);
     }
+    const mentionedIds = new Set(rows.map((r) => r.response_id));
+    // Human verdicts, where the project has override on. Every answer in the
+    // run is a candidate: a label can add an answer the coder missed as
+    // readily as it can remove one the coder wrongly counted.
+    const candidates = unbranded.map((r) => r.id);
+    const changed =
+      applyOverride(mentionedIds, candidates, "mentioned", norm, override) +
+      applyOverride(recommendedIds, candidates, "recommended", norm, override) +
+      applyOverride(chosenIds, candidates, "chosen", norm, override);
+    const k = mentionedIds.size;
+    const ci = wilson(k, n);
     return {
       brand: isT(norm) && !focus ? project.brand : entry.display,
       isTarget: isT(norm),
       isCompetitor: roleOf(norm) === "competitor",
       mentionCount: k,
       mentionRate: n > 0 ? k / n : 0,
+      overrides: changed,
       recommendedCount: recommendedIds.size,
       recommendedRate: n > 0 ? recommendedIds.size / n : 0,
       chosenCount: chosenIds.size,
       chosenRate: n > 0 ? chosenIds.size / n : 0,
       ciLow: ci.low,
       ciHigh: ci.high,
-      avgRank: k > 0 ? rows.reduce((acc, r) => acc + r.rank, 0) / k : null,
+      // Average position stays on real mention rows — a label says whether an
+      // answer counts, not where in the list the brand appeared.
+      avgRank:
+        rows.length > 0
+          ? rows.reduce((acc, r) => acc + r.rank, 0) / rows.length
+          : null,
       // Distinct answers, matching the unit the mentioned rate uses — raw
       // mention rows double-count a brand named under two aliases.
       shareOfVoice: totalMentions > 0 ? k / totalMentions : 0,

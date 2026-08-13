@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import { METRICS, metricTip } from "@/lib/metrics_dictionary";
+import EvidenceDrawer from "./evidence_drawer";
 import AnswersView, {
   EMPTY_FILTER,
   type AnswersFilter,
@@ -11,6 +12,7 @@ import {
   Download,
   HeadLabel,
   SortTable,
+  type EvidenceTarget,
   Tip,
   downloadCsv,
 } from "./table";
@@ -131,6 +133,11 @@ export default function Workbench({
 }) {
   const view: WbView = (LEGACY[rawView] ?? rawView) as WbView;
   const storageKey = `answerpoll_wb_${project.id}`;
+  // Off for the whole tracker when the project says so — the tables then
+  // render their figures as plain text with nothing to click.
+  const drawerOn = Boolean(project.evidence_drawer);
+  const [evidence, setEvidence] = useState<EvidenceTarget | null>(null);
+  const openEvidence = drawerOn ? setEvidence : undefined;
 
   const topBrands = useMemo(
     () => pooled.brands.slice(0, 30).map((b) => b.brand),
@@ -486,10 +493,22 @@ export default function Workbench({
             <p className="text-sm text-ink-3">Computing slices…</p>
           ) : (
             <>
+              {evidence && (
+                <div className="mb-3">
+                  <EvidenceDrawer
+                    key={`${evidence.metric}:${evidence.brand}`}
+                    runId={runId}
+                    target={evidence}
+                    onClose={() => setEvidence(null)}
+                  />
+                </div>
+              )}
               {view === "visibility" && (
                 <Visibility groups={groups} solo={solo} st={st} set={set} />
               )}
-              {view === "choice" && <Choice groups={groups} st={st} />}
+              {view === "choice" && (
+                <Choice groups={groups} st={st} onEvidence={openEvidence} />
+              )}
               {view === "why" && <Why groups={groups} />}
               {view === "battleground" && (
                 <Battleground groups={groups} st={st}
@@ -998,7 +1017,7 @@ function SoloVisibility({ s }: { s: Series[number] }) {
 }
 
 /* ---------------- Choice ---------------- */
-function Choice({ groups, st }: { groups: Group[]; st: WbState }) {
+function Choice({ groups, st, onEvidence }: { groups: Group[]; st: WbState; onEvidence?: (t: EvidenceTarget) => void }) {
   const [metric, setMetric] = useState<
     "share" | "chosen" | "recommended" | "named"
   >("share");
@@ -1029,7 +1048,8 @@ function Choice({ groups, st }: { groups: Group[]; st: WbState }) {
       <div className="grid gap-8">
         {groups.map((g) => (
           <ChoiceGroup key={g.label ?? "all"} g={g} metric={metric}
-            showCI={st.showCI} showCounts={st.showCounts} />
+            showCI={st.showCI} showCounts={st.showCounts}
+            onEvidence={onEvidence} />
         ))}
       </div>
     </>
@@ -1041,11 +1061,13 @@ function ChoiceGroup({
   metric,
   showCI,
   showCounts,
+  onEvidence,
 }: {
   g: Group;
   metric: "share" | "chosen" | "recommended" | "named";
   showCI: boolean;
   showCounts: boolean;
+  onEvidence?: (t: EvidenceTarget) => void;
 }) {
   const m = g.m;
   if (!m) return null;
@@ -1139,14 +1161,17 @@ function ChoiceGroup({
           { id: "named", label: METRICS.mentioned.label, num: true,
             tip: metricTip("mentionedRate"),
             val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
+            evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
             render: (r) => (r.stats ? pct(r.stats.named) : "—") },
           { id: "recommended", label: METRICS.recommended.label, num: true,
             tip: metricTip("recommended"),
             val: (r) => (r.stats ? Math.round(r.stats.recommended * 100) : null),
+            evidence: (r) => (r.stats ? { metric: "recommended" as const, brand: r.name } : null),
             render: (r) => (r.stats ? pct(r.stats.recommended) : "—") },
           { id: "chosen", label: METRICS.chosen.label, num: true,
             tip: metricTip("chosen"),
             val: (r) => (r.stats ? Math.round(r.stats.chosen * 100) : null),
+            evidence: (r) => (r.stats ? { metric: "chosen" as const, brand: r.name } : null),
             render: (r) => (r.stats ? pct(r.stats.chosen) : "—") },
           ...(showCI
             ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
@@ -1176,6 +1201,7 @@ function ChoiceGroup({
             render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
         ]}
         rows={g.series}
+        onEvidence={onEvidence}
       />
     </div>
   );

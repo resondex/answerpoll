@@ -21,6 +21,8 @@ import type {
 } from "@/lib/types";
 
 interface Detail {
+  /** True when the signed-in user is staff — gates hidden switches. */
+  staff?: boolean;
   project: Project;
   prompts: Prompt[];
   runs: Run[];
@@ -35,6 +37,7 @@ interface Progress {
 }
 
 type OpenModal =
+  | "settings"
   | "run"
   | "schedule"
   | "history"
@@ -127,6 +130,33 @@ function ProjectDashboard() {
       body: JSON.stringify({ entryId, action }),
     });
     await refreshDict();
+  }
+
+  async function setFlag(
+    flags: { evidenceDrawer?: boolean; humanOverride?: boolean }
+  ) {
+    setDetail((d) =>
+      d
+        ? {
+            ...d,
+            project: {
+              ...d.project,
+              ...(flags.evidenceDrawer !== undefined
+                ? { evidence_drawer: flags.evidenceDrawer ? 1 : 0 }
+                : {}),
+              ...(flags.humanOverride !== undefined
+                ? { human_override: flags.humanOverride ? 1 : 0 }
+                : {}),
+            },
+          }
+        : d
+    );
+    await fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(flags),
+    });
+    setDictVersion((v) => v + 1);
   }
 
   async function setSchedule(schedule: RunSchedule) {
@@ -321,6 +351,11 @@ function ProjectDashboard() {
             setDictTab("identify");
             setOpenModal("dictionary");
           }}
+        />
+        <TaskButton
+          label="Settings"
+          bubble={null}
+          onClick={() => setOpenModal("settings")}
         />
         <TaskButton
           label="Prompt health"
@@ -789,6 +824,52 @@ function ProjectDashboard() {
             {dict.filter((e) => e.status === "rejected").length} excluded ·
             dictionary v{project.dictionary_version}
           </p>
+        </Modal>
+      )}
+
+      {openModal === "settings" && (
+        <Modal title="Tracker settings" onClose={() => setOpenModal(null)}>
+          <div className="grid gap-4">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={Boolean(project.evidence_drawer)}
+                onChange={(e) => setFlag({ evidenceDrawer: e.target.checked })}
+              />
+              <span>
+                <span className="font-medium">Evidence drawer</span>
+                <span className="block text-[13px] text-ink-3">
+                  Lets anyone viewing this tracker click a figure in the
+                  Workbench and read the answers behind it. Switch off to keep
+                  the raw answers out of a client&apos;s hands.
+                </span>
+              </span>
+            </label>
+
+            {detail.staff && (
+              <label className="flex items-start gap-3 text-sm border-t border-line pt-4">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={Boolean(project.human_override)}
+                  onChange={(e) => setFlag({ humanOverride: e.target.checked })}
+                />
+                <span>
+                  <span className="font-medium">
+                    Human review overrides the coder
+                  </span>
+                  <span className="block text-[13px] text-ink-3">
+                    Off by default. When on, answers you have reviewed in the
+                    evidence drawer count as you judged them, and every reported
+                    figure becomes a blend of reviewed and AI-coded answers.
+                    Reviews are always recorded either way — this only decides
+                    whether they move the numbers.
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
         </Modal>
       )}
 

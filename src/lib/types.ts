@@ -46,6 +46,38 @@ export interface Project {
    * beyond it in a run are bonus views. */
   engine_set: string[];
   dictionary_version: number;
+  /** Evidence drawer availability for this project. On by default; can be
+   * switched off per project when a client should not see the raw answers
+   * behind a figure. */
+  evidence_drawer: number;
+  /** Staff-only. When on, human labels override the coder for the answers
+   * that carry one, so a reported figure is a blend of reviewed and
+   * unreviewed answers. Off by default — a reviewer's click must never move
+   * a client-facing number without someone deliberately enabling it. */
+  human_override: number;
+  created_at: string;
+}
+
+/** Metrics a human can adjudicate from the evidence drawer. */
+export type LabelMetric = "mentioned" | "recommended" | "chosen";
+
+/**
+ * One human verdict on one answer, for one metric, for one brand. Stored
+ * apart from the coding columns on purpose: re-coding overwrites coding, and
+ * ground truth that lived alongside it would be destroyed by the very
+ * experiments it exists to judge.
+ */
+export interface AnswerLabel {
+  id: string;
+  project_id: string;
+  response_id: string;
+  metric: LabelMetric;
+  /** Fossilized brand identity, matching the canonicalizer's norm. */
+  brand_norm: string;
+  brand: string;
+  /** 1 = the answer does support this metric, 0 = it does not. */
+  verdict: number;
+  labeled_by: string | null;
   created_at: string;
 }
 
@@ -182,6 +214,10 @@ export interface BrandStats {
   chosenRate: number;
   ciLow: number;
   ciHigh: number;
+  /** Answers whose value for this brand a human label changed. 0 unless the
+   * project has human override on. Surfaced so a blended figure never reads
+   * as pure coder output. */
+  overrides?: number;
   avgRank: number | null;
   shareOfVoice: number;
   framing: Record<Framing, number>;
@@ -205,6 +241,10 @@ export interface ThemeStats {
   targetRate: number;
   ciLow: number;
   ciHigh: number;
+  /** Answers whose value for this brand a human label changed. 0 unless the
+   * project has human override on. Surfaced so a blended figure never reads
+   * as pure coder output. */
+  overrides?: number;
   targetAvgRank: number | null;
 }
 
@@ -394,6 +434,10 @@ export interface TrendPoint {
   rate: number;
   ciLow: number;
   ciHigh: number;
+  /** Answers whose value for this brand a human label changed. 0 unless the
+   * project has human override on. Surfaced so a blended figure never reads
+   * as pure coder output. */
+  overrides?: number;
   shareOfVoice: number;
 }
 
@@ -478,6 +522,23 @@ export interface Store {
   listProjects(userId?: string): Promise<Project[]>;
   updateProjectSchedule(id: string, schedule: RunSchedule): Promise<void>;
   updateProjectEngineSet(id: string, engineSet: string[]): Promise<void>;
+  /** Per-project switches for the evidence drawer and human override. */
+  updateProjectFlags(
+    id: string,
+    flags: { evidenceDrawer?: boolean; humanOverride?: boolean }
+  ): Promise<void>;
+  /** Record (or change) one human verdict. Re-labelling the same cell
+   * replaces the previous verdict rather than accumulating duplicates. */
+  upsertAnswerLabel(input: {
+    projectId: string;
+    responseId: string;
+    metric: LabelMetric;
+    brand: string;
+    brandNorm: string;
+    verdict: boolean;
+    labeledBy: string | null;
+  }): Promise<void>;
+  listLabelsForRun(runId: string): Promise<AnswerLabel[]>;
   getPlan(userId: string): Promise<Plan>;
   /** Cached value no older than maxAgeMs, else null. */
   cacheGet(key: string, maxAgeMs: number): Promise<string | null>;

@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type { TransactionSql } from "postgres";
 import type {
+  AnswerLabel,
   DictionaryEntry,
   Framing,
   Project,
@@ -57,6 +58,21 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS dictionary_version INTEGER NOT NULL DEFAULT 1`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS engine_set TEXT NOT NULL DEFAULT '[]'`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS evidence_drawer INTEGER NOT NULL DEFAULT 1`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS human_override INTEGER NOT NULL DEFAULT 0`;
+      await sql`CREATE TABLE IF NOT EXISTS answer_labels (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        response_id TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        brand_norm TEXT NOT NULL,
+        brand TEXT NOT NULL,
+        verdict INTEGER NOT NULL,
+        labeled_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (response_id, metric, brand_norm)
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_labels_project ON answer_labels (project_id)`;
       await sql`CREATE TABLE IF NOT EXISTS orgs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -201,6 +217,8 @@ function rowToProject(r: Record<string, unknown>): Project {
     reason_taxonomy: JSON.parse((r.reason_taxonomy as string) ?? "[]"),
     engine_set: JSON.parse((r.engine_set as string) ?? "[]"),
     dictionary_version: (r.dictionary_version as number) ?? 1,
+    evidence_drawer: (r.evidence_drawer as number) ?? 1,
+    human_override: (r.human_override as number) ?? 0,
     created_at: iso(r.created_at)!,
   };
 }
@@ -518,6 +536,41 @@ export const pgStore: Store = {
   async updateProjectSchedule(id, schedule) {
     const sql = await db();
     await sql`UPDATE projects SET schedule = ${schedule} WHERE id = ${id}`;
+  },
+
+  async updateProjectFlags(id, flags) {
+    const sql = await db();
+    if (flags.evidenceDrawer !== undefined) {
+      await sql`UPDATE projects SET evidence_drawer = ${flags.evidenceDrawer ? 1 : 0} WHERE id = ${id}`;
+    }
+    if (flags.humanOverride !== undefined) {
+      await sql`UPDATE projects SET human_override = ${flags.humanOverride ? 1 : 0} WHERE id = ${id}`;
+    }
+  },
+
+  async upsertAnswerLabel(input) {
+    const sql = await db();
+    await sql`INSERT INTO answer_labels
+        (id, project_id, response_id, metric, brand_norm, brand, verdict, labeled_by)
+      VALUES (${crypto.randomUUID()}, ${input.projectId}, ${input.responseId},
+        ${input.metric}, ${input.brandNorm}, ${input.brand},
+        ${input.verdict ? 1 : 0}, ${input.labeledBy})
+      ON CONFLICT (response_id, metric, brand_norm) DO UPDATE
+        SET verdict = EXCLUDED.verdict,
+            brand = EXCLUDED.brand,
+            labeled_by = EXCLUDED.labeled_by,
+            created_at = now()`;
+  },
+
+  async listLabelsForRun(runId) {
+    const sql = await db();
+    const rows = await sql`SELECT l.* FROM answer_labels l
+      JOIN responses r ON r.id = l.response_id
+      WHERE r.run_id = ${runId}`;
+    return rows.map((r) => ({
+      ...r,
+      created_at: new Date(r.created_at as string).toISOString(),
+    })) as AnswerLabel[];
   },
 
   async updateProjectEngineSet(id, engineSet) {

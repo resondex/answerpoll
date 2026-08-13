@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import type {
+  AnswerLabel,
   DictionaryEntry,
   Framing,
   Org,
@@ -165,6 +166,28 @@ function createDb(): Database.Database {
   if (!cols.some((c) => c.name === "org_id")) {
     db.exec("ALTER TABLE projects ADD COLUMN org_id TEXT");
   }
+  if (!cols.some((c) => c.name === "evidence_drawer")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN evidence_drawer INTEGER NOT NULL DEFAULT 1"
+    );
+  }
+  if (!cols.some((c) => c.name === "human_override")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN human_override INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS answer_labels (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    response_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    brand_norm TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    verdict INTEGER NOT NULL,
+    labeled_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (response_id, metric, brand_norm)
+  )`);
   if (!cols.some((c) => c.name === "engine_set")) {
     db.exec(
       "ALTER TABLE projects ADD COLUMN engine_set TEXT NOT NULL DEFAULT '[]'"
@@ -304,6 +327,10 @@ function parseProject(row: ProjectRaw): Project {
     ),
     dictionary_version:
       (row as unknown as { dictionary_version?: number }).dictionary_version ?? 1,
+    evidence_drawer:
+      (row as unknown as { evidence_drawer?: number }).evidence_drawer ?? 1,
+    human_override:
+      (row as unknown as { human_override?: number }).human_override ?? 0,
   };
 }
 
@@ -690,6 +717,51 @@ export const sqliteStore: Store = {
     getDb()
       .prepare("UPDATE projects SET schedule = ? WHERE id = ?")
       .run(schedule, id);
+  },
+
+  async updateProjectFlags(id, flags) {
+    const db = getDb();
+    if (flags.evidenceDrawer !== undefined) {
+      db.prepare("UPDATE projects SET evidence_drawer = ? WHERE id = ?")
+        .run(flags.evidenceDrawer ? 1 : 0, id);
+    }
+    if (flags.humanOverride !== undefined) {
+      db.prepare("UPDATE projects SET human_override = ? WHERE id = ?")
+        .run(flags.humanOverride ? 1 : 0, id);
+    }
+  },
+
+  async upsertAnswerLabel(input) {
+    getDb()
+      .prepare(
+        `INSERT INTO answer_labels
+           (id, project_id, response_id, metric, brand_norm, brand, verdict, labeled_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (response_id, metric, brand_norm) DO UPDATE SET
+           verdict = excluded.verdict,
+           brand = excluded.brand,
+           labeled_by = excluded.labeled_by`
+      )
+      .run(
+        crypto.randomUUID(),
+        input.projectId,
+        input.responseId,
+        input.metric,
+        input.brandNorm,
+        input.brand,
+        input.verdict ? 1 : 0,
+        input.labeledBy
+      );
+  },
+
+  async listLabelsForRun(runId) {
+    return getDb()
+      .prepare(
+        `SELECT l.* FROM answer_labels l
+           JOIN responses r ON r.id = l.response_id
+          WHERE r.run_id = ?`
+      )
+      .all(runId) as AnswerLabel[];
   },
 
   async updateProjectEngineSet(id, engineSet) {
