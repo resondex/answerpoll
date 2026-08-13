@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AnswerText from "./answer_text";
 import { Download } from "./table";
 
@@ -51,11 +51,19 @@ function lensParams(lens: Lens): Record<string, string> {
   }
 }
 
+interface Meta {
+  total: number;
+  lenses: Record<Lens, number>;
+  promptCounts: { promptId: string; text: string; count: number }[];
+  engines: string[];
+}
+
 /**
  * The reading room. Every other view answers with numbers; this one answers
- * with evidence. Lenses are named questions carrying their own counts, so
- * the interface can never hand you an empty screen without warning, and the
- * sentence under them states exactly what is on screen.
+ * with evidence. The rail lists every prompt with its true count under the
+ * current lens and fetches a prompt's answers only when it is expanded, so
+ * the rail is never a page pretending to be the whole picture. Within a
+ * prompt, rounds group under the engine that produced them.
  */
 export default function AnswersView({
   runId,
@@ -69,23 +77,20 @@ export default function AnswersView({
   /** Whose view this is — inherited from Compare, never set here. */
   subject: string;
 }) {
-  const [data, setData] = useState<{
-    total: number;
-    lenses: Record<Lens, number>;
-    answers: Answer[];
-    prompts: { id: string; text: string }[];
-    engines: string[];
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<string | null>(null);
-  // Rail groups answers under their prompt; the group holding the selected
-  // answer opens on load so the reader always starts somewhere visible.
+  // Meta remembers which query produced it; loading is derived by comparing
+  // that against the current query, so the effect never sets state
+  // synchronously and render never reads a ref.
+  const [meta, setMeta] = useState<(Meta & { forQuery: string }) | null>(null);
+  // Per-prompt answer cache, cleared whenever the lens/engine slice changes.
+  const [groups, setGroups] = useState<Record<string, Answer[]>>({});
+  const [groupLoading, setGroupLoading] = useState<string | null>(null);
   const [openPrompts, setOpenPrompts] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<string | null>(null);
+  // Guards a stale fetch resolving after the filter has moved on.
+  const fetchSeq = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    const q = new URLSearchParams({ limit: "60", focus: subject });
+  const baseQuery = useCallback(() => {
+    const q = new URLSearchParams({ focus: subject });
     const p = lensParams(filter.lens ?? "all");
     if (p.outcome) q.set("outcome", p.outcome);
     if (p.framing) {
@@ -94,26 +99,72 @@ export default function AnswersView({
     }
     if (filter.promptId) q.set("promptId", filter.promptId);
     if (filter.engine) q.set("engine", filter.engine);
+    return q;
+  }, [filter, subject]);
+
+  const loadGroup = useCallback(
+    async (promptId: string, seq: number, selectFirst: boolean) => {
+      setGroupLoading(promptId);
+      try {
+        const q = baseQuery();
+        q.set("promptId", promptId);
+        q.set("limit", "60");
+        const res = await fetch(`/api/runs/${runId}/answers?${q.toString()}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        if (seq !== fetchSeq.current) return;
+        setGroups((prev) => ({ ...prev, [promptId]: d.answers ?? [] }));
+        if (selectFirst && d.answers?.[0]) setSelected(d.answers[0].id);
+      } finally {
+        if (seq === fetchSeq.current) setGroupLoading(null);
+      }
+    },
+    [baseQuery, runId]
+  );
+
+  useEffect(() => {
+    const seq = ++fetchSeq.current;
+    let cancelled = false;
+    const q = baseQuery();
+    q.set("limit", "0"); // counts only — answers arrive per group, on expand
     fetch(`/api/runs/${runId}/answers?${q.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (cancelled || !d) return;
-        setData(d);
-        setSelected(d.answers[0]?.id ?? null);
-        setOpenPrompts(new Set(d.answers[0] ? [d.answers[0].promptId] : []));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (cancelled || !d || seq !== fetchSeq.current) return;
+        setMeta({ ...d, forQuery: baseQuery().toString() });
+        setGroups({});
+        setSelected(null);
+        const first = (d.promptCounts ?? [])[0];
+        setOpenPrompts(new Set(first ? [first.promptId] : []));
+        if (first) void loadGroup(first.promptId, seq, true);
       });
     return () => {
       cancelled = true;
     };
-  }, [runId, filter, subject]);
+  }, [runId, filter, subject, baseQuery, loadGroup]);
 
-  const answers = data?.answers ?? [];
-  const current = answers.find((a) => a.id === selected) ?? answers[0] ?? null;
-  const counts = data?.lenses;
-  const promptText = data?.prompts.find((p) => p.id === filter.promptId)?.text;
+  const loading = meta === null || meta.forQuery !== baseQuery().toString();
+
+  function toggleGroup(promptId: string) {
+    setOpenPrompts((prev) => {
+      const next = new Set(prev);
+      if (next.has(promptId)) next.delete(promptId);
+      else {
+        next.add(promptId);
+        if (!groups[promptId]) {
+          void loadGroup(promptId, fetchSeq.current, selected === null);
+        }
+      }
+      return next;
+    });
+  }
+
+  const loadedAnswers = Object.values(groups).flat();
+  const current = loadedAnswers.find((a) => a.id === selected) ?? null;
+  const counts = meta?.lenses;
+  const promptText = meta?.promptCounts.find(
+    (p) => p.promptId === filter.promptId
+  )?.text;
 
   const LENSES: { id: Lens; label: string; sentence: string }[] = [
     { id: "all", label: "All answers", sentence: `about ${subject}` },
@@ -208,18 +259,16 @@ export default function AnswersView({
           }
         >
           <option value="">any engine</option>
-          {(data?.engines ?? []).map((m) => (
+          {(meta?.engines ?? []).map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
           ))}
         </select>
-        {(filter.promptId || filter.engine) && (
+        {filter.engine && (
           <button
             type="button"
-            onClick={() =>
-              setFilter({ ...filter, promptId: null, engine: null })
-            }
+            onClick={() => setFilter({ ...filter, engine: null })}
             className="rounded-full border border-line px-2.5 py-0.5 text-[12px] font-medium text-ink-3 hover:border-ink-3"
           >
             clear
@@ -234,18 +283,16 @@ export default function AnswersView({
           ) : (
             <>
               <span className="font-semibold text-primary">
-                {data?.total ?? 0} {data?.total === 1 ? "answer" : "answers"}
+                {meta?.total ?? 0} {meta?.total === 1 ? "answer" : "answers"}
               </span>{" "}
               {active.sentence}
               {promptText ? ` on “${promptText}”` : ""}
-              {filter.engine ? `, from ${filter.engine}` : ""}.
-              {answers.length < (data?.total ?? 0)
-                ? ` Reading the first ${answers.length}.`
-                : ""}
+              {filter.engine ? `, from ${filter.engine}` : ""}. Expand a
+              prompt to read its rounds.
             </>
           )}
         </p>
-        {answers.length > 0 && (
+        {loadedAnswers.length > 0 && (
           <Download
             name="answers"
             header={[
@@ -259,7 +306,7 @@ export default function AnswersView({
               "answer",
             ]}
             rows={() =>
-              answers.map((a) => [
+              loadedAnswers.map((a) => [
                 a.id,
                 a.model,
                 a.promptText,
@@ -274,90 +321,98 @@ export default function AnswersView({
         )}
       </div>
 
-      {answers.length === 0 && !loading ? (
+      {!loading && (meta?.promptCounts.length ?? 0) === 0 ? (
         <p className="text-sm text-ink-3">
-          Nothing here — widen the prompt or engine above.
+          Nothing here — try another lens or engine.
         </p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:h-[38rem]">
           <div className="grid gap-1 content-start max-h-[34rem] lg:max-h-none lg:h-full overflow-y-auto pr-1">
-            {(() => {
-              // Group in arrival order: 60 near-identical rows labelled by a
-              // truncated prompt told the reader nothing about where they
-              // were; the prompt is the real unit of navigation.
-              const groups: { promptId: string; text: string; items: Answer[] }[] = [];
-              const byPrompt = new Map<string, (typeof groups)[number]>();
-              for (const a of answers) {
-                let entry = byPrompt.get(a.promptId);
-                if (!entry) {
-                  entry = { promptId: a.promptId, text: a.promptText, items: [] };
-                  byPrompt.set(a.promptId, entry);
-                  groups.push(entry);
-                }
-                entry.items.push(a);
-              }
-              return groups.map((grp) => {
-                const open = openPrompts.has(grp.promptId);
-                const holdsCurrent = grp.items.some((a) => a.id === current?.id);
-                return (
-                  <div key={grp.promptId} className="grid gap-1">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenPrompts((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(grp.promptId)) next.delete(grp.promptId);
-                          else next.add(grp.promptId);
-                          return next;
-                        })
+            {(meta?.promptCounts ?? []).map((grp) => {
+              const open = openPrompts.has(grp.promptId);
+              const items = groups[grp.promptId];
+              const holdsCurrent = current?.promptId === grp.promptId;
+              return (
+                <div key={grp.promptId} className="grid gap-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(grp.promptId)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-left flex items-start justify-between gap-2 ${
+                      holdsCurrent
+                        ? "border-[var(--color-primary)]/50 bg-primary-soft/20"
+                        : "border-line hover:border-ink-3"
+                    }`}
+                  >
+                    <span className="flex items-start gap-1.5 min-w-0">
+                      <span className="text-ink-3 text-[10px] mt-0.5 shrink-0">
+                        {open ? "▾" : "▸"}
+                      </span>
+                      <span className={`text-[12px] leading-snug line-clamp-2 ${holdsCurrent ? "text-primary font-medium" : "text-ink-2"}`}>
+                        {grp.text}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-ink-3 shrink-0 mt-0.5">
+                      {grp.count}
+                    </span>
+                  </button>
+                  {open && !items && groupLoading === grp.promptId && (
+                    <p className="ml-4 text-[11px] text-ink-3 py-1">Loading…</p>
+                  )}
+                  {open &&
+                    items &&
+                    (() => {
+                      // Rounds group under their source: one sub-header per
+                      // engine, its repeats listed beneath.
+                      const bySource: { model: string; rounds: Answer[] }[] = [];
+                      const seen = new Map<string, (typeof bySource)[number]>();
+                      for (const a of items) {
+                        let e = seen.get(a.model);
+                        if (!e) {
+                          e = { model: a.model, rounds: [] };
+                          seen.set(a.model, e);
+                          bySource.push(e);
+                        }
+                        e.rounds.push(a);
                       }
-                      className={`rounded-lg border px-2.5 py-1.5 text-left flex items-start justify-between gap-2 ${
-                        holdsCurrent
-                          ? "border-[var(--color-primary)]/50 bg-primary-soft/20"
-                          : "border-line hover:border-ink-3"
-                      }`}
-                    >
-                      <span className="flex items-start gap-1.5 min-w-0">
-                        <span className="text-ink-3 text-[10px] mt-0.5 shrink-0">
-                          {open ? "▾" : "▸"}
-                        </span>
-                        <span className={`text-[12px] leading-snug line-clamp-2 ${holdsCurrent ? "text-primary font-medium" : "text-ink-2"}`}>
-                          {grp.text}
-                        </span>
-                      </span>
-                      <span className="text-[11px] text-ink-3 shrink-0 mt-0.5">
-                        {grp.items.length}
-                      </span>
-                    </button>
-                    {open &&
-                      grp.items.map((a) => {
-                        const mine = a.brands.find((b) => b.brand === subject);
-                        const on = current?.id === a.id;
-                        return (
-                          <button
-                            key={a.id}
-                            type="button"
-                            onClick={() => setSelected(a.id)}
-                            className={`ml-4 rounded-lg border px-2.5 py-1 text-left ${
-                              on
-                                ? "border-[var(--color-primary)] bg-primary-soft/40"
-                                : "border-line/70 hover:border-ink-3"
-                            }`}
-                          >
-                            <span className={`block text-[12px] ${on ? "font-semibold text-primary" : "text-ink-2"}`}>
-                              {a.model} · r{a.repeat}
-                            </span>
-                            <span className="block text-[11px] text-ink-3">
-                              {a.topPick ? `chose ${a.topPick}` : "no pick"}
-                              {mine ? ` · ${subject} #${mine.rank}${mine.framing === "negative" ? " · criticized" : ""}` : ` · ${subject} absent`}
-                            </span>
-                          </button>
-                        );
-                      })}
-                  </div>
-                );
-              });
-            })()}
+                      return bySource.map((src) => (
+                        <div key={src.model} className="ml-4 grid gap-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-3 px-1 pt-0.5">
+                            {src.model}
+                          </div>
+                          {src.rounds.map((a) => {
+                            const mine = a.brands.find(
+                              (b) => b.brand === subject
+                            );
+                            const on = current?.id === a.id;
+                            return (
+                              <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => setSelected(a.id)}
+                                className={`rounded-lg border px-2.5 py-1 text-left ${
+                                  on
+                                    ? "border-[var(--color-primary)] bg-primary-soft/40"
+                                    : "border-line/70 hover:border-ink-3"
+                                }`}
+                              >
+                                <span className={`block text-[12px] ${on ? "font-semibold text-primary" : "text-ink-2"}`}>
+                                  round {a.repeat} ·{" "}
+                                  {a.topPick ? `chose ${a.topPick}` : "no pick"}
+                                </span>
+                                <span className="block text-[11px] text-ink-3">
+                                  {mine
+                                    ? `${subject} #${mine.rank}${mine.framing === "negative" ? " · criticized" : ""}`
+                                    : `${subject} absent`}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ));
+                    })()}
+                </div>
+              );
+            })}
           </div>
           {current && (
             <div className="rounded-xl border border-line p-4 grid gap-2 content-start lg:h-full lg:overflow-y-auto lg:min-h-0">
@@ -370,7 +425,7 @@ export default function AnswersView({
                     searched
                   </span>
                 )}
-                <span>repeat {current.repeat}</span>
+                <span>round {current.repeat}</span>
                 <span>·</span>
                 <span>
                   {current.topPick ? `chose ${current.topPick}` : "no pick"}

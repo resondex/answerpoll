@@ -149,9 +149,27 @@ export async function GET(
     };
   });
 
+  // True per-prompt counts over the full filtered set — the rail's accordion
+  // shows every prompt with its real count and fetches a group's answers only
+  // when it is expanded, so the old 60-answer page can never masquerade as
+  // the whole picture.
+  const promptCounts: { promptId: string; text: string; count: number }[] = [];
+  {
+    const byPrompt = new Map<string, number>();
+    for (const r of matched) {
+      byPrompt.set(r.prompt_id, (byPrompt.get(r.prompt_id) ?? 0) + 1);
+    }
+    for (const p of prompts) {
+      if (p.theme === "branded") continue;
+      const n = byPrompt.get(p.id) ?? 0;
+      if (n > 0) promptCounts.push({ promptId: p.id, text: p.text, count: n });
+    }
+  }
+
   return NextResponse.json({
     total: matched.length,
     lenses,
+    promptCounts,
     answers: page,
     prompts: prompts
       .filter((p) => p.theme !== "branded")
