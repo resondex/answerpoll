@@ -12,17 +12,26 @@ export async function GET(
   const loaded = await requireRun(id, auth);
   if (loaded instanceof NextResponse) return loaded;
   const { run } = loaded;
-  const [prompts, completed] = await Promise.all([
+  const [prompts, completed, byModel] = await Promise.all([
     store.listPrompts(run.project_id),
     store.countResponses(id),
+    store.countResponsesByModel(id),
   ]);
+  const liveCount = prompts.filter((p) => !p.retired).length;
+  const models = run.models.length > 0 ? run.models : [run.model];
+  // Each engine answers every live prompt once per repeat, so they share one
+  // per-engine target. Progress is honest only against that denominator.
+  const perEngineTotal = liveCount * run.repeats;
   return NextResponse.json({
     run,
     completed,
-    total:
-      prompts.filter((p) => !p.retired).length *
-      run.repeats *
-      Math.max(run.models.length, 1),
+    total: perEngineTotal * Math.max(models.length, 1),
+    promptCount: liveCount,
+    perEngineTotal,
+    perEngine: models.map((m) => ({
+      model: m,
+      completed: byModel[m] ?? 0,
+    })),
   });
 }
 

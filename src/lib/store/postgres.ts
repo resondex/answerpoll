@@ -651,6 +651,15 @@ export const pgStore: Store = {
     return rows[0].n as number;
   },
 
+  async countResponsesByModel(runId) {
+    const sql = await db();
+    const rows =
+      await sql`SELECT model, COUNT(*)::int AS n FROM responses WHERE run_id = ${runId} GROUP BY model`;
+    return Object.fromEntries(
+      rows.map((r) => [r.model as string, r.n as number])
+    );
+  },
+
   async listResponses(runId) {
     const sql = await db();
     const rows =

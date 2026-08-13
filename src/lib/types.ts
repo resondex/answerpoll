@@ -535,6 +535,12 @@ export interface Store {
   /** Delete a project and everything under it: runs, prompts, dictionary. */
   deleteProject(projectId: string): Promise<void>;
   countResponses(runId: string): Promise<number>;
+  /**
+   * Answers landed so far per engine. Powers live progress: engines are the
+   * innermost loop of the task list, so they advance together and the laggards
+   * are what the reader is actually waiting on.
+   */
+  countResponsesByModel(runId: string): Promise<Record<string, number>>;
   listResponses(runId: string): Promise<ResponseRow[]>;
   listMentionsForRun(runId: string): Promise<MentionRow[]>;
 }

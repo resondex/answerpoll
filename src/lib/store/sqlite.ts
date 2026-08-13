@@ -872,6 +872,15 @@ export const sqliteStore: Store = {
     return row.n;
   },
 
+  async countResponsesByModel(runId) {
+    const rows = getDb()
+      .prepare(
+        "SELECT model, COUNT(*) AS n FROM responses WHERE run_id = ? GROUP BY model"
+      )
+      .all(runId) as { model: string; n: number }[];
+    return Object.fromEntries(rows.map((r) => [r.model, r.n]));
+  },
+
   async listResponses(runId) {
     return (
       getDb()

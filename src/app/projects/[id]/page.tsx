@@ -29,6 +29,9 @@ interface Detail {
 interface Progress {
   completed: number;
   total: number;
+  promptCount: number;
+  perEngineTotal: number;
+  perEngine: { model: string; completed: number }[];
 }
 
 type OpenModal =
@@ -88,7 +91,13 @@ function ProjectDashboard() {
       const pr = await fetch(`/api/runs/${active.id}`);
       if (pr.ok) {
         const pd = await pr.json();
-        setProgress({ completed: pd.completed, total: pd.total });
+        setProgress({
+          completed: pd.completed,
+          total: pd.total,
+          promptCount: pd.promptCount ?? 0,
+          perEngineTotal: pd.perEngineTotal ?? 0,
+          perEngine: pd.perEngine ?? [],
+        });
       }
     } else {
       setProgress(null);
@@ -157,19 +166,29 @@ function ProjectDashboard() {
   // its in-progress layout reset by background polling.
   useEffect(() => {
     if (!activeRunId) return;
-    const t = setInterval(async () => {
+    // Tick once immediately: a run that just launched should show its panel
+    // now, not after the first interval elapses.
+    const tick = async () => {
       try {
         const res = await fetch(`/api/runs/${activeRunId}`);
         if (!res.ok) return;
         const d = await res.json();
-        setProgress({ completed: d.completed, total: d.total });
+        setProgress({
+          completed: d.completed,
+          total: d.total,
+          promptCount: d.promptCount ?? 0,
+          perEngineTotal: d.perEngineTotal ?? 0,
+          perEngine: d.perEngine ?? [],
+        });
         if (d.run.status !== "pending" && d.run.status !== "running") {
           await refresh();
         }
       } catch {
         // transient network noise — the next tick retries
       }
-    }, 2500);
+    };
+    void tick();
+    const t = setInterval(tick, 2500);
     return () => clearInterval(t);
   }, [activeRunId, refresh]);
 
@@ -308,15 +327,16 @@ function ProjectDashboard() {
           bubble={flaggedPrompts.length > 0 ? flaggedPrompts.length : null}
           onClick={() => setOpenModal("health")}
         />
-        {activeRun && progress && (
-          <div className="flex items-center gap-3 ml-1">
-            <ProgressBar
-              completed={progress.completed}
-              total={progress.total}
-            />
-          </div>
-        )}
       </div>
+
+      {activeRun && progress && (
+        <RunProgress
+          progress={progress}
+          engines={engines}
+          brand={project.brand}
+          startedAt={activeRun.created_at}
+        />
+      )}
 
       {shownRun ? (
         <>
@@ -1007,6 +1027,124 @@ function Modal({
         <div className="overflow-y-auto px-6 pb-6 pt-4">{children}</div>
       </div>
     </div>
+  );
+}
+
+/** The product a reader knows, behind the model ids we actually call. */
+const ASSISTANT_NAME: Record<string, string> = {
+  OpenAI: "ChatGPT",
+  Anthropic: "Claude",
+  Google: "Gemini",
+  Perplexity: "Perplexity",
+  xAI: "Grok",
+};
+
+/**
+ * The live run panel. Two stages a non-technical reader can follow —
+ * collecting, then analyzing — with an ETA derived from this run's own
+ * observed rate rather than a fixed guess. Engines are the innermost loop of
+ * the task list, so they advance together; the assistant chips report who has
+ * finished, never a per-engine diagnostic breakdown.
+ */
+function RunProgress({
+  progress,
+  engines,
+  brand,
+  startedAt,
+}: {
+  progress: Progress;
+  engines: EngineOption[];
+  brand: string;
+  startedAt: string;
+}) {
+  const { completed, total, promptCount, perEngineTotal, perEngine } = progress;
+  const collecting = completed < total || total === 0;
+  const pct = total > 0 ? Math.min(100, (completed / total) * 100) : 0;
+
+  // A ticking clock so the estimate keeps falling between poll responses.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const assistants = new Map<string, { done: number; target: number }>();
+  for (const e of perEngine) {
+    const vendor = engines.find((x) => x.id === e.model)?.vendor ?? "Other";
+    const name = ASSISTANT_NAME[vendor] ?? vendor;
+    const g = assistants.get(name) ?? { done: 0, target: 0 };
+    g.done += e.completed;
+    g.target += perEngineTotal;
+    assistants.set(name, g);
+  }
+  const list = [...assistants.entries()];
+
+  // Wait for a real sample before promising a number — the first few seconds
+  // of any run read far too fast or far too slow to extrapolate from.
+  let eta: string | null = null;
+  const elapsed = now - new Date(startedAt).getTime();
+  if (collecting && completed >= 8 && elapsed > 8000) {
+    const mins = Math.round(((total - completed) * elapsed) / completed / 60000);
+    eta = mins <= 1 ? "less than a minute left" : `about ${mins} minutes left`;
+  }
+
+  return (
+    <section className="card p-5 grid gap-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="grid gap-0.5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+            {collecting ? "Collecting answers" : "Analyzing answers"}
+          </h2>
+          <p className="text-[13px] text-ink-3">
+            {collecting
+              ? `Asking ${list.length} AI assistant${list.length === 1 ? "" : "s"} your ${promptCount} question${promptCount === 1 ? "" : "s"}, several times each.`
+              : `Reading what every assistant said about ${brand}.`}
+          </p>
+        </div>
+        {collecting && (
+          <span className="text-sm font-semibold tabular-nums text-primary">
+            {Math.round(pct)}%
+          </span>
+        )}
+      </div>
+
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+        <div
+          className={`h-full rounded-full bg-primary ${
+            collecting ? "transition-[width] duration-700" : "animate-pulse"
+          }`}
+          style={{ width: collecting ? `${pct}%` : "100%" }}
+        />
+      </div>
+
+      {collecting && list.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {list.map(([name, g]) => {
+            const done = g.target > 0 && g.done >= g.target;
+            return (
+              <span
+                key={name}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
+                  done
+                    ? "border-success/40 bg-success/10 text-success"
+                    : "border-line text-ink-3"
+                }`}
+              >
+                {done && <span aria-hidden="true">✓</span>}
+                {name}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="text-[12px] text-ink-3">
+        {collecting
+          ? (eta ?? "Working out how long this will take…")
+          : "Almost there — this last step usually takes under a minute."}
+      </p>
+    </section>
   );
 }
 
