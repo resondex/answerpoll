@@ -361,14 +361,18 @@ export default function Workbench({
           <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
             Compare
           </span>
-          <button type="button" className={chip(st.brandMode === "solo")}
-            onClick={() => set({ brandMode: "solo" })}>
-            Solo
-          </button>
-          <button type="button" className={chip(st.brandMode === "comparative")}
-            onClick={() => set({ brandMode: "comparative" })}>
-            Multiple
-          </button>
+          {view !== "style" && view !== "answers" && (
+            <>
+              <button type="button" className={chip(st.brandMode === "solo")}
+                onClick={() => set({ brandMode: "solo" })}>
+                Solo
+              </button>
+              <button type="button" className={chip(st.brandMode === "comparative")}
+                onClick={() => set({ brandMode: "comparative" })}>
+                Multiple
+              </button>
+            </>
+          )}
           {view === "style" || view === "answers" ? (
             <span className="text-[12px] text-ink-3 ml-2">
               {view === "style"
@@ -413,7 +417,7 @@ export default function Workbench({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {parents && parents.length > 0 && (
+          {view !== "style" && view !== "answers" && parents && parents.length > 0 && (
             <>
               <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
                 Grain
@@ -428,7 +432,7 @@ export default function Workbench({
               </button>
             </>
           )}
-          {st.brandMode === "comparative" && (
+          {view !== "style" && view !== "answers" && st.brandMode === "comparative" && (
             <select
               value=""
               onChange={(e) => {
@@ -448,6 +452,8 @@ export default function Workbench({
               ))}
             </select>
           )}
+          {view !== "style" && view !== "answers" && (
+            <>
           <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 w-16">
             Answers
           </span>
@@ -463,19 +469,27 @@ export default function Workbench({
               })
             }
           />
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 ml-2">
-            Show
-          </span>
-          <button type="button" className={chip(st.showCI)}
-            onClick={() => set({ showCI: !st.showCI })}
-            title="Add 95% confidence-interval columns to every table">
-            CI
-          </button>
-          <button type="button" className={chip(st.showCounts)}
-            onClick={() => set({ showCounts: !st.showCounts })}
-            title="Add the counts behind the rates to every table">
-            Counts
-          </button>
+            </>
+          )}
+          {view !== "answers" && (
+            <>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 ml-2">
+                Show
+              </span>
+              {view !== "style" && (
+                <button type="button" className={chip(st.showCI)}
+                  onClick={() => set({ showCI: !st.showCI })}
+                  title="Add 95% confidence-interval columns to every table">
+                  CI
+                </button>
+              )}
+              <button type="button" className={chip(st.showCounts)}
+                onClick={() => set({ showCounts: !st.showCounts })}
+                title="Add the counts behind the rates to every table">
+                Counts
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1721,7 +1735,14 @@ function Risk({
         ))}
       </div>
       <div className="mt-2">
-        <div className="section-label mb-2">Verbatims — {verbBrand}</div>
+        <div className="section-label mb-2">
+          Verbatims — {verbBrand}
+          {groups.length > 1 && (
+            <span className="ml-2 normal-case font-normal tracking-normal text-ink-3">
+              · from the whole run, not one break-out above
+            </span>
+          )}
+        </div>
         {!allowed ? (
           <p className="text-sm text-ink-3">
             Competitor verbatims are available on higher tiers.
