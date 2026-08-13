@@ -58,6 +58,7 @@ function ProjectDashboard() {
   const [chosenEngines, setChosenEngines] = useState<string[]>([]);
   const [repeats, setRepeats] = useState(5);
   const [launching, setLaunching] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const [openModal, setOpenModal] = useState<OpenModal>(null);
   const [dictTab, setDictTab] = useState<"identify" | "parents" | "analyze">(
     "identify"
@@ -175,8 +176,9 @@ function ProjectDashboard() {
   async function launchRun() {
     if (launching || hasActiveRun) return;
     setLaunching(true);
+    setRunError(null);
     try {
-      await fetch(`/api/projects/${id}/runs`, {
+      const res = await fetch(`/api/projects/${id}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -185,9 +187,25 @@ function ProjectDashboard() {
           repeats,
         }),
       });
+      // A rejected run used to fail silently: the button re-enabled and
+      // nothing happened, which is indistinguishable from a click that
+      // never registered. Say what went wrong instead.
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setRunError(
+          body?.error ??
+            `The run could not start (${res.status}). Try again, or check that the engines you picked have API keys.`
+        );
+        return;
+      }
       // Stay in the launching state until the refreshed run list shows the
       // active run — otherwise the button re-enables for a beat in between.
       await refresh();
+      setOpenModal(null);
+    } catch {
+      setRunError(
+        "Could not reach the server to start the run. Check your connection and try again."
+      );
     } finally {
       setLaunching(false);
     }
@@ -378,6 +396,11 @@ function ProjectDashboard() {
                 }
               />
             </div>
+            {runError && (
+              <p className="rounded-lg border border-danger/40 bg-danger/5 px-3.5 py-2.5 text-[13px] text-danger">
+                {runError}
+              </p>
+            )}
             <div className="flex flex-wrap items-end gap-4">
               <label className="grid gap-1.5 text-sm font-medium">
                 Repeats per prompt
