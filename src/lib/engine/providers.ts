@@ -344,10 +344,12 @@ function codingInstructions(ctx: ExtractionContext): string {
     "integrations or adjacent tools. Completeness matters; relevance " +
     "is decided later. ONLY proper-noun names: a generic descriptor " +
     "('a self-hosted server', 'open-source tools', 'spreadsheets') is " +
-    "never a mention. A phrase naming several brands ('Trello / " +
-    "Asana') is one mention PER brand. A feature fragment without its " +
-    "brand ('Issue Boards') is attributed to the full product when " +
-    "the answer makes it clear, otherwise omitted.\n" +
+    "never a mention. A phrase naming several brands is one mention " +
+    "PER brand. Name the PRODUCT, not its parts: a feature, module, " +
+    "view, add-on, edition, or pricing tier of a product is coded as " +
+    "that product itself, so a product, its board view, and its " +
+    "enterprise edition are all the SAME one name, recorded once. A " +
+    "bare feature fragment with no brand attached is omitted.\n" +
     "framing per mention — 'recommended' only when the answer " +
     "endorses it for the reader's situation (a pick, a 'best for " +
     "you', a clear favourable ranking). 'negative' when criticized, " +

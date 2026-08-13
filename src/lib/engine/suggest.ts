@@ -258,10 +258,11 @@ export async function classifyNonBrands(
             "study. Return the ones that are NOT analyzable proper-noun " +
             "brands, companies, or products: generic or infrastructure " +
             "descriptors ('self-hosted server', 'open-source tools', " +
-            "'spreadsheets', 'a custom build'), category words, feature " +
-            "fragments with no brand attached ('Issue Boards', 'kanban " +
+            "'a spreadsheet', 'a custom build'), category words, feature " +
+            "fragments with no brand attached ('the reporting module', 'the " +
             "boards'), and compound names listing multiple distinct brands " +
-            "('Trello / Asana'). Genuine single brand or product names — " +
+            "(two rival products joined by a slash). Genuine single brand " +
+            "or product names — " +
             "including niche and open-source ones — must NOT appear in your " +
             "output. When unsure, leave the name out: wrongly excluding a " +
             "real brand costs far more than letting a stray descriptor " +
@@ -446,8 +447,8 @@ export async function suggestBrandProfile(
           "You help set up brand-visibility tracking for AI answer engines. " +
           "Given a brand, identify:\n" +
           "- category: the competitive category as a short plural noun phrase, " +
-          "worded the way a buyer would actually type it — 'project management " +
-          "tools', 'CRM software', 'assisted living communities'. At most ONE " +
+          "worded the way a buyer would actually type it — 'CRM software', " +
+          "'assisted living communities', 'electric SUVs'. At most ONE " +
           "qualifier, and only when the market truly needs it; never stack " +
           "qualifiers, and never use a lone broad word like 'software' or " +
           "'companies'.\n" +
@@ -506,7 +507,7 @@ const BATTERY_SCHEMA = {
 
 // v6: v5 anchoring + long-prompt texture rule (long = backstory, never a
 // requirements list; no precise round constraints) with spec-sheet lint.
-const BATTERY_STYLE_VERSION = "v6";
+const BATTERY_STYLE_VERSION = "v7";
 
 /**
  * Generate the unbranded battery with the model (falling back to templates),
@@ -575,15 +576,17 @@ export async function generateBatteryAi(input: {
             "complicated', 'something the team will actually use'), never " +
             "precise round figures ('$5,000 annually', 'learn in under two " +
             "weeks').\n\n" +
+            // Deliberately a consumer category far from any B2B study, so
+            // these teach register only and can never seed the topic.
             "Register examples from a DIFFERENT category (match this feel, not the topic):\n" +
-            "- 'best project management tool for a small construction company'\n" +
-            "- 'my team keeps missing deadlines, what app should we use to track jobs?'\n" +
-            "- 'whats a good free alternative to the big project management apps'\n" +
-            "- 'so we've been scheduling crews in spreadsheets for like 2 years " +
-            "and it's honestly a mess, jobs get double booked, nobody knows whos " +
-            "on what site, and my boss now wants some kind of calendar the " +
-            "office and the field can both see. we're maybe 15 people. is real " +
-            "scheduling software worth it for us or is there something simpler'\n\n" +
+            "- 'best mattress for side sleepers under a grand'\n" +
+            "- 'my back is killing me every morning, what should I be sleeping on?'\n" +
+            "- 'whats a decent cheap alternative to the big mattress brands'\n" +
+            "- 'so we've had the same hand-me-down bed for like 9 years and it's " +
+            "honestly sagging in the middle, my wife and I keep rolling into each " +
+            "other and both of us wake up sore. we're not made of money but I'm " +
+            "done waking up like this. is it worth spending real money here or is " +
+            "there something decent that wont break the bank'\n\n" +
             "Produce exactly 12, with theme counts matching the measured " +
             "distribution of real commercial asks (59% discovery / 27% " +
             "recommendation / 8% comparison / 6% use_case): 7 'discovery' " +

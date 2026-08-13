@@ -5,11 +5,11 @@ import type { DictionaryEntry } from "../types";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
-// v4: v3 grain rule + plainest-name anchoring, plus explicit ignores for
-// generic/infrastructure descriptors, brandless feature fragments, and
-// compound names listing multiple distinct brands. In the cache key so
-// prompt changes bypass stale suggestions.
-const SUGGEST_RULES_VERSION = "v4";
+// v5: merge now beats ignore whenever a parent offering is present, and
+// every example is category-neutral so the rules do not read as written for
+// one study's category. In the cache key so prompt changes bypass stale
+// suggestions.
+const SUGGEST_RULES_VERSION = "v5";
 
 const SCHEMA = {
   type: "object",
@@ -118,27 +118,32 @@ async function suggestBatch(
           "- approve: a genuinely distinct brand/product competing in or " +
           "relevant to the category, worth its own row.\n" +
           "- ignore: not an analyzable brand. This includes generic or " +
-          "infrastructure descriptors ('self-hosted server', 'open-source " +
-          "tools', 'spreadsheets'), feature fragments with no brand attached " +
-          "('Issue Boards', 'kanban boards'), compound names listing multiple " +
-          "DISTINCT brands ('Trello / Asana' — merging it into either would " +
-          "misattribute the other), one-off tangents, and tools from " +
-          "unrelated categories.\n" +
+          "infrastructure descriptors ('a self-hosted server', 'open-source " +
+          "tools', 'a spreadsheet'), feature fragments with no brand " +
+          "attached, compound names listing multiple DISTINCT brands " +
+          "(merging such a name into either would misattribute the other), " +
+          "one-off tangents, and products from unrelated categories.\n" +
+          "PREFER MERGE OVER IGNORE: when a name is a surface, module, " +
+          "add-on, edition, or tier of an offering that appears among the " +
+          "active brands or elsewhere in this batch, merge it into that " +
+          "offering. Reserve ignore for names with no parent to merge into.\n" +
           "GRAIN RULE — the analyzable unit is the offering a buyer would " +
-          "choose in this category. Feature surfaces, sub-modules, tiers, and " +
-          "compound phrasings of the same offering ('X Issues', 'X Boards', " +
-          "'X Issues & Boards', 'X CE/EE', 'X Ultimate') all merge into that " +
-          "offering. Distinct purchasable products a buyer weighs separately " +
-          "(even from the same company) stay separate — Jira and Trello are " +
-          "different offerings; GitLab Issues and GitLab Boards are the same " +
-          "one. Every suggestion needs a one-line rationale.\n" +
+          "choose in this category. Feature surfaces, sub-modules, editions, " +
+          "tiers, and compound phrasings of one offering all merge into that " +
+          "offering. Two products a company sells separately, which a buyer " +
+          "would weigh against each other, stay separate even under one " +
+          "corporate parent; one product's several views or editions do not. " +
+          "Every suggestion needs a one-line rationale.\n" +
           `Active brands: ${active.map((a) => a.canonical).join(", ")}.\n` +
           "Also treat pending names as potential merge targets for OTHER " +
           "pending names by proposing approve for the best-named variant and " +
           "merge for the rest, with merge_into set to the approved variant. " +
-          "The approved variant must be the plainest buyer-facing brand name " +
-          "('GitLab', not 'GitLab Issues & Boards'; 'Notion', not 'Notion " +
-          "Projects') — feature-phrased variants are always the ones merged.",
+          "The approved variant must be the plainest buyer-facing brand " +
+          "name — the bare product name rather than any feature-phrased or " +
+          "edition-phrased form of it, which are always the ones merged. If " +
+          "several pending names are surfaces of one product that is not " +
+          "itself listed, approve the plainest name as the parent and merge " +
+          "the others into it.",
       },
       {
         role: "user",

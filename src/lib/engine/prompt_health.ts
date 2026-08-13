@@ -93,9 +93,10 @@ export async function analyzePromptHealth(
           "prompt's id back on its result. Mark a " +
           "prompt defective=true when a substantial share of recall " +
           "is OUTSIDE the category — evidence the prompt was read as being " +
-          "about something broader or different (e.g. it said 'a tool' " +
-          "without naming the category, so answers covered password managers " +
-          "and monitoring). A few stray adjacent brands in an otherwise " +
+          "about something broader or different (e.g. it asked for 'a tool' " +
+          "without naming the category at all, so answers ranged across " +
+          "unrelated kinds of product). A few stray adjacent brands in an " +
+          "otherwise " +
           "on-category answer set are normal — do not flag those. For each " +
           "defective prompt: reason = one plain sentence naming what the " +
           "answers drifted to; alternatives = exactly 2 rewritten prompts " +
