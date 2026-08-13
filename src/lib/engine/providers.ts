@@ -689,9 +689,11 @@ function assertSecondCoderHealthy(): void {
 }
 
 /**
- * Evaluation lever: when EXTRACT_SOLO names a model, that one model codes each
- * answer alone instead of the two-coder-plus-adjudicator consensus. The focus
- * read stays a SEPARATE call regardless — folding it in would name the brand
+ * When EXTRACT_SOLO names a model, that one model codes each answer alone
+ * instead of the two-coder-plus-adjudicator consensus. Production runs solo
+ * claude-sonnet-5 as of 2026-08-13 (Tyler's call, pending the framing
+ * hand-labels); unset the variable to return to consensus. The focus read
+ * stays a SEPARATE call regardless — folding it in would name the brand
  * under study in the same prompt that decides the crown, which is the exact
  * contamination the blind judgement pass exists to prevent.
  */
@@ -719,7 +721,7 @@ export async function extractCodingConsensus(
       ),
       focus_quote: focus.focus_quote,
       focus_interpretation: focus.focus_interpretation,
-      coderProvenance: `${SOLO_CODER} (solo-eval)`,
+      coderProvenance: `${SOLO_CODER} (solo)`,
       disagreements: [],
     };
   }
