@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { openaiClient } from "./providers";
 import { store } from "../store";
+import type { DictionaryEntry } from "../types";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
@@ -47,6 +48,10 @@ export interface DictSuggestion {
  * per queue state — warmed at run completion, instant when the user opens
  * the Identify view.
  */
+/** Names per request. Small enough that each name gets real attention and a
+ * truncated reply costs one batch, large enough to keep the batch count low. */
+const CHUNK = 40;
+
 export async function getDictionarySuggestions(
   projectId: string,
   category: string
@@ -56,6 +61,36 @@ export async function getDictionarySuggestions(
   const active = entries.filter((e) => e.status === "active");
   if (pending.length === 0) return [];
 
+  // Batches run concurrently and cache independently, so total latency is
+  // roughly one batch rather than the sum, and a batch that fails costs its
+  // own names instead of the whole queue. One 216-name request could exceed
+  // the model's output cap, and the truncated JSON then threw on parse — so
+  // nothing was ever cached and every visit re-ran the whole thing.
+  const batches: typeof pending[] = [];
+  for (let i = 0; i < pending.length; i += CHUNK) {
+    batches.push(pending.slice(i, i + CHUNK));
+  }
+  const results = await Promise.all(
+    batches.map((batch) =>
+      suggestBatch(projectId, category, batch, active, entries).catch((err) => {
+        console.error(
+          `dictionary suggestions: batch of ${batch.length} failed —`,
+          err
+        );
+        return [] as DictSuggestion[];
+      })
+    )
+  );
+  return results.flat();
+}
+
+async function suggestBatch(
+  projectId: string,
+  category: string,
+  pending: DictionaryEntry[],
+  active: DictionaryEntry[],
+  entries: DictionaryEntry[]
+): Promise<DictSuggestion[]> {
   const stateHash = createHash("sha256")
     .update(
       JSON.stringify({
@@ -110,11 +145,19 @@ export async function getDictionarySuggestions(
         content: JSON.stringify(pending.map((p) => p.canonical)),
       },
     ],
+    max_completion_tokens: 8000,
     response_format: {
       type: "json_schema",
       json_schema: { name: "dispositions", strict: true, schema: SCHEMA },
     },
   });
+  // Truncation used to surface as an opaque JSON parse error swallowed by a
+  // catch upstream; name it so the log says what actually happened.
+  if (res.choices[0]?.finish_reason === "length") {
+    throw new Error(
+      `suggestion batch truncated at the output cap (${pending.length} names)`
+    );
+  }
   const parsed = JSON.parse(
     res.choices[0]?.message?.content ?? '{"suggestions":[]}'
   ) as {

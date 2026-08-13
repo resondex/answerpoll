@@ -30,7 +30,7 @@ interface Task {
   model: string;
 }
 
-export type ChunkOutcome = "complete" | "continue" | "failed";
+export type ChunkOutcome = "complete" | "continue" | "failed" | "finalize";
 
 /**
  * Process as much of a run as fits in budgetMs, then report whether work
@@ -96,10 +96,7 @@ export async function driveRunChunk(
     }
   }
 
-  if (pending.length === 0) {
-    await store.updateRunStatus(runId, "complete", null);
-    return "complete";
-  }
+  if (pending.length === 0) return "finalize";
 
   const deadline = Date.now() + budgetMs;
   let cursor = 0;
@@ -140,69 +137,12 @@ export async function driveRunChunk(
 
   const remaining = pending.length - inserted;
   if (remaining === 0) {
-    await store.updateRunStatus(runId, "complete", null);
-    // Feed unmatched brand names into the dictionary review queue — from
-    // mentions AND top picks (a crowned pick can be phrased a way no
-    // mention was).
-    try {
-      const [runMentions, runResponses] = await Promise.all([
-        store.listMentionsForRun(runId),
-        store.listResponses(runId),
-      ]);
-      await store.queueDictionaryCandidates(project.id, [
-        ...new Set([
-          ...runMentions.map((m) => m.brand),
-          ...runResponses
-            .map((r) => r.top_pick_brand)
-            .filter((b): b is string => Boolean(b)),
-        ]),
-      ]);
-      // Junk filter: obvious non-brands ("self-hosted server") land in the
-      // dictionary pre-excluded — out of the review queue but visible and
-      // reversible in the Analyze tab. Real names stay pending for review.
-      const dict = await store.getDictionary(project.id);
-      const pendingEntries = dict.filter((e) => e.status === "pending");
-      if (pendingEntries.length > 0) {
-        const nonBrands = await classifyNonBrands(
-          pendingEntries.map((e) => e.canonical)
-        );
-        let excluded = 0;
-        for (const e of pendingEntries) {
-          if (nonBrands.has(e.canonical.trim().toLowerCase())) {
-            await store.upsertDictionaryEntry({
-              id: e.id,
-              projectId: project.id,
-              canonical: e.canonical,
-              aliases: e.aliases,
-              status: "rejected",
-            });
-            excluded++;
-          }
-        }
-        if (excluded > 0) {
-          await store.bumpDictionaryVersion(project.id);
-          console.log(
-            `dictionary junk filter: pre-excluded ${excluded} non-brand name(s)`
-          );
-        }
-      }
-      // Warm the Identify view: compute + cache the disposition suggestions
-      // now, so the review board opens pre-sorted instead of making the
-      // user watch the sorting pass.
-      await getDictionarySuggestions(project.id, project.category);
-    } catch (err) {
-      console.error("dictionary queue failed:", err);
-    }
-    // Health-check the battery on every completed run. It used to fire only
-    // after a project's first run, which assumed prompts can only be born
-    // defective — but a prompt drifts off-category when the assistants change
-    // underneath it, which is the whole premise of tracking. One cheap call.
-    try {
-      await analyzePromptHealth(project.id, runId);
-    } catch (err) {
-      console.error("prompt health check failed:", err);
-    }
-    return "complete";
+    // Collection is done, but the run is NOT complete: the dictionary and
+    // the health check still have to land. They used to run here, in whatever
+    // budget the last collection chunk had left over, which is why they were
+    // silently skipped or arrived minutes late. finalizeRun gets its own
+    // invocation and its own full budget.
+    return "finalize";
   }
   if (inserted > 0) return "continue";
   // A full chunk with zero progress: either every request errors (bad key,
@@ -225,11 +165,81 @@ export async function driveRunChunk(
 }
 
 /** Local driver: chunk in-process until the run reaches a terminal state. */
+/**
+ * Everything a run owes after its last answer lands: unmatched names into the
+ * dictionary queue, the junk filter, the pre-computed Identify suggestions,
+ * and the prompt health check. The run stays "running" throughout — the
+ * dashboard reads that as its "Analyzing answers" stage — and is marked
+ * complete only once this finishes, so a reader never opens a finished run
+ * onto an empty dictionary or a health check that has not happened yet.
+ *
+ * Every step is individually guarded and the run is completed regardless: a
+ * failure here must not strand a run with 420 good answers in "running".
+ */
+export async function finalizeRun(runId: string): Promise<void> {
+  const run = await store.getRun(runId);
+  if (!run || run.status === "complete" || run.status === "failed") return;
+  const project = await store.getProject(run.project_id);
+  if (!project) return;
+  try {
+    const [runMentions, runResponses] = await Promise.all([
+      store.listMentionsForRun(runId),
+      store.listResponses(runId),
+    ]);
+    await store.queueDictionaryCandidates(project.id, [
+      ...new Set([
+        ...runMentions.map((m) => m.brand),
+        ...runResponses
+          .map((r) => r.top_pick_brand)
+          .filter((b): b is string => Boolean(b)),
+      ]),
+    ]);
+    const dict = await store.getDictionary(project.id);
+    const pendingEntries = dict.filter((e) => e.status === "pending");
+    if (pendingEntries.length > 0) {
+      const nonBrands = await classifyNonBrands(
+        pendingEntries.map((e) => e.canonical)
+      );
+      let excluded = 0;
+      for (const e of pendingEntries) {
+        if (nonBrands.has(e.canonical.trim().toLowerCase())) {
+          await store.upsertDictionaryEntry({
+            id: e.id,
+            projectId: project.id,
+            canonical: e.canonical,
+            aliases: e.aliases,
+            status: "rejected",
+          });
+          excluded++;
+        }
+      }
+      if (excluded > 0) {
+        await store.bumpDictionaryVersion(project.id);
+        console.log(
+          `dictionary junk filter: pre-excluded ${excluded} non-brand name(s)`
+        );
+      }
+    }
+    await getDictionarySuggestions(project.id, project.category);
+  } catch (err) {
+    console.error("dictionary finalize failed:", err);
+  }
+  try {
+    await analyzePromptHealth(project.id, runId);
+  } catch (err) {
+    console.error("prompt health check failed:", err);
+  }
+  await store.updateRunStatus(runId, "complete", null);
+}
+
 export function runInBackground(runId: string): Promise<void> {
   return (async () => {
-    while ((await driveRunChunk(runId, 7 * 24 * 3600 * 1000)) === "continue") {
+    let outcome = await driveRunChunk(runId, 7 * 24 * 3600 * 1000);
+    while (outcome === "continue") {
       // loop — retries tasks that failed transiently
+      outcome = await driveRunChunk(runId, 7 * 24 * 3600 * 1000);
     }
+    if (outcome === "finalize") await finalizeRun(runId);
   })().catch(async (err) => {
     console.error(`answerpoll run ${runId} crashed:`, err);
     await store.updateRunStatus(runId, "failed", String(err));
@@ -247,7 +257,21 @@ export async function driveAndChain(
 ): Promise<void> {
   try {
     const outcome = await driveRunChunk(runId, VERCEL_CHUNK_BUDGET_MS);
-    if (outcome === "continue") {
+    if (outcome === "finalize") {
+      // Fresh invocation, fresh budget. If the hop cannot be made at all,
+      // finalize inline rather than leaving the run stuck in "running".
+      try {
+        const res = await fetch(`${origin}/api/runs/${runId}/finalize`, {
+          method: "POST",
+          headers: process.env.CRON_SECRET
+            ? { authorization: `Bearer ${process.env.CRON_SECRET}` }
+            : undefined,
+        });
+        if (!res.ok) await finalizeRun(runId);
+      } catch {
+        await finalizeRun(runId);
+      }
+    } else if (outcome === "continue") {
       // Server-to-server hop carries no session cookies; the continue route
       // accepts the cron secret as chain credentials.
       await fetch(`${origin}/api/runs/${runId}/continue`, {
