@@ -530,6 +530,18 @@ export interface Store {
     mentions: { brand: string; framing: Framing }[];
     coding: Omit<ExtractionResult, "mentions"> | null;
   }): Promise<void>;
+  /**
+   * Re-code an existing answer in place: overwrite the coding columns and
+   * replace its mentions, leaving the collected text untouched. Shares its
+   * column list with insertResponse (see lib/coding_columns.ts) so the two
+   * write paths cannot fall out of step.
+   */
+  writeResponseCoding(
+    responseId: string,
+    coding: Omit<ExtractionResult, "mentions"> | null,
+    coderModel: string | null,
+    mentions: { brand: string; framing: Framing }[]
+  ): Promise<void>;
   /** Delete a run and its responses/mentions. Prompts and dictionary stay. */
   deleteRun(runId: string): Promise<void>;
   /** Delete a project and everything under it: runs, prompts, dictionary. */

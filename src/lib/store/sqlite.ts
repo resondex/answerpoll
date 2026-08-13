@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import type {
   DictionaryEntry,
+  Framing,
   Org,
   OrgMember,
   Project,
@@ -13,6 +14,8 @@ import type {
   SetupDraft,
   Store,
 } from "../types";
+import { codingColumns } from "../coding_columns";
+import { matchKey } from "../brand_key";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "answerpoll.db");
@@ -331,6 +334,20 @@ function parseDraft(row: Record<string, string | null>): SetupDraft {
     prompts: row.prompts ? JSON.parse(row.prompts) : null,
     updated_at: row.updated_at!,
   };
+}
+
+function writeMentions(
+  db: ReturnType<typeof getDb>,
+  responseId: string,
+  mentions: { brand: string; framing: Framing }[]
+): void {
+  const stmt = db.prepare(
+    `INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  mentions.forEach((m, i) => {
+    stmt.run(crypto.randomUUID(), responseId, m.brand, matchKey(m.brand), i + 1, m.framing);
+  });
 }
 
 export const sqliteStore: Store = {
@@ -778,58 +795,47 @@ export const sqliteStore: Store = {
   async insertResponse(input) {
     const db = getDb();
     const responseId = crypto.randomUUID();
-    const c = input.coding;
+    // Columns are derived from the shared coding shape, never hand-written,
+    // so insert and recode cannot drift. See lib/coding_columns.ts.
+    const row: Record<string, unknown> = {
+      id: responseId,
+      run_id: input.runId,
+      prompt_id: input.promptId,
+      repeat_idx: input.repeatIdx,
+      model: input.model,
+      finish_reason: input.finishReason ?? null,
+      citations: input.citations ? JSON.stringify(input.citations) : null,
+      search_count: input.searchCount ?? null,
+      text: input.text,
+      ...codingColumns(input.coding, input.coderModel ?? null),
+    };
+    const cols = Object.keys(row);
     const insertAll = db.transaction(() => {
       // OR IGNORE + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
       const info = db
         .prepare(
-          `INSERT OR IGNORE INTO responses (
-             id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, coder_model, search_count, text,
-             top_pick_brand, outcome, reason_codes, clarification_requested,
-             gives_recommendation, includes_prices, includes_specs,
-             total_recommendations, focus_quote, focus_interpretation
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT OR IGNORE INTO responses (${cols.join(", ")})
+           VALUES (${cols.map(() => "?").join(", ")})`
         )
-        .run(
-          responseId,
-          input.runId,
-          input.promptId,
-          input.repeatIdx,
-          input.model,
-          input.finishReason ?? null,
-          input.citations ? JSON.stringify(input.citations) : null,
-          input.coderModel ?? null,
-          input.searchCount ?? null,
-          input.text,
-          c?.top_pick_brand ?? null,
-          c?.outcome ?? null,
-          c ? c.reasons.join("|") : null,
-          c ? (c.clarification_requested ? 1 : 0) : null,
-          c ? (c.gives_recommendation ? 1 : 0) : null,
-          c ? (c.includes_prices ? 1 : 0) : null,
-          c ? (c.includes_specs ? 1 : 0) : null,
-          c?.total_recommendations ?? null,
-          c?.focus_quote ?? null,
-          c?.focus_interpretation ?? null
-        );
+        .run(...cols.map((k) => row[k]));
       if (info.changes === 0) return;
-      const stmt = db.prepare(
-        `INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      );
-      input.mentions.forEach((m, i) => {
-        stmt.run(
-          crypto.randomUUID(),
-          responseId,
-          m.brand,
-          m.brand.trim().toLowerCase(),
-          i + 1,
-          m.framing
-        );
-      });
+      writeMentions(db, responseId, input.mentions);
     });
     insertAll();
+  },
+
+  async writeResponseCoding(responseId, coding, coderModel, mentions) {
+    const db = getDb();
+    const cols = codingColumns(coding, coderModel) as unknown as Record<string, unknown>;
+    const keys = Object.keys(cols);
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE responses SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE id = ?`
+      ).run(...keys.map((k) => cols[k]), responseId);
+      db.prepare("DELETE FROM mentions WHERE response_id = ?").run(responseId);
+      writeMentions(db, responseId, mentions);
+    })();
   },
 
   async deleteRun(runId) {

@@ -1,6 +1,8 @@
 import postgres from "postgres";
+import type { TransactionSql } from "postgres";
 import type {
   DictionaryEntry,
+  Framing,
   Project,
   Prompt,
   Run,
@@ -9,6 +11,8 @@ import type {
   SetupDraft,
   Store,
 } from "../types";
+import { codingColumns } from "../coding_columns";
+import { matchKey } from "../brand_key";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -250,6 +254,18 @@ function rowToRun(r: Record<string, unknown>): Run {
     completed_at: iso(r.completed_at),
     created_at: iso(r.created_at)!,
   };
+}
+
+async function insertMentions(
+  tx: TransactionSql<Record<string, never>>,
+  responseId: string,
+  mentions: { brand: string; framing: Framing }[]
+): Promise<void> {
+  for (let i = 0; i < mentions.length; i++) {
+    const m = mentions[i];
+    await tx`INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)
+      VALUES (${crypto.randomUUID()}, ${responseId}, ${m.brand}, ${matchKey(m.brand)}, ${i + 1}, ${m.framing})`;
+  }
 }
 
 export const pgStore: Store = {
@@ -591,33 +607,37 @@ export const pgStore: Store = {
   async insertResponse(input) {
     const sql = await db();
     const responseId = crypto.randomUUID();
-    const c = input.coding;
+    // Column list is derived from the shared coding shape, never hand-written,
+    // so insert and recode cannot drift. See lib/coding_columns.ts.
+    const row = {
+      id: responseId,
+      run_id: input.runId,
+      prompt_id: input.promptId,
+      repeat_idx: input.repeatIdx,
+      model: input.model,
+      finish_reason: input.finishReason ?? null,
+      citations: input.citations ? JSON.stringify(input.citations) : null,
+      search_count: input.searchCount ?? null,
+      text: input.text,
+      ...codingColumns(input.coding, input.coderModel ?? null),
+    };
     await sql.begin(async (tx) => {
       // DO NOTHING + unique(run, prompt, repeat): overlapping chunk workers
       // can race on the same task; only the first insert lands.
-      const res = await tx`INSERT INTO responses (
-          id, run_id, prompt_id, repeat_idx, model, finish_reason, citations, coder_model, search_count, text,
-          top_pick_brand, outcome, reason_codes, clarification_requested,
-          gives_recommendation, includes_prices, includes_specs,
-          total_recommendations, focus_quote, focus_interpretation
-        ) VALUES (
-          ${responseId}, ${input.runId}, ${input.promptId}, ${input.repeatIdx}, ${input.model}, ${input.finishReason ?? null}, ${input.citations ? JSON.stringify(input.citations) : null}, ${input.coderModel ?? null}, ${input.searchCount ?? null}, ${input.text},
-          ${c?.top_pick_brand ?? null}, ${c?.outcome ?? null},
-          ${c ? c.reasons.join("|") : null},
-          ${c ? (c.clarification_requested ? 1 : 0) : null},
-          ${c ? (c.gives_recommendation ? 1 : 0) : null},
-          ${c ? (c.includes_prices ? 1 : 0) : null},
-          ${c ? (c.includes_specs ? 1 : 0) : null},
-          ${c?.total_recommendations ?? null},
-          ${c?.focus_quote ?? null}, ${c?.focus_interpretation ?? null}
-        )
+      const res = await tx`INSERT INTO responses ${tx(row)}
         ON CONFLICT (run_id, prompt_id, repeat_idx, model) DO NOTHING`;
       if (res.count === 0) return;
-      for (let i = 0; i < input.mentions.length; i++) {
-        const m = input.mentions[i];
-        await tx`INSERT INTO mentions (id, response_id, brand, brand_norm, rank, framing)
-          VALUES (${crypto.randomUUID()}, ${responseId}, ${m.brand}, ${m.brand.trim().toLowerCase()}, ${i + 1}, ${m.framing})`;
-      }
+      await insertMentions(tx, responseId, input.mentions);
+    });
+  },
+
+  async writeResponseCoding(responseId, coding, coderModel, mentions) {
+    const sql = await db();
+    const cols = codingColumns(coding, coderModel);
+    await sql.begin(async (tx) => {
+      await tx`UPDATE responses SET ${tx(cols)} WHERE id = ${responseId}`;
+      await tx`DELETE FROM mentions WHERE response_id = ${responseId}`;
+      await insertMentions(tx, responseId, mentions);
     });
   },
 

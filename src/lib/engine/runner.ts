@@ -166,6 +166,54 @@ export async function driveRunChunk(
 
 /** Local driver: chunk in-process until the run reaches a terminal state. */
 /**
+ * Re-code a run's stored answers without touching the vendors that produced
+ * them. The text is already on disk and coding is a pure function of it, so a
+ * coder change can be applied to existing data — and, more usefully, measured
+ * against it: re-coding holds the answers constant, so any difference is the
+ * coder change alone rather than the assistants having drifted that day.
+ *
+ * Costs roughly a third of a full run and takes well under a minute, since no
+ * search engines are in the loop.
+ */
+export async function recodeRun(runId: string): Promise<number> {
+  const run = await store.getRun(runId);
+  if (!run) throw new Error(`run ${runId} not found`);
+  const project = await store.getProject(run.project_id);
+  if (!project) throw new Error(`project ${run.project_id} not found`);
+  const ctx = {
+    targetBrand: project.brand,
+    knownBrands: [project.brand, ...project.competitors],
+    reasonCodes: project.reason_taxonomy,
+  };
+  const responses = await store.listResponses(runId);
+  let cursor = 0;
+  let recoded = 0;
+  async function worker(): Promise<void> {
+    while (cursor < responses.length) {
+      const r = responses[cursor++];
+      try {
+        const coding = await extractCodingConsensus(r.text, ctx);
+        await store.writeResponseCoding(
+          r.id,
+          coding,
+          coding.coderProvenance,
+          coding.mentions
+        );
+        recoded++;
+      } catch (err) {
+        // One answer failing keeps its previous coding rather than losing it.
+        console.error(`recode of response ${r.id} failed:`, err);
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, responses.length) }, worker)
+  );
+  console.log(`recoded ${recoded}/${responses.length} answers for run ${runId}`);
+  return recoded;
+}
+
+/**
  * Everything a run owes after its last answer lands: unmatched names into the
  * dictionary queue, the junk filter, the pre-computed Identify suggestions,
  * and the prompt health check. The run stays "running" throughout — the
