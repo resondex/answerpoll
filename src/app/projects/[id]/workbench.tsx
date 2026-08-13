@@ -97,6 +97,9 @@ interface WbState {
   answers: AnswersFilter;
 }
 
+/** Counts mode: the same rate as its fraction — 313/360 instead of 87%. */
+const frac = (k: number, n: number) => `${k}/${n}`;
+
 function brandStats(m: RunMetrics | null) {
   if (!m) return null;
   const t = m.brands.find((b) => b.isTarget);
@@ -476,7 +479,7 @@ export default function Workbench({
         </div>
       </div>
 
-      <div className="grid md:grid-cols-[11.5rem_minmax(0,1fr)]">
+      <div className="grid md:grid-cols-[9.5rem_minmax(0,1fr)]">
         <nav className="border-b md:border-b-0 md:border-r border-line py-2 flex md:grid content-start overflow-x-auto">
           {VIEWS.map((v) => {
             const locked = v.id === "risk" && plan === "free";
@@ -484,7 +487,7 @@ export default function Workbench({
             <button key={v.id} type="button" disabled={locked}
               title={locked ? "Risk analysis is a paid feature" : undefined}
               onClick={() => setView(v.id)}
-              className={`px-4 py-2 text-left whitespace-nowrap ${
+              className={`px-3 py-2 text-left whitespace-nowrap ${
                 locked
                   ? "text-ink-3 opacity-40 cursor-not-allowed"
                   : view === v.id
@@ -499,7 +502,7 @@ export default function Workbench({
             );
           })}
         </nav>
-        <div className="p-5 grid gap-4 content-start min-h-[24rem]">
+        <div className="p-4 grid gap-4 content-start min-h-[24rem]">
           {loading ? (
             <p className="text-sm text-ink-3">Computing slices…</p>
           ) : (
@@ -516,7 +519,7 @@ export default function Workbench({
                 <Brands groups={groups} solo={solo} st={st} set={set}
                   onEvidence={openEvidence} />
               )}
-              {view === "why" && <Why groups={groups} />}
+              {view === "why" && <Why groups={groups} counts={st.showCounts} />}
               {view === "battleground" && (
                 <Battleground groups={groups} st={st}
                   openAnswers={(promptId) => {
@@ -526,7 +529,7 @@ export default function Workbench({
               )}
               {view === "sources" && <Sources groups={groups} />}
               {view === "risk" && plan !== "free" && (
-                <Risk groups={groups} pooled={pooled}
+                <Risk groups={groups} pooled={pooled} counts={st.showCounts}
                   plan={plan} runId={runId} clientName={clientName} />
               )}
               {view === "answers" && (
@@ -539,7 +542,7 @@ export default function Workbench({
                   }
                 />
               )}
-              {view === "style" && <Style pooled={pooled} />}
+              {view === "style" && <Style pooled={pooled} counts={st.showCounts} />}
             </>
           )}
         </div>
@@ -865,6 +868,8 @@ function BrandsGroup({
     );
   }
   const tp = (name: string) => m.topPicks?.find((t) => t.brand === name);
+  // Every crown lands in topPicks, so their sum is the decided base.
+  const decidedTotal = (m.topPicks ?? []).reduce((a, t) => a + t.picks, 0);
   // First-named and SoV stay table-only; persisted state may still carry
   // them as the chart measure from the old Visibility view.
   const valOf = (x: Series[number]): number | null =>
@@ -936,21 +941,14 @@ function BrandsGroup({
           { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
             color: (r) => r.color,
             render: (r) => <span className="font-medium">{r.name}</span> },
-          ...(st.showCounts
-            ? [{ id: "answers", label: METRICS.answers.label, num: true,
-                tip: metricTip("answers"),
-                val: (r: Series[number]) =>
-                  r.stats?.m.unbrandedResponses ?? null }]
-            : []),
           { id: "named", label: METRICS.mentioned.label, num: true,
             tip: metricTip("mentionedRate"),
             val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
             evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-          ...(st.showCounts
-            ? [{ id: "namedn", label: "Mentioned n", num: true,
-                val: (r: Series[number]) => r.stats?.count ?? null }]
-            : []),
+            render: (r) =>
+              !r.stats ? "—"
+              : st.showCounts ? frac(r.stats.count, r.stats.m.unbrandedResponses)
+              : pct(r.stats.named) },
           ...(st.showCI
             ? [{ id: "namedci", label: "Mentioned 95% CI", num: true,
                 val: (r: Series[number]) =>
@@ -962,16 +960,18 @@ function BrandsGroup({
             tip: metricTip("recommended"),
             val: (r) => r.stats ? Math.round(r.stats.recommended * 100) : null,
             evidence: (r) => (r.stats ? { metric: "recommended" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.recommended) : "—") },
+            render: (r) =>
+              !r.stats ? "—"
+              : st.showCounts ? frac(r.stats.recommendedCount, r.stats.m.unbrandedResponses)
+              : pct(r.stats.recommended) },
           { id: "chosen", label: METRICS.chosen.label, num: true,
             tip: metricTip("chosen"),
             val: (r) => r.stats ? Math.round(r.stats.chosen * 100) : null,
             evidence: (r) => (r.stats ? { metric: "chosen" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.chosen) : "—") },
-          ...(st.showCounts
-            ? [{ id: "chosenn", label: "Chosen n", num: true,
-                val: (r: Series[number]) => r.stats?.m.firstPick?.count ?? null }]
-            : []),
+            render: (r) =>
+              !r.stats ? "—"
+              : st.showCounts ? frac(r.stats.chosenCount, r.stats.m.unbrandedResponses)
+              : pct(r.stats.chosen) },
           ...(st.showCI
             ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
                 val: (r: Series[number]) =>
@@ -982,20 +982,23 @@ function BrandsGroup({
                     ? `${pct(r.stats.m.firstPick.ciLow)}–${pct(r.stats.m.firstPick.ciHigh)}`
                     : "—" }]
             : []),
-          { id: "picks", label: METRICS.picks.label, num: true,
-            tip: metricTip("picks"),
-            val: (r) => tp(r.name)?.picks ?? 0 },
           { id: "share", label: METRICS.shareOfDecided.label, num: true,
             tip: metricTip("shareOfDecided"),
             val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
-            render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
+            render: (r) =>
+              st.showCounts
+                ? frac(tp(r.name)?.picks ?? 0, decidedTotal)
+                : pct(tp(r.name)?.shareOfDecided ?? 0) },
           { id: "fn", label: METRICS.firstNamed.label, num: true,
             tip: metricTip("firstNamed"),
             val: (r) =>
               r.stats?.firstNamed !== null && r.stats
                 ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
             render: (r) =>
-              r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
+              r.stats?.firstNamed === null || !r.stats ? "—"
+              : st.showCounts && r.stats.positionDist
+                ? frac(r.stats.positionDist.r1, r.stats.m.unbrandedResponses)
+                : pct(r.stats.firstNamed!) },
           { id: "sov", label: METRICS.shareOfVoice.label, num: true,
             tip: metricTip("shareOfVoice"),
             val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
@@ -1014,7 +1017,9 @@ function BrandsGroup({
             render: (r) =>
               r.stats && r.stats.count > 0 ? (
                 <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
-                  {pct(r.stats.framing.negative / r.stats.count)}
+                  {st.showCounts
+                    ? frac(r.stats.framing.negative, r.stats.count)
+                    : pct(r.stats.framing.negative / r.stats.count)}
                 </span>
               ) : ("—") },
         ]}
@@ -1104,7 +1109,7 @@ function SoloVisibility({ s }: { s: Series[number] }) {
 }
 
 /* ---------------- Why ---------------- */
-function Why({ groups }: { groups: Group[] }) {
+function Why({ groups, counts }: { groups: Group[]; counts: boolean }) {
   const [metric, setMetric] = useState<"lift" | "wins" | "all" | "absent">("lift");
   const [sortBy, setSortBy] = useState<{ name: string; dir: 1 | -1 } | null>(null);
   const metricDefs = [
@@ -1138,7 +1143,7 @@ function Why({ groups }: { groups: Group[] }) {
       </div>
       <div className="grid gap-8">
         {groups.map((g) => (
-          <WhyGroup key={g.label ?? "all"} g={g} metric={metric}
+          <WhyGroup key={g.label ?? "all"} g={g} metric={metric} counts={counts}
             sortBy={sortBy} setSortBy={setSortBy} />
         ))}
       </div>
@@ -1147,10 +1152,11 @@ function Why({ groups }: { groups: Group[] }) {
 }
 
 function WhyGroup({
-  g, metric, sortBy, setSortBy,
+  g, metric, sortBy, setSortBy, counts,
 }: {
   g: Group;
   metric: "lift" | "wins" | "all" | "absent";
+  counts: boolean;
   sortBy: { name: string; dir: 1 | -1 } | null;
   setSortBy: (v: { name: string; dir: 1 | -1 } | null) => void;
 }) {
@@ -1179,8 +1185,16 @@ function WhyGroup({
         <p className="text-sm text-ink-3">No argument coding in this slice.</p>
       </div>
     );
-  const fmtCell = (v: number | null) =>
-    v === null ? "—" : metric === "lift" ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}` : pct(v);
+  // Lift is a difference in points, not a rate — it has no fraction form.
+  const fracCell = (r: NonNullable<ReturnType<typeof liftOf>>) =>
+    metric === "wins" ? frac(r.winsN, r.winsOf)
+    : metric === "all" ? frac(r.n, r.of)
+    : frac(r.absentN, r.absentOf);
+  const fmtCell = (v: number | null, r?: ReturnType<typeof liftOf>) =>
+    v === null || !r ? "—"
+    : metric === "lift" ? `${v >= 0 ? "+" : ""}${(v * 100).toFixed(0)}`
+    : counts ? fracCell(r)
+    : pct(v);
   return (
     <div className="grid gap-3">
       <GroupLabel label={g.label} />
@@ -1247,7 +1261,7 @@ function WhyGroup({
                       }`}>
                       {r ? (
                         <Tip tip={`in wins ${pct(r.shareWins)} (${r.winsN} of ${r.winsOf}) · overall ${pct(r.shareAll)} (${r.n} of ${r.of}) · where missing ${pct(r.shareAbsent)} (${r.absentN} of ${r.absentOf}) · lift ${r.lift >= 0 ? "+" : ""}${(r.lift * 100).toFixed(0)}`}>
-                          <span className="cursor-help">{fmtCell(v)}</span>
+                          <span className="cursor-help">{fmtCell(v, r)}</span>
                         </Tip>
                       ) : ("—")}
                     </td>
@@ -1605,13 +1619,14 @@ function Sources({ groups }: { groups: Group[] }) {
 
 /* ---------------- Risk ---------------- */
 function Risk({
-  groups, pooled, plan, runId, clientName,
+  groups, pooled, plan, runId, clientName, counts,
 }: {
   groups: Group[];
   pooled: RunMetrics;
   plan: "free" | "pro" | "enterprise";
   runId: string;
   clientName: string;
+  counts: boolean;
 }) {
   const [verbBrand, setVerbBrand] = useState<string>(clientName);
   const [verbCache, setVerbCache] = useState<
@@ -1667,7 +1682,10 @@ function Risk({
                       ? Math.round((r.stats.framing.recommended / r.stats.count) * 100) : null,
                   render: (r) =>
                     r.stats && r.stats.count > 0
-                      ? pct(r.stats.framing.recommended / r.stats.count) : "—" },
+                      ? counts
+                        ? frac(r.stats.framing.recommended, r.stats.count)
+                        : pct(r.stats.framing.recommended / r.stats.count)
+                      : "—" },
                 { id: "neutral", label: METRICS.neutral.label, num: true,
                   tip: metricTip("neutral"),
                   val: (r) =>
@@ -1677,7 +1695,9 @@ function Risk({
                     r.stats && r.stats.count > 0 ? (
                       <Tip tip="Named without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
                         <span className="cursor-help">
-                          {pct(r.stats.framing.mentioned / r.stats.count)}
+                          {counts
+                            ? frac(r.stats.framing.mentioned, r.stats.count)
+                            : pct(r.stats.framing.mentioned / r.stats.count)}
                         </span>
                       </Tip>
                     ) : ("—") },
@@ -1689,11 +1709,11 @@ function Risk({
                   render: (r) =>
                     r.stats && r.stats.count > 0 ? (
                       <span className={r.stats.framing.negative > 0 ? "text-danger font-semibold" : ""}>
-                        {pct(r.stats.framing.negative / r.stats.count)}
+                        {counts
+                          ? frac(r.stats.framing.negative, r.stats.count)
+                          : pct(r.stats.framing.negative / r.stats.count)}
                       </span>
                     ) : ("—") },
-                { id: "negn", label: "Negative n", num: true,
-                  val: (r) => r.stats?.framing.negative ?? null },
               ]}
               rows={g.series}
             />
@@ -1731,7 +1751,10 @@ function Risk({
 }
 
 /* ---------------- Style ---------------- */
-function Style({ pooled }: { pooled: RunMetrics }) {
+function Style({ pooled, counts }: { pooled: RunMetrics; counts: boolean }) {
+  // Style stores rates; the underlying k is recovered exactly because each
+  // rate was computed as k / answers over these same rows.
+  const kOf = (rate: number, n: number) => Math.round(rate * n);
   if (!pooled.engines || pooled.engines.length === 0)
     return <p className="text-sm text-ink-3">No per-engine data in this run.</p>;
   type E = NonNullable<RunMetrics["engines"]>[number];
@@ -1761,16 +1784,20 @@ function Style({ pooled }: { pooled: RunMetrics }) {
           { id: "words", label: "Avg words", num: true, val: (e) => e.style.avgWords },
           { id: "rec", label: "Recommends", num: true,
             val: (e) => Math.round(e.style.recRate * 100),
-            render: (e) => pct(e.style.recRate) },
+            render: (e) =>
+              counts ? frac(kOf(e.style.recRate, e.answers), e.answers) : pct(e.style.recRate) },
           { id: "price", label: "Quotes prices", num: true,
             val: (e) => Math.round(e.style.priceRate * 100),
-            render: (e) => pct(e.style.priceRate) },
+            render: (e) =>
+              counts ? frac(kOf(e.style.priceRate, e.answers), e.answers) : pct(e.style.priceRate) },
           { id: "spec", label: "Quotes specs", num: true,
             val: (e) => Math.round(e.style.specRate * 100),
-            render: (e) => pct(e.style.specRate) },
+            render: (e) =>
+              counts ? frac(kOf(e.style.specRate, e.answers), e.answers) : pct(e.style.specRate) },
           { id: "clar", label: "Asks back", num: true,
             val: (e) => Math.round(e.style.clarRate * 100),
-            render: (e) => pct(e.style.clarRate) },
+            render: (e) =>
+              counts ? frac(kOf(e.style.clarRate, e.answers), e.answers) : pct(e.style.clarRate) },
           { id: "opts", label: "Options offered", num: true,
             val: (e) => Number(e.style.avgOptions.toFixed(1)) },
           { id: "searched", label: METRICS.searchRate.label, num: true,
@@ -1779,7 +1806,8 @@ function Style({ pooled }: { pooled: RunMetrics }) {
               e.searchRate !== null ? Math.round(e.searchRate * 100) : null,
             render: (e) =>
               e.mode !== "search" ? "—"
-              : e.searchRate !== null ? pct(e.searchRate)
+              : e.searchRate !== null
+                ? counts ? frac(kOf(e.searchRate, e.answers), e.answers) : pct(e.searchRate)
               : e.citedAnswers > 0 ? "always" : "—" },
         ]}
         rows={pooled.engines}

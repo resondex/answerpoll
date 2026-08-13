@@ -209,7 +209,7 @@ export function SortTable<T>({
                         : { id: c.id, dir: -1 }
                     )
                   }
-                  className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-center" : ""}`}
+                  className={`py-2 ${i === cols.length - 1 ? "" : "pr-3"} font-semibold cursor-pointer select-none hover:opacity-70 ${c.num ? "text-center" : ""}`}
                 >
                   {/* The arrow always occupies its slot, so sorting a
                       different column never re-measures the header. */}
@@ -240,7 +240,7 @@ export function SortTable<T>({
                 {cols.map((c, i) => (
                   <td
                     key={c.id}
-                    className={`py-2 ${i === cols.length - 1 ? "" : "pr-4"} ${c.num ? "text-center tabular-nums" : ""}`}
+                    className={`py-2 ${i === cols.length - 1 ? "" : "pr-3"} ${c.num ? "text-center tabular-nums" : ""}`}
                     style={c.color ? { color: c.color(r) } : undefined}
                   >
                     {(() => {
