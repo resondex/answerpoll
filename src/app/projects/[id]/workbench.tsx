@@ -476,7 +476,7 @@ export default function Workbench({
         </div>
       </div>
 
-      <div className="grid md:grid-cols-[11.5rem_1fr]">
+      <div className="grid md:grid-cols-[11.5rem_minmax(0,1fr)]">
         <nav className="border-b md:border-b-0 md:border-r border-line py-2 flex md:grid content-start overflow-x-auto">
           {VIEWS.map((v) => {
             const locked = v.id === "risk" && plan === "free";

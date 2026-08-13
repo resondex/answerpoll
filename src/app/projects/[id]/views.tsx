@@ -286,7 +286,16 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "scorecard").slice(0, 2)} />
       </Q>
 
-      <Q n={2} q="Do they choose you?" tab="brands" preset={{ ...soloPreset, split: "mode" }}>
+      <Q n={2} q="Do they choose you?" tab="brands"
+        preset={{
+          ...soloPreset,
+          // Q2 lands on the decision chart: comparative (solo has no chart)
+          // with share of decided selected, keeping the instinct/search split.
+          brandMode: "comparative",
+          compBrands: [],
+          measure: "share",
+          split: "mode",
+        }}>
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {metrics.firstPick ? pct(metrics.firstPick.rate) : "—"}
