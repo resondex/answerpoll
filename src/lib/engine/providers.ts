@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ExtractedMention, ExtractionResult } from "../types";
+import { matchKey } from "../brand_key";
 
 export interface ExtractionContext {
   targetBrand: string;
@@ -354,18 +355,32 @@ function codingInstructions(ctx: ExtractionContext): string {
     "'powerful but too heavy for a small team'. 'mentioned' when it " +
     "is merely listed, compared factually, or named as an " +
     "integration. Being included in a list is NOT an endorsement.\n" +
-    "outcome — 'pick' ONLY when the answer commits to ONE option " +
-    "overall, for everyone. 'conditional' when it recommends " +
-    "different options for different situations or says the choice " +
-    "depends ('X for enterprises, Y for startups', 'there is no " +
-    "single best'), even if it names a favourite in passing. " +
-    "'no_pick' when it explains options without recommending. " +
-    "'clarification' when it mainly asks the user a question.\n" +
-    "top_pick_brand — the ONE brand crowned as THE choice for " +
-    "everyone. MUST be null unless outcome is 'pick'. A conditional " +
-    "answer has no top pick, however prominent a brand is.\n" +
+    "outcome — exactly one of four. Decide by what the answer DECIDES, " +
+    "never by whether it asks a question at the end. Test in order:\n" +
+    "  'clarification' — it gives no usable recommendation at all and " +
+    "asks for the reader's details first. No shortlist, nothing ranked.\n" +
+    "  'no_pick' — it lays out options but recommends none, or says " +
+    "nothing here fits.\n" +
+    "  'conditional' — its recommendation depends on the reader's " +
+    "situation: different options for different cases ('X for " +
+    "enterprises, Y for startups'), or two co-equal finalists with no " +
+    "overall leader.\n" +
+    "  'pick' — one option leads overall. This INCLUDES 'the strongest " +
+    "default choice is X', 'if you want one recommendation, X', or a " +
+    "clear front-runner presented first and most strongly — even when " +
+    "the answer also lists alternatives, adds caveats, or asks a " +
+    "follow-up question afterwards. Naming a single front-runner and " +
+    "then qualifying it is still a pick. Having no front-runner is not " +
+    "a pick, however long one brand's write-up is.\n" +
+    "top_pick_brand — the ONE brand that leads. MUST be null unless " +
+    "outcome is 'pick', and MUST be a single brand name written exactly " +
+    "as the answer writes it — never two names joined by 'or', '+', '/' " +
+    "or a parenthetical. If the answer genuinely leads with two, that " +
+    "is 'conditional', not a pick.\n" +
     "reasons — which allowed argument codes the answer uses.\n" +
-    "clarification_requested — does it ask the user anything?\n" +
+    "clarification_requested — independent of outcome: true whenever " +
+    "the answer asks the reader any question, including when it has " +
+    "already recommended something.\n" +
     "gives_recommendation — does it recommend at least one option?\n" +
     "includes_prices — true ONLY if an actual figure appears (a " +
     "number with a currency or a per-seat/per-month rate). 'Pricing " +
@@ -587,6 +602,38 @@ export interface ConsensusResult extends ExtractionResult {
   disagreements: string[];
 }
 
+/**
+ * A crown must name ONE brand. Coders occasionally emit a compound —
+ * "GitHub Issues + Projects (or Linear)" — which matches no dictionary entry
+ * and so vanishes from every brand metric instead of failing loudly.
+ *
+ * A name that the answer's own mentions (or the known brand list) contain is
+ * kept whole, so legitimately parenthesised names like "GitHub Projects (v2)"
+ * survive. Otherwise the compound is split and the first fragment naming a
+ * real brand wins — that is the leading brand the answer actually crowned.
+ */
+function singleBrand(
+  raw: string | null,
+  mentions: ExtractedMention[],
+  known: string[]
+): string | null {
+  const clean = raw?.trim();
+  if (!clean) return null;
+  const pool = [...mentions.map((m) => m.brand), ...known];
+  const whole = pool.find((p) => matchKey(p) === matchKey(clean));
+  if (whole) return whole;
+  if (!/[(),/]|\bor\b|\+/i.test(clean)) return clean;
+  const parts = clean
+    .split(/\s*(?:[(),/+]|\bor\b)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    const hit = pool.find((p) => matchKey(p) === matchKey(part));
+    if (hit) return hit;
+  }
+  return parts[0] ?? clean;
+}
+
 export async function extractCodingConsensus(
   responseText: string,
   ctx: ExtractionContext
@@ -648,11 +695,12 @@ export async function extractCodingConsensus(
       provenance = `${CODER_A}+${CODER_B} (unresolved)`;
     }
   }
+  const mentions = [...merged.values()];
   return {
     ...a,
     outcome,
-    top_pick_brand: topPick,
-    mentions: [...merged.values()],
+    top_pick_brand: singleBrand(topPick, mentions, ctx.knownBrands),
+    mentions,
     // Numeric flags: agree, or take the affirmative only when both saw it.
     includes_prices: a.includes_prices && b.includes_prices,
     includes_specs: a.includes_specs && b.includes_specs,
@@ -774,11 +822,18 @@ async function adjudicate(
     max_tokens: 500,
     system:
       "Two coders disagree about one AI answer. Decide from the text alone. " +
-      "outcome is 'pick' ONLY when the answer commits to one option for " +
-      "everyone; 'conditional' when it recommends different options for " +
-      "different situations or says it depends; 'no_pick' when it explains " +
-      "without recommending; 'clarification' when it mainly asks a question. " +
-      "top_pick_brand is null unless outcome is 'pick'.",
+      "outcome, tested in order: 'clarification' when it gives no usable " +
+      "recommendation at all and asks for the reader's details first; " +
+      "'no_pick' when it lays out options but recommends none; " +
+      "'conditional' when the recommendation depends on the reader's " +
+      "situation, or two finalists are co-equal with no overall leader; " +
+      "'pick' when one option leads overall — including 'the strongest " +
+      "default is X' or a clear front-runner presented first and most " +
+      "strongly, even if alternatives, caveats, or a follow-up question " +
+      "follow it. Asking a question at the end never by itself makes an " +
+      "answer 'clarification'. top_pick_brand is null unless outcome is " +
+      "'pick', and must be ONE brand name — never two joined by 'or', " +
+      "'+', '/' or a parenthetical.",
     tools: [
       {
         name: "settle",
