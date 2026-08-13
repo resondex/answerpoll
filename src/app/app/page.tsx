@@ -12,6 +12,9 @@ import {
 
 type ProjectWithRun = Project & { latestRun: Run | null };
 
+/** Repeats for the run setup launches — matches the dashboard's default. */
+const FIRST_RUN_REPEATS = 5;
+
 interface DraftPrompt {
   text: string;
   theme: PromptTheme;
@@ -264,6 +267,27 @@ export default function AppHomePage() {
     }
     if (draftId) {
       await fetch(`/api/drafts/${draftId}`, { method: "DELETE" });
+    }
+    // The battery was reviewed and edited on the step above, so there is
+    // nothing left for the reader to approve — launch the first run here
+    // rather than landing them on an empty dashboard holding a Run button.
+    // A launch failure is not fatal: the tracker exists either way, and the
+    // dashboard's own Run control reports the reason.
+    const panel: string[] = data.project.engine_set?.length
+      ? data.project.engine_set
+      : engineSet;
+    try {
+      await fetch(`/api/projects/${data.project.id}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: panel[0] ?? "gpt-5-mini",
+          ...(panel.length > 0 ? { models: panel } : {}),
+          repeats: FIRST_RUN_REPEATS,
+        }),
+      });
+    } catch {
+      // Network hiccup on launch only — the tracker is already created.
     }
     router.push(`/projects/${data.project.id}`);
   }
@@ -670,6 +694,21 @@ export default function AppHomePage() {
 
                 {error && <p className="text-sm text-danger">{error}</p>}
 
+                {/* Say what the button will spend before it spends it. */}
+                {prompts && (
+                  <p className="text-[13px] text-ink-3">
+                    Creating this tracker starts your first run:{" "}
+                    {prompts.filter((p) => p.text.trim()).length} questions ×{" "}
+                    {FIRST_RUN_REPEATS} repeats ×{" "}
+                    {engineSet.length || 1} assistant
+                    {engineSet.length === 1 ? "" : "s"} ={" "}
+                    {prompts.filter((p) => p.text.trim()).length *
+                      FIRST_RUN_REPEATS *
+                      (engineSet.length || 1)}{" "}
+                    answers. It runs in the background — you can watch it land.
+                  </p>
+                )}
+
                 <div className="flex items-center gap-4 border-t border-line pt-4">
                   <button
                     type="button"
@@ -693,7 +732,10 @@ export default function AppHomePage() {
                     disabled={
                       submitting ||
                       prompts === null ||
-                      prompts.filter((p) => p.text.trim()).length < 4
+                      prompts.filter((p) => p.text.trim()).length < 4 ||
+                      // Now that this button spends money, an empty panel must
+                      // not silently fall back to a single engine.
+                      engineSet.length === 0
                     }
                     className="btn-primary inline-flex items-center gap-2"
                   >
@@ -703,7 +745,9 @@ export default function AppHomePage() {
                         className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin"
                       />
                     )}
-                    {submitting ? "Creating…" : "Create tracker"}
+                    {submitting
+                      ? "Starting your first run…"
+                      : "Create tracker & run"}
                   </button>
                 </div>
               </>
