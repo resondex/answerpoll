@@ -324,7 +324,7 @@ export default function RunResults({
         <StatTile
           label="Mentioned rate"
           value={pct(target.mentionRate)}
-          detail={`named in ${target.mentionCount} of ${metrics.unbrandedResponses} answers`}
+          detail={`mentioned in ${target.mentionCount} of ${metrics.unbrandedResponses} answers`}
           hint="Share of unbranded answers that name you at all"
         />
         {metrics.coded && metrics.firstPick && (
@@ -570,7 +570,7 @@ export default function RunResults({
             <div
               key={b.brand}
               className="group grid grid-cols-[9rem_1fr_7rem] items-center gap-3"
-              title={`${b.brand}: named in ${b.mentionCount} of ${metrics.unbrandedResponses} answers · avg position ${b.avgRank ? b.avgRank.toFixed(1) : "—"} · recommended ${b.framing.recommended}× · negative ${b.framing.negative}×`}
+              title={`${b.brand}: mentioned in ${b.mentionCount} of ${metrics.unbrandedResponses} answers · avg position ${b.avgRank ? b.avgRank.toFixed(1) : "—"} · recommended ${b.framing.recommended}× · negative ${b.framing.negative}×`}
             >
               <span
                 className={`truncate text-sm text-right ${
@@ -637,7 +637,7 @@ export default function RunResults({
                 <div
                   key={p.parent}
                   className="grid grid-cols-[9rem_1fr_11rem] items-center gap-3"
-                  title={`${p.parent}: ${p.brands.join(", ")} — named in ${p.responses} of ${metrics.unbrandedResponses} answers · ${pct(p.shareOfVoice)} share of voice`}
+                  title={`${p.parent}: ${p.brands.join(", ")} — mentioned in ${p.responses} of ${metrics.unbrandedResponses} answers · ${pct(p.shareOfVoice)} share of voice`}
                 >
                   <span
                     className={`truncate text-sm text-right ${p.includesTarget ? "font-semibold text-primary" : "text-ink-2"}`}
@@ -685,7 +685,7 @@ export default function RunResults({
           </span>
         </summary>
         <p className="text-[13px] text-ink-3 mb-4 mt-3">
-          Every brand named in this run, with its full metrics
+          Every brand mentioned in this run, with its full metrics
 .
         </p>
         <SortTable

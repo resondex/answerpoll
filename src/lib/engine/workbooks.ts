@@ -678,7 +678,7 @@ export async function buildScorecardWorkbook(
 
   // ===== Section 1: the persuasion funnel, by engine =====
   let row = 3;
-  sectionRow(ws, row, "Visibility funnel — named, shortlisted, chosen");
+  sectionRow(ws, row, "Visibility funnel — mentioned, top-3, chosen");
   row += 1;
   headerRow(ws, row, [
     "Engine",
@@ -749,7 +749,7 @@ export async function buildScorecardWorkbook(
     ["Mentioned %", "Mentioned ÷ Answers. The reach number: how often you are in the conversation at all."],
     [
       "Top-3",
-      "Answers where the focus appears among the first three brands. The shortlist.",
+      "Answers where the focus appears among the first three brands named.",
     ],
     ["Top-3 %", "Top-3 ÷ Answers. A big drop from Mentioned % is a position problem, not an awareness problem."],
     [

@@ -15,9 +15,12 @@ const WRITER_MODEL = process.env.INSIGHTS_MODEL ?? "claude-sonnet-5";
 const writerIsClaude = () =>
   Boolean(process.env.ANTHROPIC_API_KEY) && WRITER_MODEL.startsWith("claude");
 // Bump when the fact set, prompt, or verification rules change.
-// v10: fact labels and prompt speak the dictionary vocabulary (chosen, not
-// first pick) — regenerates stored prose written in the old terms.
-const INSIGHTS_VERSION = "v10";
+// v12: dictionary vocabulary enforced end to end — fact values use the
+// dictionary verbs (mentioned in / chosen in), the system prompt forbids the
+// writer from free-writing old terms (named, first pick, shortlisted), and
+// the chosen-rate fact labels its denominator correctly (coded answers, not
+// decided — .of was always all coded answers).
+const INSIGHTS_VERSION = "v12";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000;
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -83,7 +86,9 @@ function buildFacts(
   if (metrics.firstPick) {
     add(
       `${brandName} chosen rate`,
-      `${pct(metrics.firstPick.rate)} (${metrics.firstPick.count} of ${metrics.firstPick.of} decided answers)`
+      // .of is ALL coded answers, not the decided subset — labeling it
+      // "decided" fed a wrong denominator straight into the written plays.
+      `${pct(metrics.firstPick.rate)} (${metrics.firstPick.count} of ${metrics.firstPick.of} coded answers)`
     );
   }
   add(
@@ -189,7 +194,7 @@ function buildFacts(
   if (metrics.parentRollup) {
     for (const p of metrics.parentRollup.slice(0, 3)) {
       add(
-        `parent company "${p.parent}" (any of its brands) named in`,
+        `parent company "${p.parent}" (any of its brands) mentioned in`,
         `${pct(p.mentionRate)} of answers, with ${pct(p.shareOfVoice)} share of voice`
       );
     }
@@ -206,7 +211,7 @@ function buildFacts(
       const codeLabel = g.text.length > 60 ? g.text.slice(0, 60) + "…" : g.text;
       add(
         `prompt L${i + 1} (${g.badge.toUpperCase()}): "${codeLabel}"`,
-        `${brandName} named in ${g.targetNamed} of ${g.answers} answers, picked in ${g.targetPicks} of ${g.decided} decided${g.modalPick ? `; most common pick ${g.modalPick}` : ""}`
+        `${brandName} mentioned in ${g.targetNamed} of ${g.answers} answers, chosen in ${g.targetPicks} of ${g.decided} decided${g.modalPick ? `; most common pick ${g.modalPick}` : ""}`
       );
     });
   }
@@ -295,15 +300,17 @@ export async function buildRunInsights(
 ): Promise<InsightsBundle | null> {
   const run = await store.getRun(runId);
   if (!run) return null;
-  const [metrics, project] = await Promise.all([
-    computeRunMetrics(runId),
-    store.getRun(runId).then((r) => store.getProject(r!.project_id)),
-  ]);
-  if (!metrics || !project) return null;
+  const project = await store.getProject(run.project_id);
+  if (!project) return null;
 
-  const key = `insights:${INSIGHTS_VERSION}:${runId}:${metrics.dictionaryVersion}`;
+  // The cache key needs only the dictionary version, which lives on the
+  // project row — a cache hit must never pay for a full metrics build.
+  const key = `insights:${INSIGHTS_VERSION}:${runId}:${project.dictionary_version}`;
   const hit = await store.cacheGet(key, CACHE_TTL_MS);
   if (hit) return JSON.parse(hit) as InsightsBundle;
+
+  const metrics = await computeRunMetrics(runId);
+  if (!metrics) return null;
 
   // Trend delta when a previous completed run exists.
   let trendDelta: string | null = null;
@@ -351,10 +358,17 @@ export async function buildRunInsights(
           "committing to it. Do NOT number your insights ('One.', '1.') — " +
           "numbering is applied by the renderer.\n\n" +
           "THE FUNNEL — the study's spine is mentioned → recommended → " +
-          "chosen: named at all, endorsed, then crowned as the single pick. " +
+          "chosen: present at all, endorsed, then crowned as the single pick. " +
           "Never describe position or order as a funnel stage; position is " +
           "about where a brand sits in a list, which only matters when the " +
           "engine ranks.\n\n" +
+          "VOCABULARY — use these words exactly: a brand is 'mentioned' in " +
+          "an answer (never 'named'); an answer 'chooses' or 'crowns' its " +
+          "single pick and the metric is the 'chosen rate' (never 'first " +
+          "pick', 'first-pick rate', 'picked', or 'shortlisted'); " +
+          "'recommended' means endorsement framing. Every surface the reader " +
+          "sees uses these exact terms — matching them is what lets a claim " +
+          "be found in the tables.\n\n" +
           "Produce:\n" +
           "- sections: one per analysis with 2-4 numbered insights each. Keys " +
           "and titles, in order: scorecard 'Headline'; leaderboard 'Brand " +

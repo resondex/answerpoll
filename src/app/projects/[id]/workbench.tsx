@@ -1377,7 +1377,7 @@ function BattlegroundGroup({
     const pg = gridFor(x, promptId);
     if (!pg) return dot(null);
     return (
-      <Tip tip={`named in ${pg.targetNamed}/${pg.answers} · picked in ${pg.targetPicks}/${pg.decided} decided${pg.modalPick ? ` · consensus: ${pg.modalPick}` : ""}`}>
+      <Tip tip={`mentioned in ${pg.targetNamed}/${pg.answers} · chosen in ${pg.targetPicks}/${pg.decided} decided${pg.modalPick ? ` · consensus: ${pg.modalPick}` : ""}`}>
         <span className="cursor-help">{dot(pg.badge)}</span>
       </Tip>
     );
@@ -1554,13 +1554,14 @@ function BattlegroundGroup({
         <div className="flex gap-4">
           <span>{dot("win")} wins it</span>
           <span>{dot("contested")} contested</span>
-          <span>{dot(null)} not named</span>
+          <span>{dot(null)} not mentioned</span>
         </div>
         <p>
           Win = the brand is the prompt&apos;s most common pick AND takes a
           majority (50%+) of its decided answers, with no tie. Contested =
-          named in the answers but nobody holds a majority (or someone else
-          does). Not named = absent from this prompt&apos;s answers entirely.
+          mentioned in the answers but nobody holds a majority (or someone
+          else does). Not mentioned = absent from this prompt&apos;s answers
+          entirely.
         </p>
       </div>
       )}
