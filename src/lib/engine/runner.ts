@@ -12,7 +12,12 @@ import { getDictionarySuggestions } from "./dict_suggest";
 // Sized when a run sampled one engine from one vendor. A six-engine panel
 // spreads across four vendors, so 4 global slots left each vendor running
 // roughly one request at a time while the rest of the run waited.
-const CONCURRENCY = Number(process.env.RUN_CONCURRENCY ?? 16);
+// A 420-answer run is ~121 minutes of API time (search engines take 20-27s
+// per answer because they genuinely browse). Wall-clock is that divided by
+// how many run at once, so this number IS the run duration. 32 lands near
+// four minutes; raise it if the vendors tolerate more, but watch for 429s —
+// retries make an over-subscribed run slower, not faster.
+const CONCURRENCY = Number(process.env.RUN_CONCURRENCY ?? 32);
 
 // Serverless functions cap at maxDuration=300s; leave headroom for in-flight
 // completions to finish and the chain handoff to fire.
