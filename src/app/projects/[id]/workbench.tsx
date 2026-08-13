@@ -494,17 +494,16 @@ export default function Workbench({
           ) : (
             <>
               {evidence && (
-                <div className="mb-3">
-                  <EvidenceDrawer
-                    key={`${evidence.metric}:${evidence.brand}`}
-                    runId={runId}
-                    target={evidence}
-                    onClose={() => setEvidence(null)}
-                  />
-                </div>
+                <EvidenceDrawer
+                  key={`${evidence.metric}:${evidence.brand}`}
+                  runId={runId}
+                  target={evidence}
+                  onClose={() => setEvidence(null)}
+                />
               )}
               {view === "visibility" && (
-                <Visibility groups={groups} solo={solo} st={st} set={set} />
+                <Visibility groups={groups} solo={solo} st={st} set={set}
+                  onEvidence={openEvidence} />
               )}
               {view === "choice" && (
                 <Choice groups={groups} st={st} onEvidence={openEvidence} />
@@ -785,12 +784,13 @@ function GroupLabel({ label }: { label: string | null }) {
 
 /* ---------------- Visibility ---------------- */
 function Visibility({
-  groups, solo, st, set,
+  groups, solo, st, set, onEvidence,
 }: {
   groups: Group[];
   solo: boolean;
   st: WbState;
   set: (p: Partial<WbState>) => void;
+  onEvidence?: (t: EvidenceTarget) => void;
 }) {
   const measures = [
     ["named", METRICS.mentionedRate.label],
@@ -861,6 +861,7 @@ function Visibility({
               <SortTable
                 filename={`visibility${g.label ? `_${slugify(g.label)}` : ""}.csv`}
                 defaultSort={{ id: "named", dir: -1 }}
+                onEvidence={onEvidence}
                 cols={[
                   { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
                     color: (r) => r.color,
@@ -874,6 +875,7 @@ function Visibility({
                   { id: "named", label: METRICS.mentioned.label, num: true,
                     tip: metricTip("mentionedRate"),
                     val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
+                    evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
                     render: (r) => (r.stats ? pct(r.stats.named) : "—") },
                   ...(st.showCounts
                     ? [{ id: "namedn", label: "Mentioned n", num: true,
@@ -883,12 +885,16 @@ function Visibility({
                     tip: metricTip("recommended"),
                     val: (r: Series[number]) =>
                       r.stats ? Math.round(r.stats.recommended * 100) : null,
+                    evidence: (r: Series[number]) =>
+                      r.stats ? { metric: "recommended" as const, brand: r.name } : null,
                     render: (r: Series[number]) =>
                       r.stats ? pct(r.stats.recommended) : "—" },
                   { id: "chosen", label: METRICS.chosen.label, num: true,
                     tip: metricTip("chosen"),
                     val: (r: Series[number]) =>
                       r.stats ? Math.round(r.stats.chosen * 100) : null,
+                    evidence: (r: Series[number]) =>
+                      r.stats ? { metric: "chosen" as const, brand: r.name } : null,
                     render: (r: Series[number]) =>
                       r.stats ? pct(r.stats.chosen) : "—" },
                   ...(st.showCI

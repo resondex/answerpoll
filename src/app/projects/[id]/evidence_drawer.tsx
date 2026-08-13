@@ -140,7 +140,19 @@ export default function EvidenceDrawer({
   const current = answers[idx] ?? answers[0] ?? null;
 
   return (
-    <aside className="rounded-xl border border-line bg-[var(--color-surface)] grid gap-0 content-start overflow-hidden">
+    // Overlay rather than an in-flow panel: opening it must not push the very
+    // figures being audited off screen.
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Answers behind ${target.metric} for ${target.brand}`}
+    >
+    <aside
+      onClick={(e) => e.stopPropagation()}
+      className="w-full max-w-2xl rounded-xl border border-line bg-[var(--color-surface)] grid gap-0 content-start overflow-hidden shadow-xl"
+    >
       <div className="border-b border-line p-4 grid gap-2">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -202,7 +214,7 @@ export default function EvidenceDrawer({
               {current.quote}
             </p>
           )}
-          <div className="max-h-56 overflow-y-auto border-l-2 border-line pl-3">
+          <div className="max-h-72 overflow-y-auto border-l-2 border-line pl-3">
             <AnswerText text={current.text} highlight={[data?.brand ?? target.brand]} />
           </div>
         </div>
@@ -267,5 +279,6 @@ export default function EvidenceDrawer({
         </p>
       )}
     </aside>
+    </div>
   );
 }
