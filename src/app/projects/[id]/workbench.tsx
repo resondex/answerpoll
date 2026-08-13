@@ -36,8 +36,7 @@ const SERIES = [
 ];
 
 export type WbView =
-  | "visibility"
-  | "choice"
+  | "brands"
   | "why"
   | "battleground"
   | "sources"
@@ -46,8 +45,7 @@ export type WbView =
   | "style";
 
 const VIEWS: { id: WbView; label: string; sub: string }[] = [
-  { id: "visibility", label: "Visibility", sub: "who's named" },
-  { id: "choice", label: "Choice", sub: "who wins" },
+  { id: "brands", label: "Brands", sub: "named → chosen" },
   { id: "why", label: "Why", sub: "the arguments" },
   { id: "battleground", label: "Battleground", sub: "by prompt" },
   { id: "sources", label: "Sources", sub: "what feeds it" },
@@ -58,13 +56,19 @@ const VIEWS: { id: WbView; label: string; sub: string }[] = [
 
 /** Old tab ids (Questions deep links) → v2 views. */
 const LEGACY: Record<string, WbView> = {
-  overview: "visibility",
-  engines: "visibility",
-  modes: "visibility",
+  // v2 ids — Visibility and Choice merged into one Brands view: their
+  // funnel columns had converged until the two tabs mostly repeated each
+  // other, and the funnel itself (mentioned → recommended → chosen) is one
+  // story that should never have required tab-hopping to read.
+  visibility: "brands",
+  choice: "brands",
+  // v1 ids (Questions deep links).
+  overview: "brands",
+  engines: "brands",
+  modes: "brands",
   prompts: "battleground",
   arguments: "why",
   sources: "sources",
-  brands: "visibility",
   risks: "risk",
 };
 
@@ -78,7 +82,14 @@ interface WbState {
   split: "none" | "engine" | "mode";
   /** Engine scope; empty = every engine in the run. */
   engines: string[];
-  measure: "named" | "firstNamed" | "sov" | "position";
+  measure:
+    | "named"
+    | "recommended"
+    | "chosen"
+    | "share"
+    | "firstNamed"
+    | "sov"
+    | "position";
   /** Table-only disclosures — charts never carry them. */
   showCI: boolean;
   showCounts: boolean;
@@ -501,12 +512,9 @@ export default function Workbench({
                   onClose={() => setEvidence(null)}
                 />
               )}
-              {view === "visibility" && (
-                <Visibility groups={groups} solo={solo} st={st} set={set}
+              {view === "brands" && (
+                <Brands groups={groups} solo={solo} st={st} set={set}
                   onEvidence={openEvidence} />
-              )}
-              {view === "choice" && (
-                <Choice groups={groups} st={st} onEvidence={openEvidence} />
               )}
               {view === "why" && <Why groups={groups} />}
               {view === "battleground" && (
@@ -782,8 +790,15 @@ function GroupLabel({ label }: { label: string | null }) {
   return <div className="section-label -mb-1">{label}</div>;
 }
 
-/* ---------------- Visibility ---------------- */
-function Visibility({
+/* ---------------- Brands ---------------- */
+/**
+ * The one brand view: the funnel (mentioned → recommended → chosen) with the
+ * visibility wing (position, first-named, share of voice) on one side and the
+ * decision wing (picks, share of decided) on the other. Replaces the old
+ * Visibility/Choice pair, whose tables had converged until the split forced
+ * tab-hopping through the middle of one story.
+ */
+function Brands({
   groups, solo, st, set, onEvidence,
 }: {
   groups: Group[];
@@ -794,18 +809,11 @@ function Visibility({
 }) {
   const measures = [
     ["named", METRICS.mentionedRate.label],
-    ["firstNamed", METRICS.firstNamed.label],
-    ["sov", METRICS.shareOfVoice.label],
+    ["recommended", METRICS.recommended.label],
+    ["chosen", METRICS.chosen.label],
+    ["share", METRICS.shareOfDecided.label],
     ["position", METRICS.avgPosition.label],
   ] as const;
-  const valOf = (x: Series[number]): number | null =>
-    !x.stats ? null
-    : st.measure === "named" ? x.stats.named
-    : st.measure === "firstNamed" ? x.stats.firstNamed
-    : st.measure === "sov" ? x.stats.sov
-    : x.stats.avgRank;
-  const fmt = (v: number | null) =>
-    v === null ? "—" : st.measure === "position" ? `#${v.toFixed(1)}` : pct(v);
 
   return (
     <>
@@ -827,119 +835,192 @@ function Visibility({
         </div>
       )}
       <div className="grid gap-8">
-        {groups.map((g) => {
-          const sr = g.series;
-          if (solo) {
-            const one = sr[0];
-            if (!one?.stats) return null;
-            return (
-              <div key={g.label ?? "all"} className="grid gap-4">
-                <GroupLabel label={g.label} />
-                <SoloVisibility s={one} />
-              </div>
-            );
-          }
-          const chartRows = sr.map((x) => ({
-            label: x.name, color: x.color, raw: valOf(x), right: fmt(valOf(x)),
-          }));
-          const best =
-            st.measure === "position"
-              ? Math.min(...chartRows.map((r) => r.raw ?? Infinity))
-              : null;
-          return (
-            <div key={g.label ?? "all"} className="grid gap-4">
-              <GroupLabel label={g.label} />
-              <SeriesBars rows={chartRows.map((r) => ({
-                label: r.label,
-                color: r.color,
-                value:
-                  st.measure === "position"
-                    ? r.raw !== null && best !== null ? best / r.raw : null
-                    : r.raw,
-                right: r.right,
-              }))} />
-              <SortTable
-                filename={`visibility${g.label ? `_${slugify(g.label)}` : ""}.csv`}
-                defaultSort={{ id: "named", dir: -1 }}
-                onEvidence={onEvidence}
-                cols={[
-                  { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
-                    color: (r) => r.color,
-                    render: (r) => <span className="font-medium">{r.name}</span> },
-                  ...(st.showCounts
-                    ? [{ id: "answers", label: METRICS.answers.label, num: true,
-                        tip: metricTip("answers"),
-                        val: (r: Series[number]) =>
-                          r.stats?.m.unbrandedResponses ?? null }]
-                    : []),
-                  { id: "named", label: METRICS.mentioned.label, num: true,
-                    tip: metricTip("mentionedRate"),
-                    val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
-                    evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
-                    render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-                  ...(st.showCounts
-                    ? [{ id: "namedn", label: "Mentioned n", num: true,
-                        val: (r: Series[number]) => r.stats?.count ?? null }]
-                    : []),
-                  { id: "rec", label: METRICS.recommended.label, num: true,
-                    tip: metricTip("recommended"),
-                    val: (r: Series[number]) =>
-                      r.stats ? Math.round(r.stats.recommended * 100) : null,
-                    evidence: (r: Series[number]) =>
-                      r.stats ? { metric: "recommended" as const, brand: r.name } : null,
-                    render: (r: Series[number]) =>
-                      r.stats ? pct(r.stats.recommended) : "—" },
-                  { id: "chosen", label: METRICS.chosen.label, num: true,
-                    tip: metricTip("chosen"),
-                    val: (r: Series[number]) =>
-                      r.stats ? Math.round(r.stats.chosen * 100) : null,
-                    evidence: (r: Series[number]) =>
-                      r.stats ? { metric: "chosen" as const, brand: r.name } : null,
-                    render: (r: Series[number]) =>
-                      r.stats ? pct(r.stats.chosen) : "—" },
-                  ...(st.showCI
-                    ? [{ id: "ci", label: "Mentioned 95% CI", num: true,
-                        val: (r: Series[number]) =>
-                          r.stats ? Math.round(r.stats.ciLow * 100) : null,
-                        render: (r: Series[number]) =>
-                          r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" }]
-                    : []),
-                  { id: "fn", label: METRICS.firstNamed.label, num: true,
-                    tip: metricTip("firstNamed"),
-                    val: (r) =>
-                      r.stats?.firstNamed !== null && r.stats
-                        ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
-                    render: (r) =>
-                      r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
-                  { id: "sov", label: METRICS.shareOfVoice.label, num: true,
-                    tip: metricTip("shareOfVoice"),
-                    val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
-                    render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
-                  { id: "pos", label: METRICS.avgPosition.label, num: true,
-                    tip: metricTip("avgPosition"),
-                    val: (r) => r.stats?.avgRank ?? null,
-                    render: (r) =>
-                      r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
-                  { id: "neg", label: METRICS.negative.label, num: true,
-                    tip: metricTip("negative"),
-                    val: (r) =>
-                      r.stats && r.stats.count > 0
-                        ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
-                        : null,
-                    render: (r) =>
-                      r.stats && r.stats.count > 0 ? (
-                        <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
-                          {pct(r.stats.framing.negative / r.stats.count)}
-                        </span>
-                      ) : ("—") },
-                ]}
-                rows={sr}
-              />
-            </div>
-          );
-        })}
+        {groups.map((g) => (
+          <BrandsGroup key={g.label ?? "all"} g={g} solo={solo} st={st}
+            onEvidence={onEvidence} />
+        ))}
       </div>
     </>
+  );
+}
+
+function BrandsGroup({
+  g, solo, st, onEvidence,
+}: {
+  g: Group;
+  solo: boolean;
+  st: WbState;
+  onEvidence?: (t: EvidenceTarget) => void;
+}) {
+  const m = g.m;
+  if (!m) return null;
+  if (solo) {
+    const one = g.series[0];
+    if (!one?.stats) return null;
+    return (
+      <div className="grid gap-4">
+        <GroupLabel label={g.label} />
+        <SoloVisibility s={one} />
+      </div>
+    );
+  }
+  const tp = (name: string) => m.topPicks?.find((t) => t.brand === name);
+  // First-named and SoV stay table-only; persisted state may still carry
+  // them as the chart measure from the old Visibility view.
+  const valOf = (x: Series[number]): number | null =>
+    !x.stats ? null
+    : st.measure === "recommended" ? x.stats.recommended
+    : st.measure === "chosen" ? x.stats.chosen
+    : st.measure === "share" ? (tp(x.name)?.shareOfDecided ?? 0)
+    : st.measure === "firstNamed" ? x.stats.firstNamed
+    : st.measure === "sov" ? x.stats.sov
+    : st.measure === "position" ? x.stats.avgRank
+    : x.stats.named;
+  const fmt = (v: number | null) =>
+    v === null ? "—" : st.measure === "position" ? `#${v.toFixed(1)}` : pct(v);
+  const chartRows = g.series.map((x) => ({
+    label: x.name, color: x.color, raw: valOf(x), right: fmt(valOf(x)),
+  }));
+  // Position charts as "closeness to the best": #1 fills the bar.
+  const best =
+    st.measure === "position"
+      ? Math.min(...chartRows.map((r) => r.raw ?? Infinity))
+      : null;
+  const strip = (o: {
+    pick: number;
+    conditional: number;
+    no_pick: number;
+    clarification: number;
+  }) => {
+    const total = o.pick + o.conditional + o.no_pick + o.clarification || 1;
+    return (
+      <div className="rounded-xl border border-line p-4">
+        <div className="section-label mb-2">
+          Decisiveness — committed = the answer crowned ONE product as its pick
+        </div>
+        <Tip tip={`${pct(o.conditional / total)} recommended different options for different situations · ${pct(o.no_pick / total)} explained the options without recommending · ${pct(o.clarification / total)} asked the user a question instead`}>
+          <div className="flex items-baseline gap-2 cursor-help">
+            <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
+            <span className="text-[12px] text-ink-3">
+              of answers committed to a pick
+            </span>
+          </div>
+        </Tip>
+        <div className="flex h-4 overflow-hidden rounded-md mt-1">
+          <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" />
+          <div style={{ width: `${(o.conditional / total) * 100}%` }} className="bg-primary/40" />
+          <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" />
+          <div style={{ width: `${(o.clarification / total) * 100}%` }} className="bg-warning/60" />
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="grid gap-4">
+      <GroupLabel label={g.label} />
+      {m.outcomes && strip(m.outcomes)}
+      <SeriesBars rows={chartRows.map((r) => ({
+        label: r.label,
+        color: r.color,
+        value:
+          st.measure === "position"
+            ? r.raw !== null && best !== null ? best / r.raw : null
+            : r.raw,
+        right: r.right,
+      }))} />
+      <SortTable
+        filename={`brands${g.label ? `_${slugify(g.label)}` : ""}.csv`}
+        defaultSort={{ id: "named", dir: -1 }}
+        onEvidence={onEvidence}
+        cols={[
+          { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
+            color: (r) => r.color,
+            render: (r) => <span className="font-medium">{r.name}</span> },
+          ...(st.showCounts
+            ? [{ id: "answers", label: METRICS.answers.label, num: true,
+                tip: metricTip("answers"),
+                val: (r: Series[number]) =>
+                  r.stats?.m.unbrandedResponses ?? null }]
+            : []),
+          { id: "named", label: METRICS.mentioned.label, num: true,
+            tip: metricTip("mentionedRate"),
+            val: (r) => r.stats ? Math.round(r.stats.named * 100) : null,
+            evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
+            render: (r) => (r.stats ? pct(r.stats.named) : "—") },
+          ...(st.showCounts
+            ? [{ id: "namedn", label: "Mentioned n", num: true,
+                val: (r: Series[number]) => r.stats?.count ?? null }]
+            : []),
+          ...(st.showCI
+            ? [{ id: "namedci", label: "Mentioned 95% CI", num: true,
+                val: (r: Series[number]) =>
+                  r.stats ? Math.round(r.stats.ciLow * 100) : null,
+                render: (r: Series[number]) =>
+                  r.stats ? `${pct(r.stats.ciLow)}–${pct(r.stats.ciHigh)}` : "—" }]
+            : []),
+          { id: "recommended", label: METRICS.recommended.label, num: true,
+            tip: metricTip("recommended"),
+            val: (r) => r.stats ? Math.round(r.stats.recommended * 100) : null,
+            evidence: (r) => (r.stats ? { metric: "recommended" as const, brand: r.name } : null),
+            render: (r) => (r.stats ? pct(r.stats.recommended) : "—") },
+          { id: "chosen", label: METRICS.chosen.label, num: true,
+            tip: metricTip("chosen"),
+            val: (r) => r.stats ? Math.round(r.stats.chosen * 100) : null,
+            evidence: (r) => (r.stats ? { metric: "chosen" as const, brand: r.name } : null),
+            render: (r) => (r.stats ? pct(r.stats.chosen) : "—") },
+          ...(st.showCounts
+            ? [{ id: "chosenn", label: "Chosen n", num: true,
+                val: (r: Series[number]) => r.stats?.m.firstPick?.count ?? null }]
+            : []),
+          ...(st.showCI
+            ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
+                val: (r: Series[number]) =>
+                  r.stats?.m.firstPick
+                    ? Math.round(r.stats.m.firstPick.ciLow * 100) : null,
+                render: (r: Series[number]) =>
+                  r.stats?.m.firstPick
+                    ? `${pct(r.stats.m.firstPick.ciLow)}–${pct(r.stats.m.firstPick.ciHigh)}`
+                    : "—" }]
+            : []),
+          { id: "picks", label: METRICS.picks.label, num: true,
+            tip: metricTip("picks"),
+            val: (r) => tp(r.name)?.picks ?? 0 },
+          { id: "share", label: METRICS.shareOfDecided.label, num: true,
+            tip: metricTip("shareOfDecided"),
+            val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
+            render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
+          { id: "fn", label: METRICS.firstNamed.label, num: true,
+            tip: metricTip("firstNamed"),
+            val: (r) =>
+              r.stats?.firstNamed !== null && r.stats
+                ? Math.round((r.stats.firstNamed ?? 0) * 100) : null,
+            render: (r) =>
+              r.stats?.firstNamed !== null && r.stats ? pct(r.stats.firstNamed!) : "—" },
+          { id: "sov", label: METRICS.shareOfVoice.label, num: true,
+            tip: metricTip("shareOfVoice"),
+            val: (r) => r.stats ? Math.round(r.stats.sov * 100) : null,
+            render: (r) => (r.stats ? pct(r.stats.sov) : "—") },
+          { id: "pos", label: METRICS.avgPosition.label, num: true,
+            tip: metricTip("avgPosition"),
+            val: (r) => r.stats?.avgRank ?? null,
+            render: (r) =>
+              r.stats?.avgRank ? `#${r.stats.avgRank.toFixed(1)}` : "—" },
+          { id: "neg", label: METRICS.negative.label, num: true,
+            tip: metricTip("negative"),
+            val: (r) =>
+              r.stats && r.stats.count > 0
+                ? Math.round((r.stats.framing.negative / r.stats.count) * 100)
+                : null,
+            render: (r) =>
+              r.stats && r.stats.count > 0 ? (
+                <span className={r.stats.framing.negative > 0 ? "text-danger" : ""}>
+                  {pct(r.stats.framing.negative / r.stats.count)}
+                </span>
+              ) : ("—") },
+        ]}
+        rows={g.series}
+      />
+    </div>
   );
 }
 
@@ -1019,197 +1100,6 @@ function SoloVisibility({ s }: { s: Series[number] }) {
         </div>
       )}
     </>
-  );
-}
-
-/* ---------------- Choice ---------------- */
-function Choice({ groups, st, onEvidence }: { groups: Group[]; st: WbState; onEvidence?: (t: EvidenceTarget) => void }) {
-  const [metric, setMetric] = useState<
-    "share" | "chosen" | "recommended" | "named"
-  >("share");
-  const metricDefs = [
-    ["share", METRICS.shareOfDecided.label],
-    ["chosen", METRICS.chosen.label],
-    ["recommended", METRICS.recommended.label],
-    ["named", METRICS.mentionedRate.label],
-  ] as const;
-
-  return (
-    <>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Chart
-        </span>
-        {metricDefs.map(([id, label]) => (
-          <button key={id} type="button" onClick={() => setMetric(id)}
-            className={`rounded-full border px-2.5 py-0.5 text-[12px] font-medium ${
-              metric === id
-                ? "border-[var(--color-primary)] bg-primary-soft text-primary"
-                : "border-line text-ink-3 hover:border-ink-3"
-            }`}>
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="grid gap-8">
-        {groups.map((g) => (
-          <ChoiceGroup key={g.label ?? "all"} g={g} metric={metric}
-            showCI={st.showCI} showCounts={st.showCounts}
-            onEvidence={onEvidence} />
-        ))}
-      </div>
-    </>
-  );
-}
-
-function ChoiceGroup({
-  g,
-  metric,
-  showCI,
-  showCounts,
-  onEvidence,
-}: {
-  g: Group;
-  metric: "share" | "chosen" | "recommended" | "named";
-  showCI: boolean;
-  showCounts: boolean;
-  onEvidence?: (t: EvidenceTarget) => void;
-}) {
-  const m = g.m;
-  if (!m) return null;
-  const tp = (name: string) => m.topPicks?.find((t) => t.brand === name);
-  const valFor = (x: Series[number]) => {
-    if (!x.stats) return null;
-    if (metric === "share") return tp(x.name)?.shareOfDecided ?? 0;
-    return metric === "chosen"
-      ? x.stats.chosen
-      : metric === "recommended"
-        ? x.stats.recommended
-        : x.stats.named;
-  };
-  const rows = [...g.series].sort((a, b) => (valFor(b) ?? 0) - (valFor(a) ?? 0));
-  const unselected =
-    metric === "share"
-      ? (m.topPicks ?? [])
-          .filter((t) => !g.series.some((x) => x.name === t.brand))
-          .slice(0, Math.max(0, 8 - g.series.length))
-      : [];
-  const maxV = Math.max(
-    ...rows.map((x) => valFor(x) ?? 0),
-    ...unselected.map((t) => t.shareOfDecided),
-    0.01
-  );
-  const strip = (o: {
-    pick: number;
-    conditional: number;
-    no_pick: number;
-    clarification: number;
-  }) => {
-    const total = o.pick + o.conditional + o.no_pick + o.clarification || 1;
-    return (
-      <div className="rounded-xl border border-line p-4">
-        <div className="section-label mb-2">
-          Decisiveness — committed = the answer crowned ONE product as its pick
-        </div>
-        <Tip tip={`${pct(o.conditional / total)} recommended different options for different situations · ${pct(o.no_pick / total)} explained the options without recommending · ${pct(o.clarification / total)} asked the user a question instead`}>
-          <div className="flex items-baseline gap-2 cursor-help">
-            <span className="text-xl font-semibold tabular-nums">{pct(o.pick / total)}</span>
-            <span className="text-[12px] text-ink-3">
-              of answers committed to a pick
-            </span>
-          </div>
-        </Tip>
-        <div className="flex h-4 overflow-hidden rounded-md mt-1">
-          <div style={{ width: `${(o.pick / total) * 100}%` }} className="bg-primary" />
-          <div style={{ width: `${(o.conditional / total) * 100}%` }} className="bg-primary/40" />
-          <div style={{ width: `${(o.no_pick / total) * 100}%` }} className="bg-neutral-bar" />
-          <div style={{ width: `${(o.clarification / total) * 100}%` }} className="bg-warning/60" />
-        </div>
-      </div>
-    );
-  };
-  return (
-    <div className="grid gap-4">
-      <GroupLabel label={g.label} />
-      {m.outcomes && strip(m.outcomes)}
-      <div className="grid gap-1.5">
-        {rows.map((x) => {
-          const v = valFor(x);
-          return (
-            <div key={x.name} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
-              <span className="truncate text-sm text-right font-medium" style={{ color: x.color }}>
-                {x.name}
-              </span>
-              <Bar w={(v ?? 0) / maxV} color={x.color} />
-              <span className="text-[13px] tabular-nums text-ink-2">
-                {v !== null ? pct(v) : "—"}
-              </span>
-            </div>
-          );
-        })}
-        {unselected.map((t) => (
-          <div key={t.brand} className="grid grid-cols-[10rem_1fr_9rem] items-center gap-3">
-            <span className="truncate text-sm text-right text-ink-3">{t.brand}</span>
-            <Bar w={t.shareOfDecided / maxV} color="var(--color-neutral-bar, #c3ced4)" />
-            <span className="text-[13px] tabular-nums text-ink-3">
-              {t.picks} picks · {pct(t.shareOfDecided)}
-            </span>
-          </div>
-        ))}
-      </div>
-      <SortTable
-        filename={`choice${g.label ? `_${slugify(g.label)}` : ""}.csv`}
-        defaultSort={{ id: "share", dir: -1 }}
-        cols={[
-          { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
-            color: (r) => r.color,
-            render: (r) => <span className="font-medium">{r.name}</span> },
-          { id: "named", label: METRICS.mentioned.label, num: true,
-            tip: metricTip("mentionedRate"),
-            val: (r) => (r.stats ? Math.round(r.stats.named * 100) : null),
-            evidence: (r) => (r.stats ? { metric: "mentioned" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.named) : "—") },
-          { id: "recommended", label: METRICS.recommended.label, num: true,
-            tip: metricTip("recommended"),
-            val: (r) => (r.stats ? Math.round(r.stats.recommended * 100) : null),
-            evidence: (r) => (r.stats ? { metric: "recommended" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.recommended) : "—") },
-          { id: "chosen", label: METRICS.chosen.label, num: true,
-            tip: metricTip("chosen"),
-            val: (r) => (r.stats ? Math.round(r.stats.chosen * 100) : null),
-            evidence: (r) => (r.stats ? { metric: "chosen" as const, brand: r.name } : null),
-            render: (r) => (r.stats ? pct(r.stats.chosen) : "—") },
-          ...(showCI
-            ? [{ id: "chosenci", label: "Chosen 95% CI", num: true,
-                val: (r: Series[number]) =>
-                  r.stats?.m.firstPick
-                    ? Math.round(r.stats.m.firstPick.ciLow * 100) : null,
-                render: (r: Series[number]) =>
-                  r.stats?.m.firstPick
-                    ? `${pct(r.stats.m.firstPick.ciLow)}–${pct(r.stats.m.firstPick.ciHigh)}`
-                    : "—" }]
-            : []),
-          ...(showCounts
-            ? [
-                { id: "coded", label: METRICS.answers.label, num: true,
-                  tip: metricTip("answers"),
-                  val: (r: Series[number]) => r.stats?.m.unbrandedResponses ?? null },
-                { id: "chosenn", label: "Chosen n", num: true,
-                  val: (r: Series[number]) => r.stats?.m.firstPick?.count ?? null },
-              ]
-            : []),
-          { id: "picks", label: METRICS.picks.label, num: true,
-            tip: metricTip("picks"),
-            val: (r) => tp(r.name)?.picks ?? 0 },
-          { id: "share", label: METRICS.shareOfDecided.label, num: true,
-            tip: metricTip("shareOfDecided"),
-            val: (r) => Math.round((tp(r.name)?.shareOfDecided ?? 0) * 100),
-            render: (r) => pct(tp(r.name)?.shareOfDecided ?? 0) },
-        ]}
-        rows={g.series}
-        onEvidence={onEvidence}
-      />
-    </div>
   );
 }
 

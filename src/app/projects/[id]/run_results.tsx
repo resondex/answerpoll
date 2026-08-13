@@ -44,7 +44,7 @@ export default function RunResults({
   const [view, setView] = useState<
     "brief" | "boardroom" | "workbench" | "questions"
   >("brief");
-  const [workbenchTab, setWorkbenchTab] = useState<string>("visibility");
+  const [workbenchTab, setWorkbenchTab] = useState<string>("brands");
   useEffect(() => {
     const saved = window.localStorage.getItem("answerpoll_view");
     if (
@@ -143,17 +143,17 @@ export default function RunResults({
     };
     switch (key) {
       case "engines":
-        return ["visibility", { ...solo, split: "engine" }];
+        return ["brands", { ...solo, split: "engine" }];
       case "modes":
-        return ["visibility", { ...solo, split: "mode" }];
+        return ["brands", { ...solo, split: "mode" }];
       case "top_picks":
-        return ["choice", { ...solo, brandMode: "comparative", compBrands: [] }];
+        return ["brands", { ...solo, brandMode: "comparative", compBrands: [], measure: "share" }];
       case "arguments":
         return ["why", solo];
       case "leaderboard":
-        return ["visibility", { ...solo, brandMode: "comparative", compBrands: [], measure: "named" }];
+        return ["brands", { ...solo, brandMode: "comparative", compBrands: [], measure: "named" }];
       case "parents":
-        return ["visibility", { ...solo, grain: "parents" }];
+        return ["brands", { ...solo, grain: "parents" }];
       case "prompts":
         return ["battleground", solo];
       case "negatives":
@@ -161,7 +161,7 @@ export default function RunResults({
       case "sources":
         return ["sources", { ...solo, split: "none" }];
       default:
-        return ["visibility", solo];
+        return ["brands", solo];
     }
   };
   const notesFor = (key: string) =>

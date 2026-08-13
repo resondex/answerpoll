@@ -128,7 +128,7 @@ export function BoardroomView({
             : "."}
         </p>
         <Note sentences={notesFor(insights, "scorecard").slice(0, 1)} />
-        <button type="button" onClick={() => openWorkbench("visibility", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
+        <button type="button" onClick={() => openWorkbench("brands", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
           className="mt-1 w-fit text-[13px] font-semibold text-primary hover:opacity-80">
           Verify in Workbench ↗
         </button>
@@ -172,7 +172,7 @@ export function BoardroomView({
         <p className="text-[13px] text-ink-3 text-center mt-5">
           Mentioned → recommended → chosen, all of the same {metrics.unbrandedResponses}{" "}
           answers. The drop between stages says what kind of problem you have.{" "}
-          <button type="button" onClick={() => openWorkbench("choice", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
+          <button type="button" onClick={() => openWorkbench("brands", { brandMode: "solo", soloBrand: project.brand, grain: "brands", split: "none", engines: [] })}
             className="font-semibold text-primary hover:opacity-80">
             Verify ↗
           </button>
@@ -271,7 +271,7 @@ export function QuestionsView({
 
   return (
     <div className="grid gap-4">
-      <Q n={1} q="Do the AIs know you?" tab="visibility">
+      <Q n={1} q="Do the AIs know you?" tab="brands">
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {pct(target.mentionRate)}
@@ -286,7 +286,7 @@ export function QuestionsView({
         <Note sentences={notesFor(insights, "scorecard").slice(0, 2)} />
       </Q>
 
-      <Q n={2} q="Do they choose you?" tab="choice" preset={{ ...soloPreset, split: "mode" }}>
+      <Q n={2} q="Do they choose you?" tab="brands" preset={{ ...soloPreset, split: "mode" }}>
         <div className="flex items-baseline gap-3 flex-wrap">
           <span className="text-4xl font-semibold tabular-nums text-primary">
             {metrics.firstPick ? pct(metrics.firstPick.rate) : "—"}
