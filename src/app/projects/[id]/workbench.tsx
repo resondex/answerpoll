@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, RunMetrics } from "@/lib/types";
 import { METRICS, metricTip } from "@/lib/metrics_dictionary";
 import EvidenceDrawer from "./evidence_drawer";
@@ -1503,11 +1503,11 @@ function BattlegroundGroup({
           </thead>
           <tbody>
             {themes.map((theme) => (
-              <>
+              <Fragment key={theme ?? "all"}>
                 {theme && (
-                  <tr key={`t-${theme}`} className="bg-primary-soft/20">
+                  <tr className="bg-primary-soft/20">
                     <td colSpan={2} className="py-1.5 pr-4 text-[11px] font-semibold uppercase tracking-wide text-primary">
-                      {theme.replace("_", " ")} — named rate at topic grain
+                      {theme.replace("_", " ")} — mentioned rate at topic grain
                     </td>
                     {series.map((x) => {
                       const th = x.stats?.m.themes.find((t) => t.theme === theme);
@@ -1543,7 +1543,7 @@ function BattlegroundGroup({
                       ))}
                     </tr>
                   ))}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
