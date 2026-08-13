@@ -78,20 +78,28 @@ export default function LoginPage() {
     <div className="max-w-md mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight mb-2">Sign in</h1>
       <p className="text-sm text-ink-2 mb-6">
-        One email, two ways in: click the link, or type the passcode.
-        Passwords stay out of the picture.
+        We email you a sign-in link — no password to remember.
       </p>
       {sent ? (
         <div className="card p-6 grid gap-4">
           <div className="text-sm leading-relaxed">
             <p className="font-semibold mb-1">Check your email.</p>
             <p className="text-ink-2">
-              We sent a sign-in email to{" "}
-              <span className="font-medium">{email}</span>. Click its link, or
-              enter the 6-digit passcode here:
+              We sent a sign-in link to{" "}
+              <span className="font-medium">{email}</span>. Open it on this
+              device and you&apos;re in.
             </p>
           </div>
-          <form onSubmit={verifyCode} className="grid gap-3">
+          {/* Whether the email carries a passcode as well as a link is decided
+              by the Supabase email template, which cannot be edited on the
+              built-in mail service. Leading with the code box asked people for
+              something the email did not contain, so the passcode is now a
+              fallback the reader opens only if they actually have one. */}
+          <details className="text-sm">
+            <summary className="cursor-pointer text-ink-3 hover:text-ink">
+              Email included a 6-digit code?
+            </summary>
+          <form onSubmit={verifyCode} className="grid gap-3 mt-3">
             <input
               inputMode="numeric"
               autoComplete="one-time-code"
@@ -101,7 +109,6 @@ export default function LoginPage() {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
               placeholder="••••••"
-              autoFocus
             />
             {error && <p className="text-sm text-danger">{error}</p>}
             <div className="flex items-center gap-4">
@@ -112,19 +119,20 @@ export default function LoginPage() {
               >
                 {busy ? "Verifying…" : "Sign in"}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSent(false);
-                  setCode("");
-                  setError(null);
-                }}
-                className="text-sm text-ink-3 hover:text-ink"
-              >
-                use a different email
-              </button>
             </div>
           </form>
+          </details>
+          <button
+            type="button"
+            onClick={() => {
+              setSent(false);
+              setCode("");
+              setError(null);
+            }}
+            className="text-sm text-ink-3 hover:text-ink w-fit"
+          >
+            use a different email
+          </button>
         </div>
       ) : (
         <form onSubmit={sendCode} className="card p-6 grid gap-4">
@@ -141,7 +149,7 @@ export default function LoginPage() {
           </label>
           {error && <p className="text-sm text-danger">{error}</p>}
           <button type="submit" disabled={busy} className="btn-primary w-fit">
-            {busy ? "Sending…" : "Email me a sign-in code"}
+            {busy ? "Sending…" : "Email me a sign-in link"}
           </button>
         </form>
       )}
