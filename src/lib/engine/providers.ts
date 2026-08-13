@@ -15,7 +15,9 @@ export interface CompletionProvider {
     responseText: string,
     ctx: ExtractionContext,
     /** Override the coder for evaluation; production uses EXTRACT_MODEL. */
-    model?: string
+    model?: string,
+    /** Consensus runs the focus read once for both coders. */
+    skipFocus?: boolean
   ): Promise<ExtractionResult>;
 }
 
@@ -382,7 +384,8 @@ function codingInstructions(ctx: ExtractionContext): string {
 async function codeWithClaude(
   responseText: string,
   ctx: ExtractionContext,
-  model: string
+  model: string,
+  skipFocus?: boolean
 ): Promise<ExtractionResult> {
   const a = await anthropicClient();
   const schema = extractSchema(ctx.reasonCodes);
@@ -411,6 +414,7 @@ async function codeWithClaude(
   let focusQuote: string | null = null;
   let focusInterpretation: string | null = null;
   try {
+    if (skipFocus) throw new Error("skip");
     const f = await a.messages.create({
       model,
       max_tokens: 400,
@@ -465,10 +469,10 @@ const openaiProvider: CompletionProvider = {
     });
   },
 
-  async extractCoding(responseText, ctx, model) {
+  async extractCoding(responseText, ctx, model, skipFocus) {
     const coder = model ?? EXTRACT_MODEL;
     if (coder.startsWith("claude")) {
-      return codeWithClaude(responseText, ctx, coder);
+      return codeWithClaude(responseText, ctx, coder, skipFocus);
     }
     return withRetry(async () => {
       const res = await client().chat.completions.create({
@@ -500,6 +504,7 @@ codingInstructions(ctx),
       let focusQuote: string | null = null;
       let focusInterpretation: string | null = null;
       try {
+        if (skipFocus) throw new Error("skip");
         const f = await client().chat.completions.create({
           model: coder,
           messages: [
@@ -587,12 +592,25 @@ export async function extractCodingConsensus(
   ctx: ExtractionContext
 ): Promise<ConsensusResult> {
   const provider = getProvider();
-  const [a, b] = await Promise.all([
-    provider.extractCoding(responseText, ctx, CODER_A),
-    provider.extractCoding(responseText, ctx, CODER_B).catch(() => null),
+  // Three calls in flight at once rather than four in sequence: each coder
+  // used to make its own focus read, so the same quote was extracted twice
+  // and every answer paid for two serial round trips it did not need.
+  const [a, b, focus] = await Promise.all([
+    provider.extractCoding(responseText, ctx, CODER_A, true),
+    provider.extractCoding(responseText, ctx, CODER_B, true).catch(() => null),
+    readFocus(responseText, ctx).catch(() => ({
+      focus_quote: null,
+      focus_interpretation: null,
+    })),
   ]);
   if (!b) {
-    return { ...a, coderProvenance: `${CODER_A} (solo)`, disagreements: [] };
+    return {
+      ...a,
+      focus_quote: focus.focus_quote,
+      focus_interpretation: focus.focus_interpretation,
+      coderProvenance: `${CODER_A} (solo)`,
+      disagreements: [],
+    };
   }
   const sameBrand = (x: string | null, y: string | null) =>
     (x ?? "").trim().toLowerCase() === (y ?? "").trim().toLowerCase();
@@ -642,8 +660,53 @@ export async function extractCodingConsensus(
       (a.total_recommendations + b.total_recommendations) / 2
     ),
     reasons: [...new Set([...(a.reasons ?? []), ...(b.reasons ?? [])])],
+    focus_quote: focus.focus_quote,
+    focus_interpretation: focus.focus_interpretation,
     coderProvenance: provenance,
     disagreements,
+  };
+}
+
+/** One focus read per answer, shared by both coders. */
+async function readFocus(
+  responseText: string,
+  ctx: ExtractionContext
+): Promise<{ focus_quote: string | null; focus_interpretation: string | null }> {
+  const res = await client().chat.completions.create({
+    model: CODER_A,
+    messages: [
+      {
+        role: "system",
+        content:
+          `Read this AI assistant answer and report how it treats ` +
+          `"${ctx.targetBrand}". focus_quote: one verbatim sentence (max 200 ` +
+          `chars) about that brand, or null if it never appears. ` +
+          `focus_interpretation: one plain sentence on how the answer ` +
+          `positions it, or null if absent. Quote exactly.`,
+      },
+      { role: "user", content: responseText },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "focus_read",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            focus_quote: { type: ["string", "null"] },
+            focus_interpretation: { type: ["string", "null"] },
+          },
+          required: ["focus_quote", "focus_interpretation"],
+        },
+      },
+    },
+  });
+  const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}");
+  return {
+    focus_quote: parsed.focus_quote ?? null,
+    focus_interpretation: parsed.focus_interpretation ?? null,
   };
 }
 

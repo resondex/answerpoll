@@ -9,7 +9,10 @@ import { analyzePromptHealth } from "./prompt_health";
 import { classifyNonBrands } from "./suggest";
 import { getDictionarySuggestions } from "./dict_suggest";
 
-const CONCURRENCY = 4;
+// Sized when a run sampled one engine from one vendor. A six-engine panel
+// spreads across four vendors, so 4 global slots left each vendor running
+// roughly one request at a time while the rest of the run waited.
+const CONCURRENCY = Number(process.env.RUN_CONCURRENCY ?? 16);
 
 // Serverless functions cap at maxDuration=300s; leave headroom for in-flight
 // completions to finish and the chain handoff to fire.
