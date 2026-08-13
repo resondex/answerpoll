@@ -688,11 +688,41 @@ function assertSecondCoderHealthy(): void {
   }
 }
 
+/**
+ * Evaluation lever: when EXTRACT_SOLO names a model, that one model codes each
+ * answer alone instead of the two-coder-plus-adjudicator consensus. The focus
+ * read stays a SEPARATE call regardless — folding it in would name the brand
+ * under study in the same prompt that decides the crown, which is the exact
+ * contamination the blind judgement pass exists to prevent.
+ */
+const SOLO_CODER = process.env.EXTRACT_SOLO ?? "";
+
 export async function extractCodingConsensus(
   responseText: string,
   ctx: ExtractionContext
 ): Promise<ConsensusResult> {
   const provider = getProvider();
+  if (SOLO_CODER) {
+    const [only, focus] = await Promise.all([
+      provider.extractCoding(responseText, ctx, SOLO_CODER, true),
+      readFocus(responseText, ctx).catch(() => ({
+        focus_quote: null,
+        focus_interpretation: null,
+      })),
+    ]);
+    return {
+      ...only,
+      top_pick_brand: singleBrand(
+        only.outcome === "pick" ? only.top_pick_brand : null,
+        only.mentions,
+        ctx.knownBrands
+      ),
+      focus_quote: focus.focus_quote,
+      focus_interpretation: focus.focus_interpretation,
+      coderProvenance: `${SOLO_CODER} (solo-eval)`,
+      disagreements: [],
+    };
+  }
   // Three calls in flight at once rather than four in sequence: each coder
   // used to make its own focus read, so the same quote was extracted twice
   // and every answer paid for two serial round trips it did not need.
