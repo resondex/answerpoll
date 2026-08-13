@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPlanFor, requireAuth, requireRun } from "@/lib/auth";
-import { computeRunMetrics } from "@/lib/engine/metrics";
+import { computeSlicesCached } from "@/lib/engine/slice_cache";
 
 export async function GET(
   req: Request,
@@ -28,10 +28,15 @@ export async function GET(
       .map((e) => e.trim())
       .filter(Boolean)
       .slice(0, 20) || undefined;
-  const metrics = await computeRunMetrics(
-    id,
-    mode || focus || engines ? { mode, focus, engines } : undefined
-  );
+  // Same two-level cache as the slices route — the default (unsliced) view
+  // is just the slice with empty opts.
+  const slices = await computeSlicesCached(loaded.run, loaded.project, [
+    { key: "m", opts: { mode, focus, engines } },
+  ]);
+  const metrics = slices["m"];
+  if (!metrics) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
   const plan = await getPlanFor(auth);
   return NextResponse.json({ metrics, project: loaded.project, plan });
 }

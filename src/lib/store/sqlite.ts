@@ -662,6 +662,24 @@ export const sqliteStore: Store = {
       .run(key, value);
   },
 
+  async cachePurge(prefix, keep) {
+    getDb()
+      .prepare("DELETE FROM llm_cache WHERE key LIKE ? AND key NOT LIKE ?")
+      .run(prefix + "%", keep + "%");
+  },
+
+  async labelsRevisionForRun(runId) {
+    const row = getDb()
+      .prepare(
+        `SELECT count(*) AS n, coalesce(max(l.created_at), '0') AS m
+         FROM answer_labels l
+         JOIN responses r ON r.id = l.response_id
+         WHERE r.run_id = ?`
+      )
+      .get(runId) as { n: number; m: string } | undefined;
+    return `${row?.n ?? 0}:${row?.m ?? "0"}`;
+  },
+
   async saveSetupDraft(input) {
     const id = input.id ?? crypto.randomUUID();
     getDb()

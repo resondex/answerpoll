@@ -539,10 +539,17 @@ export interface Store {
     labeledBy: string | null;
   }): Promise<void>;
   listLabelsForRun(runId: string): Promise<AnswerLabel[]>;
+  /** Cheap fingerprint of this run's human labels — changes on any label
+   * write (upserts refresh created_at), so cache keys built on it stay
+   * correct without invalidation hooks. */
+  labelsRevisionForRun(runId: string): Promise<string>;
   getPlan(userId: string): Promise<Plan>;
   /** Cached value no older than maxAgeMs, else null. */
   cacheGet(key: string, maxAgeMs: number): Promise<string | null>;
   cacheSet(key: string, value: string): Promise<void>;
+  /** Delete cache rows matching prefix except those matching keep — used to
+   * drop a run's stale slice snapshots when its cache key generation moves. */
+  cachePurge(prefix: string, keep: string): Promise<void>;
   saveSetupDraft(input: {
     id: string | null;
     userId: string | null;

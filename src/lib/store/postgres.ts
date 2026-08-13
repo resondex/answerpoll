@@ -492,6 +492,22 @@ export const pgStore: Store = {
     return (rows[0]?.value as string | undefined) ?? null;
   },
 
+  async cachePurge(prefix, keep) {
+    const sql = await db();
+    await sql`DELETE FROM llm_cache
+      WHERE key LIKE ${prefix + "%"} AND key NOT LIKE ${keep + "%"}`;
+  },
+
+  async labelsRevisionForRun(runId) {
+    const sql = await db();
+    const rows = await sql`SELECT count(*)::int AS n,
+        coalesce(max(l.created_at)::text, '0') AS m
+      FROM answer_labels l
+      JOIN responses r ON r.id = l.response_id
+      WHERE r.run_id = ${runId}`;
+    return `${rows[0]?.n ?? 0}:${rows[0]?.m ?? "0"}`;
+  },
+
   async cacheSet(key, value) {
     const sql = await db();
     await sql`INSERT INTO llm_cache (key, value, created_at)
