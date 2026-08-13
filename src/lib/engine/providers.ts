@@ -358,22 +358,25 @@ function codingInstructions(ctx: ExtractionContext): string {
     "is merely listed, compared factually, or named as an " +
     "integration. Being included in a list is NOT an endorsement.\n" +
     "outcome — exactly one of four. Decide by what the answer DECIDES, " +
-    "never by whether it asks a question at the end. Test in order:\n" +
-    "  'clarification' — it gives no usable recommendation at all and " +
-    "asks for the reader's details first. No shortlist, nothing ranked.\n" +
-    "  'no_pick' — it lays out options but recommends none, or says " +
-    "nothing here fits.\n" +
-    "  'conditional' — its recommendation depends on the reader's " +
-    "situation: different options for different cases ('X for " +
-    "enterprises, Y for startups'), or two co-equal finalists with no " +
-    "overall leader.\n" +
-    "  'pick' — one option leads overall. This INCLUDES 'the strongest " +
-    "default choice is X', 'if you want one recommendation, X', or a " +
-    "clear front-runner presented first and most strongly — even when " +
-    "the answer also lists alternatives, adds caveats, or asks a " +
-    "follow-up question afterwards. Naming a single front-runner and " +
-    "then qualifying it is still a pick. Having no front-runner is not " +
-    "a pick, however long one brand's write-up is.\n" +
+    "never by whether it asks a question at the end.\n" +
+    "  THE TEST — apply it literally, do not weigh emphasis or tone: " +
+    "could a reader who saw ONLY this answer act on it right now and buy " +
+    "ONE named product, WITHOUT first having to decide something about " +
+    "their own situation (their size, budget, stack, or scale)?\n" +
+    "  YES, one product is named as what to do → 'pick'. This holds even " +
+    "when the answer then lists alternatives, adds caveats, or asks a " +
+    "follow-up question. A stated default with exceptions after it is a " +
+    "pick, and the default is the top_pick.\n" +
+    "  NO, the reader must first classify themselves before the answer " +
+    "tells them what to buy → 'conditional'. Branches with no stated " +
+    "default ('X for enterprises, Y for startups'), or two finalists " +
+    "presented as equals, are conditional.\n" +
+    "  NO, and the answer names no way forward at all until the reader " +
+    "supplies details → 'clarification'. Nothing ranked, no shortlist.\n" +
+    "  NO, and it lays out options while recommending none and routing " +
+    "to none → 'no_pick'.\n" +
+    "  A long or enthusiastic write-up is not by itself a pick: if the " +
+    "answer never says what to do, the test fails.\n" +
     "top_pick_brand — the ONE brand that leads. MUST be null unless " +
     "outcome is 'pick', and MUST be a single brand name written exactly " +
     "as the answer writes it — never two names joined by 'or', '+', '/' " +
@@ -884,18 +887,19 @@ async function adjudicate(
     max_tokens: 500,
     system:
       "Two coders disagree about one AI answer. Decide from the text alone. " +
-      "outcome, tested in order: 'clarification' when it gives no usable " +
-      "recommendation at all and asks for the reader's details first; " +
-      "'no_pick' when it lays out options but recommends none; " +
-      "'conditional' when the recommendation depends on the reader's " +
-      "situation, or two finalists are co-equal with no overall leader; " +
-      "'pick' when one option leads overall — including 'the strongest " +
-      "default is X' or a clear front-runner presented first and most " +
-      "strongly, even if alternatives, caveats, or a follow-up question " +
-      "follow it. Asking a question at the end never by itself makes an " +
-      "answer 'clarification'. top_pick_brand is null unless outcome is " +
-      "'pick', and must be ONE brand name — never two joined by 'or', " +
-      "'+', '/' or a parenthetical.",
+      "outcome — apply this test literally, do not weigh emphasis or " +
+      "tone: could a reader who saw ONLY this answer act on it right now " +
+      "and buy ONE named product, without first having to decide " +
+      "something about their own size, budget, stack, or scale? YES, one " +
+      "product is named as what to do → 'pick', even if alternatives, " +
+      "caveats, or a follow-up question follow it; a stated default with " +
+      "exceptions after it is a pick. NO, the reader must classify " +
+      "themselves first → 'conditional'. NO, and no way forward is named " +
+      "at all until they supply details → 'clarification'. NO, and it " +
+      "recommends none and routes to none → 'no_pick'. A long or " +
+      "enthusiastic write-up is not by itself a pick. top_pick_brand is " +
+      "null unless outcome is 'pick', and must be ONE brand name — never " +
+      "two joined by 'or', '+', '/' or a parenthetical.",
     tools: [
       {
         name: "settle",
