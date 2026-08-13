@@ -61,13 +61,39 @@ export function dictionaryRoles(
   const byNorm = new Map<string, "competitor" | "emerged">();
   for (const e of entries) {
     if (e.status !== "active" || !e.role) continue;
-    byNorm.set(e.canonical.trim().toLowerCase(), e.role);
+    // Key through the canonicalizer so these agree with the lookup below —
+    // raw lowercase and the fossilized identity are different key spaces.
+    byNorm.set(canon.norm(e.canonical), e.role);
   }
   return (raw: string) => {
     const norm = canon.norm(raw);
     if (norm === targetNorm) return "target";
     return byNorm.get(norm) ?? (legacy.has(norm) ? "competitor" : "emerged");
   };
+}
+
+/**
+ * The key two spellings must share to be the same brand. Case, punctuation,
+ * spacing, accents, and symbols are noise an assistant varies freely — "Jira",
+ * "jira.", "Click-Up", "ClickUp" and "Café" / "Cafe" are one brand each, and
+ * matching on the raw lowercase string fragmented them into several.
+ *
+ * NFD (not NFKD) on purpose: NFKD expands "™" to the letters "TM", which would
+ * fuse into the key instead of being dropped as a symbol.
+ *
+ * Deliberately conservative — it never strips words, so "Jira" and "Jira
+ * Software" stay distinct. Merging those is a judgement call that belongs to
+ * the dictionary's aliases, not to normalization.
+ */
+export function matchKey(raw: string): string {
+  const key = raw
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  // A name made entirely of symbols would collapse to nothing and merge with
+  // every other such name; keep it distinguishable instead.
+  return key || raw.trim().toLowerCase();
 }
 
 export function buildCanonicalizer(entries: DictionaryEntry[]) {
@@ -82,22 +108,22 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
         canonical: e.canonical,
         display: e.display_name ?? e.canonical,
       };
-      aliasMap.set(e.canonical.trim().toLowerCase(), value);
-      for (const a of e.aliases) aliasMap.set(a.trim().toLowerCase(), value);
+      aliasMap.set(matchKey(e.canonical), value);
+      for (const a of e.aliases) aliasMap.set(matchKey(a), value);
     } else if (e.status === "rejected") {
-      rejectedSet.add(e.canonical.trim().toLowerCase());
-      for (const a of e.aliases) rejectedSet.add(a.trim().toLowerCase());
+      rejectedSet.add(matchKey(e.canonical));
+      for (const a of e.aliases) rejectedSet.add(matchKey(a));
     }
   }
   return {
     /** User-facing label for a raw extracted name. */
     canonical(raw: string): string {
-      return aliasMap.get(raw.trim().toLowerCase())?.display ?? raw.trim();
+      return aliasMap.get(matchKey(raw))?.display ?? raw.trim();
     },
     /** Stable identity key — from the fossilized canonical, never the label. */
     norm(raw: string): string {
-      const hit = aliasMap.get(raw.trim().toLowerCase());
-      return (hit?.canonical ?? raw).trim().toLowerCase();
+      const hit = aliasMap.get(matchKey(raw));
+      return matchKey(hit?.canonical ?? raw);
     },
     /**
      * Rejected = reviewed and ruled out of the category. Suppressed from
@@ -106,7 +132,7 @@ export function buildCanonicalizer(entries: DictionaryEntry[]) {
      * aliases of their target, not as rejections).
      */
     isRejected(raw: string): boolean {
-      const key = raw.trim().toLowerCase();
+      const key = matchKey(raw);
       return !aliasMap.has(key) && rejectedSet.has(key);
     },
   };

@@ -76,7 +76,7 @@ export async function buildStudyBundle(
 
   // First-named: the target is the first brand in the answer.
   const firstNamed = unbranded.filter(
-    (r) => mentionsByResponse.get(r.id)?.[0]?.brand_norm === targetNorm
+    (r) => canon.norm(mentionsByResponse.get(r.id)?.[0]?.brand ?? "") === targetNorm
   );
   const fnRate = unbranded.length > 0 ? firstNamed.length / unbranded.length : 0;
   const fnCi = wilson(firstNamed.length, unbranded.length);
@@ -131,13 +131,13 @@ export async function buildStudyBundle(
     const info = promptById.get(p.id)!;
     const rows = responses.filter((r) => r.prompt_id === p.id);
     const named = rows.filter((r) =>
-      mentionsByResponse.get(r.id)?.some((m) => m.brand_norm === targetNorm)
+      mentionsByResponse.get(r.id)?.some((m) => canon.norm(m.brand) === targetNorm)
     );
     const first = rows.filter(
-      (r) => mentionsByResponse.get(r.id)?.[0]?.brand_norm === targetNorm
+      (r) => canon.norm(mentionsByResponse.get(r.id)?.[0]?.brand ?? "") === targetNorm
     );
     const ranks = named
-      .map((r) => mentionsByResponse.get(r.id)!.find((m) => m.brand_norm === targetNorm)!.rank);
+      .map((r) => mentionsByResponse.get(r.id)!.find((m) => canon.norm(m.brand) === targetNorm)!.rank);
     gridRows.push([
       promptCode(info.idx), p.theme, p.text, rows.length, named.length,
       rows.length ? (named.length / rows.length).toFixed(2) : null,
@@ -229,13 +229,13 @@ export async function buildStudyBundle(
   for (const r of responses) {
     const p = promptById.get(r.prompt_id)!;
     const ms = mentionsByResponse.get(r.id) ?? [];
-    const tm = ms.find((m) => m.brand_norm === targetNorm);
+    const tm = ms.find((m) => canon.norm(m.brand) === targetNorm);
     masterRows.push([
       r.id, run.id, stamp, r.model || run.model, engineMode(r.model || run.model),
       r.finish_reason,
       r.coder_model, r.citations?.length ?? 0, r.search_count, promptCode(p.idx), p.theme, p.text,
       r.repeat_idx, r.text.split(/\s+/).length,
-      tm ? 1 : 0, ms[0]?.brand_norm === targetNorm ? 1 : 0, tm?.rank ?? null,
+      tm ? 1 : 0, canon.norm(ms[0]?.brand ?? "") === targetNorm ? 1 : 0, tm?.rank ?? null,
       ms[0]?.brand ?? null, ms.length, ms.map((m) => m.brand).join("|"),
       ms.filter((m) => m.framing === "recommended").map((m) => m.brand).join("|"),
       ms.filter((m) => m.framing === "negative").map((m) => m.brand).join("|"),
@@ -309,7 +309,7 @@ export async function buildStudyBundle(
         "",
         "## Brands named, in order",
         ms.length
-          ? ms.map((m) => `${m.rank}. ${m.brand} (${brandType(m.brand_norm)}, ${m.framing})`).join("\n")
+          ? ms.map((m) => `${m.rank}. ${m.brand} (${brandType(m.brand)}, ${m.framing})`).join("\n")
           : "_none_",
         "",
         "## Answer",

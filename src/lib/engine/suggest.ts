@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { openaiClient } from "./providers";
 import { store } from "../store";
 import { generatePromptBattery, type PromptSpec } from "./prompts";
+import { matchKey } from "./metrics";
 
 const SUGGEST_MODEL = process.env.SUGGEST_MODEL ?? "gpt-5-mini";
 const CACHE_TTL_MS = 183 * 24 * 3600 * 1000; // ~6 months
@@ -153,15 +154,14 @@ export async function seedDictionary(
   projectId: string,
   brands: string[]
 ): Promise<void> {
-  const targetNorm = brands[0]?.trim().toLowerCase();
-  let entries: { canonical: string; aliases: string[] }[] = brands.map(
-    (b) => ({ canonical: b, aliases: [] })
-  );
+  const targetKey = matchKey(brands[0] ?? "");
+  const brandKeys = new Set(brands.map(matchKey));
+  let suggested: { canonical: string; aliases: string[] }[] = [];
   try {
     const key = cacheKey("aliases", [[...brands].sort().join(",")]);
     const hit = await store.cacheGet(key, CACHE_TTL_MS);
     if (hit) {
-      entries = JSON.parse(hit);
+      suggested = JSON.parse(hit);
     } else {
       const res = await openaiClient().chat.completions.create({
         model: SUGGEST_MODEL,
@@ -181,21 +181,49 @@ export async function seedDictionary(
           json_schema: { name: "aliases", strict: true, schema: ALIAS_SCHEMA },
         },
       });
-      entries = JSON.parse(
+      suggested = JSON.parse(
         res.choices[0]?.message?.content ?? '{"entries":[]}'
       ).entries;
-      await store.cacheSet(key, JSON.stringify(entries));
+      await store.cacheSet(key, JSON.stringify(suggested));
     }
   } catch (err) {
     console.error("alias seeding fell back to bare entries:", err);
   }
+
+  // The model supplies aliases FOR the brands we asked about — it never gets
+  // to decide the brand list. Building from `brands` means a brand the model
+  // drops or renames still gets its entry; previously the model's reply
+  // replaced the list wholesale, and a dropped competitor silently lost its
+  // dictionary entry and read as an emerged brand in every later run.
+  const entries = brands.map((b) => {
+    const key = matchKey(b);
+    const hit = suggested.find(
+      (s) =>
+        matchKey(s.canonical) === key ||
+        s.aliases.some((a) => matchKey(a) === key)
+    );
+    // A renamed canonical ("Jira" → "Atlassian Jira") is itself just another
+    // alias of the brand as the user typed it.
+    const raw = [...(hit?.aliases ?? []), ...(hit ? [hit.canonical] : [])];
+    const aliases = [
+      ...new Set(
+        raw
+          .map((a) => a.trim().toLowerCase())
+          .filter((a) => a && matchKey(a) !== key)
+          // Never let one tracked brand swallow another: the model
+          // occasionally offers a parent or sibling brand as an alias.
+          .filter((a) => !brandKeys.has(matchKey(a)))
+      ),
+    ];
+    return { canonical: b, aliases };
+  });
+
   await store.insertDictionaryEntries(
     projectId,
     entries.map((e) => ({
       canonical: e.canonical,
-      aliases: e.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean),
-      role:
-        e.canonical.trim().toLowerCase() === targetNorm ? null : "competitor",
+      aliases: e.aliases,
+      role: matchKey(e.canonical) === targetKey ? null : "competitor",
     }))
   );
 }
