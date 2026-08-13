@@ -105,8 +105,8 @@ export function verifyStudy(args: {
     const wins = codedRows.filter(
       (r) => r.top_pick_brand !== null && canon.norm(r.top_pick_brand) === targetNorm
     );
-    add(`${project.brand} first picks`, metrics.firstPick.count, wins.length);
-    add("Coded answers (first-pick base)", metrics.firstPick.of, codedRows.length);
+    add(`${project.brand} chosen`, metrics.firstPick.count, wins.length);
+    add("Coded answers (chosen base)", metrics.firstPick.of, codedRows.length);
   }
   if (metrics.outcomes) {
     add(

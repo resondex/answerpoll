@@ -110,7 +110,7 @@ function buildPromptPages(x: DeckInputs): PromptPage[] {
     } else if (badge === "ABSENT") {
       verdict = `${brand} is absent — never named across ${rows.length} answers${modalEntry ? `; ${modalEntry[0]} leads with ${modalEntry[1]} picks` : ""}.`;
     } else {
-      verdict = `Contested — ${modalEntry ? `${modalEntry[0]} takes ${modalEntry[1]} of ${decidedRows.length} decided answers` : "no brand holds a majority"}; ${brand} takes ${focusPicks}. Named in ${named} of ${rows.length}${avgPos ? ` at average position #${avgPos.toFixed(1)}` : ""}.`;
+      verdict = `Contested — ${modalEntry ? `${modalEntry[0]} takes ${modalEntry[1]} of ${decidedRows.length} decided answers` : "no brand holds a majority"}; ${brand} takes ${focusPicks}. Mentioned in ${named} of ${rows.length}${avgPos ? ` at average position #${avgPos.toFixed(1)}` : ""}.`;
     }
     pages.push({
       code: x.promptCode(p.id),
@@ -194,7 +194,6 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     slide.addShape("rect", { x: 0.5, y: 6.3, w: 12.33, h: 0.62, fill: { color: SOFT } });
     slide.addText(
       [
-        { text: "AI reading (verified): ", options: { bold: true, color: SLATE } },
         { text, options: { color: INK2 } },
       ],
       { x: 0.65, y: 6.33, w: 12.05, h: 0.56, fontSize: 11.5, fontFace: FONT, valign: "middle" }
@@ -251,7 +250,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     const s = newSlide("How to read this deck");
     const items: [string, string, string][] = [
       [WIN, "WINS", `${brand} takes a strict majority of the prompt's decided answers.`],
-      [CONTESTED, "CONTESTED", "Named but not winning — the answers disagree, which means the prompt is movable."],
+      [CONTESTED, "CONTESTED", "Mentioned but not winning — the answers disagree, which means the prompt is movable."],
       [ABSENT, "ABSENT", `${brand} is never named for the prompt — the conversation happens without it.`],
     ];
     items.forEach(([color, label, desc], i) => {
@@ -291,9 +290,9 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
   {
     const s = newSlide("Where we stand", `${x.metrics.unbrandedResponses} unbranded answers · ${x.run.model}`);
     const tiles: [string, string, string][] = [
-      ["Named", pct(target.mentionRate), `95% CI ${pct(target.ciLow)}–${pct(target.ciHigh)}`],
+      ["Mentioned", pct(target.mentionRate), `95% CI ${pct(target.ciLow)}–${pct(target.ciHigh)}`],
       ...(x.metrics.firstPick
-        ? ([["First pick", pct(x.metrics.firstPick.rate), `95% CI ${pct(x.metrics.firstPick.ciLow)}–${pct(x.metrics.firstPick.ciHigh)}`]] as [string, string, string][])
+        ? ([["Chosen", pct(x.metrics.firstPick.rate), `95% CI ${pct(x.metrics.firstPick.ciLow)}–${pct(x.metrics.firstPick.ciHigh)}`]] as [string, string, string][])
         : []),
       ["Average position", target.avgRank ? `#${target.avgRank.toFixed(1)}` : "—", "when named"],
       ["Share of voice", pct(target.shareOfVoice), "of all brand mentions"],
@@ -313,21 +312,16 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
   {
     const named = target.mentionCount;
     const n = x.metrics.unbrandedResponses;
-    let top3 = 0;
-    const targetNorm = x.canon.norm(brand);
-    for (const r of x.responses) {
-      const p = x.prompts.find((pp) => pp.id === r.prompt_id);
-      if (!p || p.theme === "branded") continue;
-      const ms = answerMentions(x, r);
-      const idx = ms.findIndex((m) => m.norm === targetNorm);
-      if (idx >= 0 && idx < 3) top3 += 1;
-    }
+    // The product's funnel: mentioned → recommended → chosen over one base.
+    // (The old slide used top-3 position as the middle stage, which is a
+    // position metric, not a funnel stage — position lives with Avg position.)
+    const recommended = target.recommendedCount;
     const picks = x.metrics.firstPick?.count ?? 0;
-    const s = newSlide("The visibility funnel", "Named → shortlisted → chosen. The drop between stages says what kind of problem you have.");
+    const s = newSlide("The funnel", "Mentioned → recommended → chosen, all of the same answers. The drop between stages says what kind of problem you have.");
     const stages: [string, number, string][] = [
-      ["Named anywhere", named, "the reach"],
-      ["In the top 3", top3, "the shortlist"],
-      ["The pick", picks, "the win"],
+      ["Mentioned anywhere", named, "the reach"],
+      ["Recommended", recommended, "the endorsement"],
+      ["Chosen", picks, "the win"],
     ];
     stages.forEach(([label, k, sub], i) => {
       const wMax = 10.6;
@@ -340,8 +334,8 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
       s.addText(sub, { x: 11.75, y, w: 1.4, h: 0.85, valign: "middle", fontSize: 11, color: INK3, fontFace: FONT });
     });
     const gapNote =
-      top3 < named && picks <= top3
-        ? `The steepest drop is ${named - top3 >= top3 - picks ? "Named → Top-3: a position problem — the brand is in the conversation and buried in the list" : "Top-3 → Pick: a persuasion problem — shortlisted and not chosen"}.`
+      recommended <= named && picks <= recommended
+        ? `The steepest drop is ${named - recommended >= recommended - picks ? "Mentioned → Recommended: an endorsement problem — in the conversation, but not backed" : "Recommended → Chosen: a commitment problem — endorsed, but the answers hedge instead of crowning"}.`
         : "";
     if (gapNote) s.addText(gapNote, { x: 1.0, y: 5.9, w: 11.3, h: 0.5, fontSize: 13, italic: true, color: INK2, fontFace: FONT });
   }
@@ -352,7 +346,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     const top = x.metrics.brands.slice(0, 10);
     s.addChart("bar", [
       {
-        name: "Named %",
+        name: "Mentioned %",
         labels: top.map((b) => b.brand),
         values: top.map((b) => Math.round(b.mentionRate * 1000) / 10),
       },
@@ -410,9 +404,9 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
   if (x.metrics.engines && x.metrics.engines.length > 1) {
     const s = newSlide(
       `The same question, ${x.metrics.engines.length} advisors`,
-      "Each engine answered the identical battery; coding is one fixed coder, so these gaps are the engines themselves"
+      "Each engine answered the identical battery and every answer went through the same coding, so these gaps are the engines themselves"
     );
-    const header: PptxGenJS.TableRow = ["Engine", "Answers", "Named", "95% CI", "First pick", "Avg position"].map((h) => ({
+    const header: PptxGenJS.TableRow = ["Engine", "Answers", "Mentioned", "95% CI", "Chosen", "Avg position"].map((h) => ({
       text: h, options: { bold: true, color: PAPER, fill: { color: SLATE }, fontSize: 12, fontFace: FONT },
     }));
     const body: PptxGenJS.TableRow[] = x.metrics.engines.map((e) => [
@@ -471,7 +465,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     const top = x.metrics.topPicks.slice(0, 8);
     s.addChart("bar", [
       {
-        name: "First picks",
+        name: "Chosen",
         labels: top.map((t) => t.brand),
         values: top.map((t) => t.picks),
       },
@@ -600,7 +594,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
   // ---------- 13. prompt heatmap ----------
   {
     const s = newSlide("The prompt battery at a glance", "One row per prompt · detail pages follow, grouped by outcome");
-    const header: PptxGenJS.TableRow = ["", "Prompt", "Named", "Picks", "Consistency", "Outcome"].map((h) => ({
+    const header: PptxGenJS.TableRow = ["", "Prompt", "Mentioned", "Chosen", "Consistency", "Outcome"].map((h) => ({
       text: h, options: { bold: true, color: PAPER, fill: { color: SLATE }, fontSize: 10.5, fontFace: FONT },
     }));
     const body: PptxGenJS.TableRow[] = pages.map((p) => [
@@ -745,7 +739,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
       `Intervals reflect sampling at ${x.run.repeats} repeats per prompt; differences inside overlapping intervals should be read as parity.`,
       "The full coded dataset ships with this study — every number in this deck can be recomputed from it.",
       ...(isBeta
-        ? ["AI narrative (beta): the italic 'AI reading' captions were machine-written under a hard rule — every figure is substituted from the study's verified fact registry, and any sentence carrying an unsourced number is deleted before publication."]
+        ? ["AI narrative (beta): the italic captions were machine-written under a hard rule — every figure is substituted from the study's fact registry, and any sentence carrying an unsourced number is deleted before publication."]
         : []),
     ];
     limits.forEach((t, i) => {

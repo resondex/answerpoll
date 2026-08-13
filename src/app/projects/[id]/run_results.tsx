@@ -362,8 +362,8 @@ export default function RunResults({
             onVerify={() => openWorkbench(...cite("engines"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             The same battery answered by each assistant. Answers come from the
-            engine; coding comes from one fixed coder, so these differences are
-            the engines, not the measurement.
+            engine; every answer then goes through the same coding, so these
+            differences are the engines, not the measurement.
           </p>
           <SortTable
             filename="by_engine.csv"
@@ -382,10 +382,10 @@ export default function RunResults({
                   </span>
                 ) },
               { id: "answers", label: "Answers", num: true, val: (e) => e.answers },
-              { id: "named", label: "Named", num: true,
+              { id: "named", label: "Mentioned", num: true,
                 val: (e) => Math.round(e.namedRate * 100),
                 render: (e) => pct(e.namedRate) },
-              { id: "pick", label: "First pick", num: true,
+              { id: "pick", label: "Chosen", num: true,
                 val: (e) => Math.round(e.pickRate * 100),
                 render: (e) => pct(e.pickRate) },
               { id: "pos", label: "Avg position", num: true,
@@ -435,14 +435,14 @@ export default function RunResults({
                       {pct(m.namedRate)}
                     </div>
                     <div className="text-[11px] text-ink-3">
-                      named
+                      mentioned
                     </div>
                   </div>
                   <div>
                     <div className="text-xl font-semibold tabular-nums">
                       {pct(m.pickRate)}
                     </div>
-                    <div className="text-[11px] text-ink-3">first pick</div>
+                    <div className="text-[11px] text-ink-3">chosen</div>
                   </div>
                   <div>
                     <div className="text-xl font-semibold tabular-nums">
@@ -528,7 +528,7 @@ export default function RunResults({
             onVerify={() => openWorkbench(...cite("arguments"))} />
           <p className="text-[13px] text-ink-3 mb-4">
             Which arguments travel with your wins - share of answers using each
-            argument, in your first-pick wins vs overall. Positive lift =
+            argument, in the answers that chose you vs overall. Positive lift =
             arguments to feed; negative = the conversations you&apos;re losing.
           </p>
           <SortTable

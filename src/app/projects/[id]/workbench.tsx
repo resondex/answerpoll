@@ -45,7 +45,7 @@ export type WbView =
   | "style";
 
 const VIEWS: { id: WbView; label: string; sub: string }[] = [
-  { id: "brands", label: "Brands", sub: "named → chosen" },
+  { id: "brands", label: "Brands", sub: "mentioned → chosen" },
   { id: "why", label: "Why", sub: "the arguments" },
   { id: "battleground", label: "Battleground", sub: "by prompt" },
   { id: "sources", label: "Sources", sub: "what feeds it" },
@@ -1456,14 +1456,14 @@ function BattlegroundGroup({
               render: (r) => (
                 <span className="font-medium whitespace-nowrap">{r.brand}</span>
               ) },
-            { id: "named", label: "Named", num: true,
+            { id: "named", label: "Mentioned", num: true,
               val: (r) => r.pg.answers > 0 ? Math.round((r.pg.targetNamed / r.pg.answers) * 100) : null,
               render: (r) => (
                 <span className="whitespace-nowrap">
                   {r.pg.targetNamed}/{r.pg.answers}
                 </span>
               ) },
-            { id: "picked", label: "Picked", num: true,
+            { id: "picked", label: "Share of decided", num: true,
               val: (r) => r.pg.decided > 0 ? Math.round((r.pg.targetPicks / r.pg.decided) * 100) : null,
               render: (r) => (
                 <span className="whitespace-nowrap">
@@ -1688,7 +1688,7 @@ function Risk({
                 { id: "brand", label: "Brand", val: (r: Series[number]) => r.name,
                   color: (r) => r.color,
                   render: (r) => <span className="font-medium">{r.name}</span> },
-                { id: "named", label: "Named answers", num: true,
+                { id: "named", label: "Mentioned answers", num: true,
                   val: (r) => r.stats?.count ?? null },
                 { id: "rec", label: "Recommended", num: true,
                   val: (r) =>
@@ -1707,7 +1707,7 @@ function Risk({
                       ? Math.round((r.stats.framing.mentioned / r.stats.count) * 100) : null,
                   render: (r) =>
                     r.stats && r.stats.count > 0 ? (
-                      <Tip tip="Named without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
+                      <Tip tip="Mentioned without endorsement or criticism — listed among options, compared factually, or name-dropped in passing">
                         <span className="cursor-help">
                           {counts
                             ? frac(r.stats.framing.mentioned, r.stats.count)

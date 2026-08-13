@@ -7,7 +7,7 @@ import {
   wilson,
 } from "./metrics";
 import { computeProjectTrend } from "./trend";
-import { apiKeyConfigured, engineMode, openaiClient } from "./providers";
+import { apiKeyConfigured, engineMode, openaiClient, summarizeCoderProvenance } from "./providers";
 import { buildRunInsights, type InsightsBundle } from "./insights";
 import { buildAnalysisWorkbook, buildScorecardWorkbook } from "./workbooks";
 import { buildStudyDeck } from "./deck";
@@ -108,7 +108,7 @@ export async function buildStudyBundle(
   ];
   if (metrics.coded && metrics.firstPick) {
     scorecardRows.splice(2, 0, [
-      "First pick",
+      "Chosen",
       pct(metrics.firstPick.rate),
       `${pct(metrics.firstPick.ciLow)}-${pct(metrics.firstPick.ciHigh)}`,
       `An answer crowns ${project.brand} as THE recommendation (${metrics.firstPick.count} of ${metrics.firstPick.of}) - being mentioned is representation, being picked is the win`,
@@ -390,7 +390,7 @@ export async function buildStudyBundle(
   root.file("01_executive_summary/executive_summary.md", `# Executive summary\n\n${header}\n\n${summary}\n`);
 
   // ---------- 06: methodology, verification, validation sample ----------
-  root.file("06_methodology/methodology.md", methodologyDoc(project, run, metrics, prompts.length));
+  root.file("06_methodology/methodology.md", methodologyDoc(project, run, metrics, prompts.length, summarizeCoderProvenance(responses.map((r) => r.coder_model))));
 
   const verification = verifyStudy({
     project, run, prompts, responses, mentions, metrics, canon,
@@ -530,7 +530,7 @@ function methodologyDoc(
   run: Run,
   metrics: NonNullable<Awaited<ReturnType<typeof computeRunMetrics>>>,
   nPrompts: number
-): string {
+, coderProvenance: string): string {
   return `# Methodology
 
 ${project.brand} AI Visibility Study | Answerpoll by Resondex
@@ -577,10 +577,14 @@ trend measurement.
 
 ## Coding
 
-Every answer is parsed by ONE fixed structured extraction model - the same
-coder across every engine, recorded per answer in the coder_model column -
-so differences between engines are differences in their answers, never in
-the coding. The coder records each brand named, in order of first
+Every answer goes through the same coding pipeline regardless of which
+engine produced it. The coder for each answer is recorded in the
+coder_model column, and the provenance line below is derived from that
+column, so this document can never disagree with the data. Because coding
+is identical across engines, differences between engines are differences
+in their answers, never in the coding.
+
+Coding provenance for this run: ${coderProvenance}. The coder records each brand named, in order of first
 appearance, with a framing code (recommended / mentioned / negative).
 Emergent brands - competitors the model volunteers that the study didn't
 name - are captured with the same treatment. Grounded engines' source URLs

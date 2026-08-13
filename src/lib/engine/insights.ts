@@ -80,7 +80,7 @@ function buildFacts(
   );
   if (metrics.firstPick) {
     add(
-      `${brandName} first-pick rate`,
+      `${brandName} chosen rate`,
       `${pct(metrics.firstPick.rate)} (${metrics.firstPick.count} of ${metrics.firstPick.of} decided answers)`
     );
   }
@@ -119,8 +119,8 @@ function buildFacts(
   if (metrics.topPicks) {
     for (const t of metrics.topPicks.slice(0, 4)) {
       add(
-        `${t.brand} first picks`,
-        `${t.picks} picks (${pct(t.shareOfDecided)} of decided answers)`
+        `${t.brand} chosen`,
+        `${t.picks} answers (${pct(t.shareOfDecided)} of decided answers)`
       );
     }
   }
@@ -379,7 +379,7 @@ export async function buildRunInsights(
           "(measured_by), and today's baseline (today — a single {F#} " +
           "placeholder, nothing else). measured_by must describe THE SAME " +
           "metric the today placeholder carries — if the baseline fact is " +
-          "the overall first-pick rate, measured_by says 'overall first-pick " +
+          "the overall chosen rate, measured_by says 'overall chosen " +
           "rate', not a subset we did not measure.\n" +
           "An insight is a claim someone could act on, not a restatement of " +
           "a table row; never write methodological filler ('these results " +

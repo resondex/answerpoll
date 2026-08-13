@@ -11,7 +11,7 @@ import type {
 } from "../types";
 import type { buildCanonicalizer } from "./metrics";
 import type { InsightsBundle } from "./insights";
-import { engineMode } from "./providers";
+import { engineMode, summarizeCoderProvenance } from "./providers";
 
 /**
  * Live-formula Excel workbooks — the trust feature: every aggregate is a
@@ -103,7 +103,7 @@ function ceremonySections(
       : []),
     [
       "Why it matters",
-      "Presence gets the brand considered; the first pick decides the purchase. Both are measured with repeats, so every rate carries a real interval.",
+      "Presence gets the brand considered; the chosen brand decides the purchase. Both are measured with repeats, so every rate carries a real interval.",
     ],
     [
       "Scope",
@@ -683,13 +683,13 @@ export async function buildScorecardWorkbook(
   headerRow(ws, row, [
     "Engine",
     "Answers",
-    "Named",
-    "Named %",
+    "Mentioned",
+    "Mentioned %",
     "95% CI",
     "Top-3",
     "Top-3 %",
-    "First picks",
-    "Pick %",
+    "Chosen",
+    "Chosen %",
     "95% CI",
     "Avg position",
   ]);
@@ -745,18 +745,18 @@ export async function buildScorecardWorkbook(
       "Answers",
       "Unbranded answers sampled. Branded probes (which name the brand in the question) are excluded from every rate here — asking about a brand guarantees a mention.",
     ],
-    ["Named", "Distinct answers in which the focus appears anywhere."],
-    ["Named %", "Named ÷ Answers. The reach number: how often you are in the conversation at all."],
+    ["Mentioned", "Distinct answers in which the focus appears anywhere."],
+    ["Mentioned %", "Mentioned ÷ Answers. The reach number: how often you are in the conversation at all."],
     [
       "Top-3",
       "Answers where the focus appears among the first three brands. The shortlist.",
     ],
-    ["Top-3 %", "Top-3 ÷ Answers. A big drop from Named % is a position problem, not an awareness problem."],
+    ["Top-3 %", "Top-3 ÷ Answers. A big drop from Mentioned % is a position problem, not an awareness problem."],
     [
-      "First picks",
-      "Answers that crown the focus as THE recommendation (not merely list it).",
+      "Chosen",
+      "Answers that crown the focus as the single pick (not merely list it).",
     ],
-    ["Pick %", "First picks ÷ Answers. The drop from Named % to Pick % is the persuasion gap."],
+    ["Chosen %", "Chosen ÷ Answers. The drop from Mentioned % to Chosen % is the persuasion gap."],
     [
       "Avg position",
       "Mean rank of the focus's first appearance, across answers that name it. Lower is better; 1.0 means it always leads.",
@@ -839,10 +839,10 @@ export async function buildScorecardWorkbook(
   headerRow(ws, row, [
     "Question type",
     "Answers",
-    "Named",
-    "Named %",
-    "First picks",
-    "Pick %",
+    "Mentioned",
+    "Mentioned %",
+    "Chosen",
+    "Chosen %",
     "Most common pick [script]",
   ]);
   row += 1;
@@ -873,8 +873,8 @@ export async function buildScorecardWorkbook(
       "What the buyer was doing when they asked: discovery (what exists), recommendation (what fits my situation), comparison (weighing options), use case (a specific constraint).",
     ],
     ["Answers", "Unbranded answers sampled for prompts of that type."],
-    ["Named / Named %", "Distinct answers of that type naming the focus, and that count ÷ Answers."],
-    ["First picks / Pick %", "Answers of that type crowning the focus, and that count ÷ Answers."],
+    ["Mentioned / Mentioned %", "Distinct answers of that type naming the focus, and that count ÷ Answers."],
+    ["Chosen / Chosen %", "Answers of that type crowning the focus, and that count ÷ Answers."],
     [
       "Most common pick",
       "The brand crowned most often across all answers of that type [script] — who is winning this buyer stage, whoever the focus is.",
@@ -921,7 +921,7 @@ export async function buildScorecardWorkbook(
   headerRow(ws, row, [
     "Brand",
     "Set",
-    "Named %",
+    "Mentioned %",
     "95% CI",
     "Focus lead (pts)",
     "Read as",
@@ -961,11 +961,11 @@ export async function buildScorecardWorkbook(
       "Set",
       "The brand's role in this study: a tracked competitor you chose (or promoted in the Brand dictionary), or a discovery the model volunteered ('emerged'). The Set dropdown above the table filters rows to one group; rows outside the selected set blank out.",
     ],
-    ["Named %", "Share of unbranded answers naming that brand — the same measure as the funnel's Named %, brand by brand."],
+    ["Mentioned %", "Share of unbranded answers naming that brand — the same measure as the funnel's Mentioned %, brand by brand."],
     ["95% CI", "That brand's Wilson interval [script]. The true rate is very likely somewhere in this range."],
     [
       "Focus lead (pts)",
-      "The focus's Named % minus this brand's, in percentage points. Positive means the focus is higher on paper.",
+      "The focus's Mentioned % minus this brand's, in percentage points. Positive means the focus is higher on paper.",
     ],
     [
       "Read as",
@@ -1179,11 +1179,11 @@ function addKeyInsightsSheet(wb: ExcelJS.Workbook, x: WorkbookInputs) {
     pairs.push({
       title: "Considered vs chosen",
       a: pctS(target.mentionRate),
-      aLabel: `${x.project.brand} named`,
+      aLabel: `${x.project.brand} mentioned`,
       b: pctS(x.metrics.firstPick.rate),
-      bLabel: `${x.project.brand} first pick`,
+      bLabel: `${x.project.brand} chosen`,
       story:
-        "Presence gets the brand on the list; the pick decides the purchase. The distance between these two numbers is the persuasion gap.",
+        "Presence gets the brand on the list; the chosen brand decides the purchase. The distance between these two numbers is the persuasion gap.",
     });
   }
   if (rival) {
@@ -1363,7 +1363,7 @@ export async function buildAnalysisWorkbook(
       "the 95% confidence intervals (Wilson score) and the per-prompt consensus badge from the dashboard; everything they summarize is recomputable from these sheets.",
       [
         ["Leaderboard", "Every brand by reach, with intervals, average position, and share of voice. Set dropdown filters to competitors or discoveries."],
-        ["TopPicks", "Who actually gets crowned — first-pick counts and share of decided answers. Set dropdown as above."],
+        ["TopPicks", "Who actually gets crowned — chosen counts and share of decided answers. Set dropdown as above."],
         [
           "ReasonLift",
           "Which arguments travel with the focus brand's wins, which decide against it when it made the list and lost, and which mark conversations it is absent from.",
@@ -1526,7 +1526,7 @@ export async function buildAnalysisWorkbook(
     definitions(rl, defStart, 7, [
       ["argument", "A reason code from the study's frozen taxonomy — the justifications assistants use."],
       ["answers_using / share_all", "Unbranded answers using the argument, and that count as a share of all unbranded answers."],
-      ["in wins", "Share of the focus brand's first-pick wins that used the argument. High here = an argument that travels with winning."],
+      ["in wins", "Share of the answers that chose the focus brand which used the argument. High here = an argument that travels with winning."],
       [
         "considered, lost",
         "Share of answers that NAMED the focus but picked someone else. Arguments high here and low in wins are the ones deciding against you when you are already on the list — the kill-shots.",
@@ -1648,10 +1648,10 @@ export async function buildAnalysisWorkbook(
       "mode",
       "engines",
       "answers",
-      "target named",
-      "named rate",
-      "target first picks",
-      "pick rate",
+      "target mentioned",
+      "mentioned rate",
+      "target chosen",
+      "chosen rate",
       "answers that searched",
       "with citations",
     ]);
@@ -1794,7 +1794,7 @@ export async function buildAnalysisWorkbook(
       ["answers stored", "Rows in Data for the engine. Expected = active prompts × repeats; a shortfall means tasks failed after retries."],
       ["natural stops / truncated", "The vendor's own finish reason per answer. 'Truncated' answers hit a length cap and may lose their final verdict — treat their picks with care."],
       ["unreported", "Answers collected before finish-reason capture (2026-08-09) or vendors omitting the field."],
-      ["coder", `Every answer in this run was coded by a single fixed extraction model — per-response provenance is the coder_model column in the master dataset. Dictionary v${x.metrics.dictionaryVersion}, run ${x.run.id.slice(0, 8)}, data lock ${x.run.completed_at ?? x.run.created_at}.`],
+      ["coder", `Coding provenance, read from the data itself: ${summarizeCoderProvenance(x.responses.map((r) => r.coder_model))}. The coder_model column in Data records it per answer, so this line can always be re-derived. Dictionary v${x.metrics.dictionaryVersion}, run ${x.run.id.slice(0, 8)}, data lock ${x.run.completed_at ?? x.run.created_at}.`],
     ]);
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/store";
+import { engineMode } from "@/lib/engine/providers";
 import { requireAuth, requireRun } from "@/lib/auth";
 import {
   buildCanonicalizer,
@@ -124,12 +125,15 @@ export async function GET(
     ];
   } else if (table === "responses") {
     rows = [
-      ["response_id", "prompt", "theme", "repeat_idx", "created_at", "brands_in_order", "mention_count", "target_mentioned", "outcome", "top_pick_brand", "reason_codes", "clarification_requested", "gives_recommendation", "includes_prices", "includes_specs", "total_recommendations", "focus_quote", "focus_interpretation", "text"],
+      ["response_id", "engine", "mode", "coder_model", "prompt", "theme", "repeat_idx", "created_at", "brands_in_order", "mention_count", "target_mentioned", "outcome", "top_pick_brand", "reason_codes", "clarification_requested", "gives_recommendation", "includes_prices", "includes_specs", "total_recommendations", "focus_quote", "focus_interpretation", "text"],
       ...responses.map((r) => {
         const p = promptById.get(r.prompt_id);
         const ms = mentionsByResponse.get(r.id) ?? [];
         return [
           r.id,
+          r.model,
+          engineMode(r.model),
+          r.coder_model ?? "",
           p?.text ?? "",
           p?.theme ?? "",
           r.repeat_idx,

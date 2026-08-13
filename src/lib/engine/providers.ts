@@ -699,6 +699,30 @@ function assertSecondCoderHealthy(): void {
  */
 const SOLO_CODER = process.env.EXTRACT_SOLO ?? "";
 
+/**
+ * Coding provenance derived from the data itself, for exports. Reading the
+ * per-answer coder_model column means the description can never disagree
+ * with what actually coded the run — switching EXTRACT_SOLO changes future
+ * runs' provenance and this summary follows automatically.
+ */
+export function summarizeCoderProvenance(
+  coderModels: (string | null)[]
+): string {
+  const counts = new Map<string, number>();
+  for (const m of coderModels) {
+    const key = m ?? "unrecorded";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const parts = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  if (parts.length === 0) return "no coded answers";
+  if (parts.length === 1) {
+    return `${parts[0][0]} — all ${parts[0][1]} answers`;
+  }
+  return parts
+    .map(([m, n]) => `${m} (${n} answer${n === 1 ? "" : "s"})`)
+    .join("; ");
+}
+
 export async function extractCodingConsensus(
   responseText: string,
   ctx: ExtractionContext
