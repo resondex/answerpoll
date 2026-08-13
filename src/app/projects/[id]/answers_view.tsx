@@ -78,6 +78,9 @@ export default function AnswersView({
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  // Rail groups answers under their prompt; the group holding the selected
+  // answer opens on load so the reader always starts somewhere visible.
+  const [openPrompts, setOpenPrompts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +100,7 @@ export default function AnswersView({
         if (cancelled || !d) return;
         setData(d);
         setSelected(d.answers[0]?.id ?? null);
+        setOpenPrompts(new Set(d.answers[0] ? [d.answers[0].promptId] : []));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -183,20 +187,19 @@ export default function AnswersView({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
           Narrow
         </span>
-        <select
-          className="input w-auto max-w-[18rem] py-0.5 text-[12px]"
-          value={filter.promptId ?? ""}
-          onChange={(e) =>
-            setFilter({ ...filter, promptId: e.target.value || null })
-          }
-        >
-          <option value="">any prompt</option>
-          {(data?.prompts ?? []).map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.text.length > 56 ? `${p.text.slice(0, 56)}…` : p.text}
-            </option>
-          ))}
-        </select>
+        {/* The rail's prompt groups replaced the prompt dropdown; a chip
+            survives so a Battleground deep link into one prompt is visible
+            and escapable. */}
+        {filter.promptId && (
+          <button
+            type="button"
+            onClick={() => setFilter({ ...filter, promptId: null })}
+            className="rounded-full border border-[var(--color-primary)] bg-primary-soft px-2.5 py-0.5 text-[12px] font-medium text-primary"
+            title={promptText ?? undefined}
+          >
+            one prompt ×
+          </button>
+        )}
         <select
           className="input w-auto py-0.5 text-[12px]"
           value={filter.engine ?? ""}
@@ -278,33 +281,83 @@ export default function AnswersView({
       ) : (
         <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)] lg:h-[38rem]">
           <div className="grid gap-1 content-start max-h-[34rem] lg:max-h-none lg:h-full overflow-y-auto pr-1">
-            {answers.map((a) => {
-              const mine = a.brands.find((b) => b.brand === subject);
-              const on = current?.id === a.id;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setSelected(a.id)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-left ${
-                    on
-                      ? "border-[var(--color-primary)] bg-primary-soft/40"
-                      : "border-line hover:border-ink-3"
-                  }`}
-                >
-                  <span
-                    className={`block truncate text-[12px] ${on ? "font-semibold text-primary" : "text-ink-2"}`}
-                  >
-                    {a.promptText}
-                  </span>
-                  <span className="block text-[11px] text-ink-3">
-                    {a.model} · r{a.repeat} ·{" "}
-                    {a.topPick ? `chose ${a.topPick}` : "no pick"}
-                    {mine ? ` · ${subject} #${mine.rank}` : ""}
-                  </span>
-                </button>
-              );
-            })}
+            {(() => {
+              // Group in arrival order: 60 near-identical rows labelled by a
+              // truncated prompt told the reader nothing about where they
+              // were; the prompt is the real unit of navigation.
+              const groups: { promptId: string; text: string; items: Answer[] }[] = [];
+              const byPrompt = new Map<string, (typeof groups)[number]>();
+              for (const a of answers) {
+                let entry = byPrompt.get(a.promptId);
+                if (!entry) {
+                  entry = { promptId: a.promptId, text: a.promptText, items: [] };
+                  byPrompt.set(a.promptId, entry);
+                  groups.push(entry);
+                }
+                entry.items.push(a);
+              }
+              return groups.map((grp) => {
+                const open = openPrompts.has(grp.promptId);
+                const holdsCurrent = grp.items.some((a) => a.id === current?.id);
+                return (
+                  <div key={grp.promptId} className="grid gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenPrompts((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(grp.promptId)) next.delete(grp.promptId);
+                          else next.add(grp.promptId);
+                          return next;
+                        })
+                      }
+                      className={`rounded-lg border px-2.5 py-1.5 text-left flex items-start justify-between gap-2 ${
+                        holdsCurrent
+                          ? "border-[var(--color-primary)]/50 bg-primary-soft/20"
+                          : "border-line hover:border-ink-3"
+                      }`}
+                    >
+                      <span className="flex items-start gap-1.5 min-w-0">
+                        <span className="text-ink-3 text-[10px] mt-0.5 shrink-0">
+                          {open ? "▾" : "▸"}
+                        </span>
+                        <span className={`text-[12px] leading-snug line-clamp-2 ${holdsCurrent ? "text-primary font-medium" : "text-ink-2"}`}>
+                          {grp.text}
+                        </span>
+                      </span>
+                      <span className="text-[11px] text-ink-3 shrink-0 mt-0.5">
+                        {grp.items.length}
+                      </span>
+                    </button>
+                    {open &&
+                      grp.items.map((a) => {
+                        const mine = a.brands.find((b) => b.brand === subject);
+                        const on = current?.id === a.id;
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => setSelected(a.id)}
+                            className={`ml-4 rounded-lg border px-2.5 py-1 text-left ${
+                              on
+                                ? "border-[var(--color-primary)] bg-primary-soft/40"
+                                : "border-line/70 hover:border-ink-3"
+                            }`}
+                          >
+                            <span className={`block text-[12px] ${on ? "font-semibold text-primary" : "text-ink-2"}`}>
+                              {a.model} · r{a.repeat}
+                            </span>
+                            <span className="block text-[11px] text-ink-3">
+                              {a.topPick ? `chose ${a.topPick}` : "no pick"}
+                              {mine ? ` · ${subject} #${mine.rank}${mine.framing === "negative" ? " · criticized" : ""}` : ` · ${subject} absent`}
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                );
+              });
+            })()}
           </div>
           {current && (
             <div className="rounded-xl border border-line p-4 grid gap-2 content-start lg:h-full lg:overflow-y-auto lg:min-h-0">
