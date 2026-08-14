@@ -3,8 +3,10 @@ import path from "path";
 import fs from "fs";
 import type {
   AnswerLabel,
+  CodingAssignment,
   DictionaryEntry,
   Framing,
+  HumanCode,
   Org,
   OrgMember,
   Project,
@@ -188,6 +190,35 @@ function createDb(): Database.Database {
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (response_id, metric, brand_norm)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS coding_assignments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    items TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    created_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_codings_project ON coding_assignments (project_id)"
+  );
+  db.exec(`CREATE TABLE IF NOT EXISTS human_codes (
+    id TEXT PRIMARY KEY,
+    assignment_id TEXT NOT NULL,
+    response_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    brand_norm TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    verdict INTEGER NOT NULL,
+    coder TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (assignment_id, response_id, metric, brand_norm, coder)
+  )`);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_human_codes_assignment ON human_codes (assignment_id)"
+  );
   if (!cols.some((c) => c.name === "engine_set")) {
     db.exec(
       "ALTER TABLE projects ADD COLUMN engine_set TEXT NOT NULL DEFAULT '[]'"
@@ -678,6 +709,54 @@ export const sqliteStore: Store = {
       )
       .get(runId) as { n: number; m: string } | undefined;
     return `${row?.n ?? 0}:${row?.m ?? "0"}`;
+  },
+
+  async createCodingAssignment(a) {
+    getDb()
+      .prepare(
+        `INSERT INTO coding_assignments
+           (id, project_id, run_id, name, metric, items, token, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      )
+      .run(a.id, a.project_id, a.run_id, a.name, a.metric, a.items, a.token, a.created_by);
+  },
+
+  async getCodingAssignmentByToken(token) {
+    const row = getDb()
+      .prepare("SELECT * FROM coding_assignments WHERE token = ?")
+      .get(token) as CodingAssignment | undefined;
+    return row ?? null;
+  },
+
+  async listCodingAssignments(projectId) {
+    return getDb()
+      .prepare(
+        "SELECT * FROM coding_assignments WHERE project_id = ? ORDER BY created_at DESC"
+      )
+      .all(projectId) as CodingAssignment[];
+  },
+
+  async upsertHumanCode(c) {
+    getDb()
+      .prepare(
+        `INSERT INTO human_codes
+           (id, assignment_id, response_id, metric, brand_norm, brand, verdict, coder)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (assignment_id, response_id, metric, brand_norm, coder)
+           DO UPDATE SET verdict = excluded.verdict, created_at = datetime('now')`
+      )
+      .run(
+        crypto.randomUUID(), c.assignmentId, c.responseId, c.metric,
+        c.brandNorm, c.brand, c.verdict ? 1 : 0, c.coder
+      );
+  },
+
+  async listHumanCodes(assignmentId) {
+    return getDb()
+      .prepare(
+        "SELECT * FROM human_codes WHERE assignment_id = ? ORDER BY created_at"
+      )
+      .all(assignmentId) as HumanCode[];
   },
 
   async saveSetupDraft(input) {

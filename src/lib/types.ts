@@ -61,6 +61,45 @@ export interface Project {
 /** Metrics a human can adjudicate from the evidence drawer. */
 export type LabelMetric = "mentioned" | "recommended" | "chosen";
 
+/** Metrics a coding assignment can ask about — the drawer's three plus
+ * negative framing, which the drawer has no cell for. */
+export type CodingMetric = LabelMetric | "negative";
+
+/**
+ * A batch of answers frozen for human coding: one metric, one fixed sample
+ * of (answer, brand) pairs, one public coder link. Items are sampled once
+ * at creation and stored verbatim so every coder sees the same set and the
+ * comparison against the LLM coder is reproducible forever.
+ */
+export interface CodingAssignment {
+  id: string;
+  project_id: string;
+  run_id: string;
+  name: string;
+  metric: CodingMetric;
+  /** JSON: [{response_id, brand, brand_norm}] — the frozen sample. */
+  items: string;
+  /** Public link token — anyone holding it can code, nothing else. */
+  token: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+/** One human verdict on one assignment item, per coder — multiple coders
+ * on the same item are the point (inter-rater agreement). */
+export interface HumanCode {
+  id: string;
+  assignment_id: string;
+  response_id: string;
+  metric: CodingMetric;
+  brand_norm: string;
+  brand: string;
+  /** 1 = yes, 0 = no. */
+  verdict: number;
+  coder: string;
+  created_at: string;
+}
+
 /**
  * One human verdict on one answer, for one metric, for one brand. Stored
  * apart from the coding columns on purpose: re-coding overwrites coding, and
@@ -543,6 +582,19 @@ export interface Store {
    * write (upserts refresh created_at), so cache keys built on it stay
    * correct without invalidation hooks. */
   labelsRevisionForRun(runId: string): Promise<string>;
+  createCodingAssignment(a: CodingAssignment): Promise<void>;
+  getCodingAssignmentByToken(token: string): Promise<CodingAssignment | null>;
+  listCodingAssignments(projectId: string): Promise<CodingAssignment[]>;
+  upsertHumanCode(c: {
+    assignmentId: string;
+    responseId: string;
+    metric: CodingMetric;
+    brandNorm: string;
+    brand: string;
+    verdict: boolean;
+    coder: string;
+  }): Promise<void>;
+  listHumanCodes(assignmentId: string): Promise<HumanCode[]>;
   getPlan(userId: string): Promise<Plan>;
   /** Cached value no older than maxAgeMs, else null. */
   cacheGet(key: string, maxAgeMs: number): Promise<string | null>;

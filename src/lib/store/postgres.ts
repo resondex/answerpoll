@@ -2,8 +2,10 @@ import postgres from "postgres";
 import type { TransactionSql } from "postgres";
 import type {
   AnswerLabel,
+  CodingAssignment,
   DictionaryEntry,
   Framing,
+  HumanCode,
   Project,
   Prompt,
   Run,
@@ -73,6 +75,31 @@ function ensureSchema(): Promise<void> {
         UNIQUE (response_id, metric, brand_norm)
       )`;
       await sql`CREATE INDEX IF NOT EXISTS idx_labels_project ON answer_labels (project_id)`;
+      await sql`CREATE TABLE IF NOT EXISTS coding_assignments (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        items TEXT NOT NULL,
+        token TEXT NOT NULL UNIQUE,
+        created_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_codings_project ON coding_assignments (project_id)`;
+      await sql`CREATE TABLE IF NOT EXISTS human_codes (
+        id TEXT PRIMARY KEY,
+        assignment_id TEXT NOT NULL,
+        response_id TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        brand_norm TEXT NOT NULL,
+        brand TEXT NOT NULL,
+        verdict INTEGER NOT NULL,
+        coder TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (assignment_id, response_id, metric, brand_norm, coder)
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_human_codes_assignment ON human_codes (assignment_id)`;
       await sql`CREATE TABLE IF NOT EXISTS orgs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -506,6 +533,55 @@ export const pgStore: Store = {
       JOIN responses r ON r.id = l.response_id
       WHERE r.run_id = ${runId}`;
     return `${rows[0]?.n ?? 0}:${rows[0]?.m ?? "0"}`;
+  },
+
+  async createCodingAssignment(a) {
+    const sql = await db();
+    await sql`INSERT INTO coding_assignments
+        (id, project_id, run_id, name, metric, items, token, created_by, created_at)
+      VALUES (${a.id}, ${a.project_id}, ${a.run_id}, ${a.name}, ${a.metric},
+        ${a.items}, ${a.token}, ${a.created_by}, now())`;
+  },
+
+  async getCodingAssignmentByToken(token) {
+    const sql = await db();
+    const rows =
+      await sql`SELECT * FROM coding_assignments WHERE token = ${token}`;
+    if (!rows[0]) return null;
+    return {
+      ...rows[0],
+      created_at: new Date(rows[0].created_at as string).toISOString(),
+    } as CodingAssignment;
+  },
+
+  async listCodingAssignments(projectId) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM coding_assignments
+      WHERE project_id = ${projectId} ORDER BY created_at DESC`;
+    return rows.map((r) => ({
+      ...r,
+      created_at: new Date(r.created_at as string).toISOString(),
+    })) as CodingAssignment[];
+  },
+
+  async upsertHumanCode(c) {
+    const sql = await db();
+    await sql`INSERT INTO human_codes
+        (id, assignment_id, response_id, metric, brand_norm, brand, verdict, coder)
+      VALUES (${crypto.randomUUID()}, ${c.assignmentId}, ${c.responseId},
+        ${c.metric}, ${c.brandNorm}, ${c.brand}, ${c.verdict ? 1 : 0}, ${c.coder})
+      ON CONFLICT (assignment_id, response_id, metric, brand_norm, coder)
+        DO UPDATE SET verdict = EXCLUDED.verdict, created_at = now()`;
+  },
+
+  async listHumanCodes(assignmentId) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM human_codes
+      WHERE assignment_id = ${assignmentId} ORDER BY created_at`;
+    return rows.map((r) => ({
+      ...r,
+      created_at: new Date(r.created_at as string).toISOString(),
+    })) as HumanCode[];
   },
 
   async cacheSet(key, value) {

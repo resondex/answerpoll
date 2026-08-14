@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import AnswerText from "./answer_text";
 import type { EvidenceTarget } from "./table";
+import {
+  METRIC_DEFINITION as DEFINITION,
+  METRIC_QUESTION as QUESTION,
+} from "@/lib/coding_questions";
 
 interface EvidenceAnswer {
   id: string;
@@ -28,19 +32,6 @@ interface Evidence {
   humanOverride: boolean;
   answers: EvidenceAnswer[];
 }
-
-const DEFINITION: Record<Evidence["metric"], string> = {
-  mentioned: "Answers that name this brand at all.",
-  recommended:
-    "Answers that endorse this brand for the reader's situation. A crowned brand always counts as recommended.",
-  chosen: "Answers that crown this brand as the single pick.",
-};
-
-const QUESTION: Record<Evidence["metric"], string> = {
-  mentioned: "Is this brand named?",
-  recommended: "Is this an endorsement?",
-  chosen: "Is this brand crowned?",
-};
 
 /**
  * The answers behind one figure. Opens from any table cell that declares a

@@ -11,6 +11,7 @@ import {
 import Workbench, { type WbPreset } from "./workbench";
 import { SortTable } from "./table";
 import AnswerText from "./answer_text";
+import HumanCodingPanel from "./human_coding_panel";
 
 const pct = (x: number) =>
   x > 0 && x < 0.005 ? "<1%" : `${Math.round(x * 100)}%`;
@@ -45,6 +46,13 @@ export default function RunResults({
     "brief" | "boardroom" | "workbench" | "questions"
   >("brief");
   const [workbenchTab, setWorkbenchTab] = useState<string>("brands");
+  const [showCoding, setShowCoding] = useState(false);
+  // Share links render this same component read-only; the coding panel's
+  // APIs would 403 them anyway, so don't show the door.
+  const [isShareView, setIsShareView] = useState(false);
+  useEffect(() => {
+    setIsShareView(window.location.pathname.startsWith("/share/"));
+  }, []);
   useEffect(() => {
     const saved = window.localStorage.getItem("answerpoll_view");
     if (
@@ -201,8 +209,27 @@ export default function RunResults({
             className="font-medium text-primary hover:opacity-80">
             study (.zip)
           </a>
+          {!isShareView && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                onClick={() => setShowCoding(true)}
+                className="font-medium text-primary hover:opacity-80"
+              >
+                human coding
+              </button>
+            </>
+          )}
         </p>
       </div>
+      {showCoding && (
+        <HumanCodingPanel
+          projectId={project.id}
+          runId={runId}
+          onClose={() => setShowCoding(false)}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-1.5 -mt-3">
         <span className="text-[12px] text-ink-3 mr-1">View:</span>
