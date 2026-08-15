@@ -412,7 +412,17 @@ async function codeWithClaude(
   const res = await a.messages.create({
     model,
     max_tokens: 2000,
-    system: codingInstructions(ctx),
+    // The instructions are identical for every answer in a run, so cache
+    // them: first call writes (1.25x input), the other ~419 read at 0.1x.
+    // Covers the tools + system prefix. No-op below Anthropic's minimum
+    // cacheable length (1,024 tokens on Sonnet), so it can never hurt.
+    system: [
+      {
+        type: "text",
+        text: codingInstructions(ctx),
+        cache_control: { type: "ephemeral" },
+      },
+    ],
     tools: [
       {
         name: "emit_coding",
