@@ -7,6 +7,7 @@ import type {
   DictionaryEntry,
   Framing,
   HumanCode,
+  Intent,
   Org,
   OrgMember,
   Project,
@@ -178,6 +179,28 @@ function createDb(): Database.Database {
       "ALTER TABLE projects ADD COLUMN human_override INTEGER NOT NULL DEFAULT 0"
     );
   }
+  if (!cols.some((c) => c.name === "moderators")) {
+    db.exec("ALTER TABLE projects ADD COLUMN moderators TEXT");
+  }
+  if (!cols.some((c) => c.name === "instrument_version")) {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN instrument_version INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+  const promptColsForIntent = db.prepare("PRAGMA table_info(prompts)").all() as { name: string }[];
+  if (!promptColsForIntent.some((c) => c.name === "intent_id")) {
+    db.exec("ALTER TABLE prompts ADD COLUMN intent_id TEXT");
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS intents (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    layer TEXT NOT NULL,
+    situation TEXT,
+    angle TEXT NOT NULL,
+    text TEXT NOT NULL
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_intents_project ON intents (project_id)");
   db.exec(`CREATE TABLE IF NOT EXISTS answer_labels (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -362,6 +385,10 @@ function parseProject(row: ProjectRaw): Project {
       (row as unknown as { evidence_drawer?: number }).evidence_drawer ?? 1,
     human_override:
       (row as unknown as { human_override?: number }).human_override ?? 0,
+    moderators:
+      (row as unknown as { moderators?: string | null }).moderators ?? null,
+    instrument_version:
+      (row as unknown as { instrument_version?: number }).instrument_version ?? 0,
   };
 }
 
@@ -413,8 +440,8 @@ export const sqliteStore: Store = {
     const id = crypto.randomUUID();
     getDb()
       .prepare(
-        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set, moderators, instrument_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -425,7 +452,9 @@ export const sqliteStore: Store = {
         input.audience,
         input.userId,
         JSON.stringify(input.reasonTaxonomy),
-        JSON.stringify(input.engineSet)
+        JSON.stringify(input.engineSet),
+        input.moderators ?? null,
+        input.instrumentVersion ?? 0
       );
     return (await this.getProject(id))!;
   },
@@ -870,15 +899,35 @@ export const sqliteStore: Store = {
   async insertPrompts(projectId, prompts) {
     const db = getDb();
     const stmt = db.prepare(
-      "INSERT INTO prompts (id, project_id, text, theme) VALUES (?, ?, ?, ?)"
+      "INSERT INTO prompts (id, project_id, text, theme, intent_id) VALUES (?, ?, ?, ?, ?)"
     );
     const insertAll = db.transaction(() => {
       for (const p of prompts) {
-        stmt.run(crypto.randomUUID(), projectId, p.text, p.theme);
+        stmt.run(crypto.randomUUID(), projectId, p.text, p.theme, p.intentId ?? null);
       }
     });
     insertAll();
     return this.listPrompts(projectId);
+  },
+
+  async insertIntents(projectId, intents) {
+    const db = getDb();
+    const stmt = db.prepare(
+      "INSERT INTO intents (id, project_id, stage, layer, situation, angle, text) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    const insertAll = db.transaction(() => {
+      for (const i of intents) {
+        stmt.run(crypto.randomUUID(), projectId, i.stage, i.layer, i.situation, i.angle, i.text);
+      }
+    });
+    insertAll();
+    return this.listIntents(projectId);
+  },
+
+  async listIntents(projectId) {
+    return getDb()
+      .prepare("SELECT *, rowid AS seq FROM intents WHERE project_id = ? ORDER BY rowid")
+      .all(projectId) as Intent[];
   },
 
   async listPrompts(projectId) {

@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth";
 import { generatePromptBattery } from "@/lib/engine/prompts";
 import { getReasonTaxonomy, seedDictionary } from "@/lib/engine/suggest";
+import { namesAnyBrand } from "@/lib/engine/instrument";
 import { apiKeyConfigured, availableEngines, getEngine } from "@/lib/engine/providers";
 
 const createSchema = z.object({
@@ -36,6 +37,25 @@ const createSchema = z.object({
     )
     .min(4)
     .max(30)
+    .optional(),
+  /** Grid-built battery from /api/setup/grid, as reviewed in the setup UI.
+   * Mutually exclusive with `prompts`; the classic path is untouched. */
+  grid: z
+    .object({
+      moderators: z.record(z.string(), z.unknown()),
+      cells: z
+        .array(
+          z.object({
+            stage: z.string().trim().min(1),
+            layer: z.string().trim().min(1),
+            situation: z.string().trim().nullable(),
+            angle: z.string().trim().min(1),
+            text: z.string().trim().min(1),
+          })
+        )
+        .min(4)
+        .max(80),
+    })
     .optional(),
 });
 
@@ -110,6 +130,7 @@ export async function POST(req: Request) {
       : availableEngines()
           .slice(0, 1)
           .map((e) => e.id);
+  const grid = parsed.data.grid;
   const project = await store.createProject({
     name: parsed.data.name ?? brand,
     brand,
@@ -119,11 +140,28 @@ export async function POST(req: Request) {
     userId: auth.userId,
     reasonTaxonomy,
     engineSet,
+    moderators: grid ? JSON.stringify(grid.moderators) : null,
+    instrumentVersion: grid ? 1 : 0,
   });
-  await store.insertPrompts(
-    project.id,
-    parsed.data.prompts ?? generatePromptBattery({ brand, category, audience })
-  );
+  if (grid) {
+    // Grid path: intents carry the stage identity; prompts carry the stage
+    // as their theme UNLESS the text names the brand or a rival, in which
+    // case the prompt stores "branded" so the unbranded funnel stays blind.
+    const intents = await store.insertIntents(project.id, grid.cells);
+    await store.insertPrompts(
+      project.id,
+      grid.cells.map((c, i) => ({
+        text: c.text,
+        theme: namesAnyBrand(c.text, brand, competitors) ? "branded" : c.stage,
+        intentId: intents[i]?.id ?? null,
+      }))
+    );
+  } else {
+    await store.insertPrompts(
+      project.id,
+      parsed.data.prompts ?? generatePromptBattery({ brand, category, audience })
+    );
+  }
   await seedDictionary(project.id, [brand, ...competitors]);
   return NextResponse.json({ project }, { status: 201 });
 }

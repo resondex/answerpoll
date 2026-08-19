@@ -20,6 +20,49 @@ interface DraftPrompt {
   theme: PromptTheme;
 }
 
+/** A grid-built cell as returned by /api/setup/grid, editable in review. */
+interface GridCellUi {
+  stage: string;
+  layer: string;
+  situation: string | null;
+  angle: string;
+  text: string;
+}
+
+interface GridData {
+  moderators: Record<string, unknown> & { rationale?: string };
+  stages: { key: string; label: string; layer: string }[];
+  situations: { label: string; description: string }[];
+  cells: GridCellUi[];
+}
+
+const LAYERS = [
+  "awareness",
+  "consideration",
+  "decision",
+  "retention",
+  "loyalty",
+] as const;
+
+/** The chips the classification banner shows, in reading order. */
+function moderatorChips(m: GridData["moderators"]): string[] {
+  const dict: Record<string, string> = {
+    spec: "spec-driven", taste: "taste-driven", trust: "trust-driven",
+    considered: "considered", habitual: "habitual",
+    think: "rational", feel: "identity-led",
+    solo: "solo buyer", household: "household", committee: "committee-bought",
+    one_shot: "one-shot", replenishment: "replenishment", subscription: "subscription",
+    performance: "performance risk", financial: "financial risk",
+    social: "social risk", physical: "physical risk",
+  };
+  return [
+    m.verifiability, m.involvement, m.think_feel,
+    m.decision_unit, m.rhythm, m.risk,
+  ]
+    .map((v) => dict[String(v)] ?? null)
+    .filter((v): v is string => v !== null);
+}
+
 const THEMES: PromptTheme[] = [
   "discovery",
   "recommendation",
@@ -43,6 +86,11 @@ export default function AppHomePage() {
   const [engineOptions, setEngineOptions] = useState<EngineOption[]>([]);
   const [engineSet, setEngineSet] = useState<string[]>([]);
   const [prompts, setPrompts] = useState<DraftPrompt[] | null>(null);
+  // The two battery builders: the classic suggested list, and the decision
+  // grid. Both feed the same create call; neither replaces the other.
+  const [batteryMode, setBatteryMode] = useState<"classic" | "grid">("classic");
+  const [grid, setGrid] = useState<GridData | null>(null);
+  const [gridLoading, setGridLoading] = useState(false);
   // Snapshot of the details the current battery was generated from — when the
   // live fields drift from it, we offer regeneration; when they match, we don't.
   const [servedProfile, setServedProfile] = useState<{
@@ -242,8 +290,31 @@ export default function AppHomePage() {
     setEditing(false);
   }
 
+  async function generateGrid() {
+    setGridLoading(true);
+    setError(null);
+    const res = await fetch("/api/setup/grid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brand,
+        category,
+        competitors: allCompetitors(),
+        audience: audience || undefined,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setGridLoading(false);
+    if (!res.ok) {
+      setError(data.error ?? "grid generation failed");
+      return;
+    }
+    setGrid(data.instrument);
+  }
+
   async function create() {
-    if (!prompts) return;
+    const usingGrid = batteryMode === "grid";
+    if (usingGrid ? !grid : !prompts) return;
     setSubmitting(true);
     setError(null);
     const res = await fetch("/api/projects", {
@@ -256,7 +327,14 @@ export default function AppHomePage() {
         audience: audience || undefined,
         competitors: allCompetitors(),
         engines: engineSet,
-        prompts: prompts.filter((p) => p.text.trim().length > 0),
+        ...(usingGrid
+          ? {
+              grid: {
+                moderators: grid!.moderators,
+                cells: grid!.cells.filter((c) => c.text.trim().length > 0),
+              },
+            }
+          : { prompts: prompts!.filter((p) => p.text.trim().length > 0) }),
       }),
     });
     const data = await res.json();
@@ -556,7 +634,130 @@ export default function AppHomePage() {
                   />
                 </div>
 
-                {prompts === null ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[12px] text-ink-3 mr-1">Battery:</span>
+                  {(
+                    [
+                      ["classic", "Classic prompts"],
+                      ["grid", "Decision grid"],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setBatteryMode(mode)}
+                      className={`rounded-full px-3 py-1 text-[12px] font-medium border ${
+                        batteryMode === mode
+                          ? "border-primary bg-primary-soft text-primary"
+                          : "border-line text-ink-3 hover:text-ink"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  {batteryMode === "grid" && (
+                    <span className="text-[11px] text-ink-3 ml-1">
+                      every stage of the buying decision, composed for your
+                      category
+                    </span>
+                  )}
+                </div>
+
+                {batteryMode === "grid" ? (
+                  grid === null ? (
+                    <button
+                      type="button"
+                      onClick={generateGrid}
+                      disabled={!detailsReady || gridLoading}
+                      className="btn-primary w-fit"
+                    >
+                      {gridLoading
+                        ? "Composing the grid…"
+                        : "Compose decision grid"}
+                    </button>
+                  ) : (
+                    <div className="grid gap-3">
+                      <div className="rounded-lg border border-line bg-surface-1 px-3.5 py-2.5 grid gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                            We read your category as
+                          </span>
+                          {moderatorChips(grid.moderators).map((c) => (
+                            <span
+                              key={c}
+                              className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-medium text-primary"
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                        {typeof grid.moderators.rationale === "string" && (
+                          <p className="text-[12px] text-ink-3">
+                            {grid.moderators.rationale} — edit any cell below;
+                            regenerate by switching details.
+                          </p>
+                        )}
+                      </div>
+                      <div className="grid gap-3 max-h-96 overflow-y-auto pr-1">
+                        {LAYERS.map((layer) => {
+                          const cells = grid.cells
+                            .map((c, i) => ({ ...c, i }))
+                            .filter((c) => c.layer === layer);
+                          if (cells.length === 0) return null;
+                          return (
+                            <div key={layer} className="grid gap-1.5">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                                {layer}
+                              </span>
+                              {cells.map((c) => (
+                                <div key={c.i} className="flex items-start gap-2">
+                                  <span className="w-40 shrink-0 pt-1.5 text-[11px] leading-tight text-ink-3">
+                                    {(grid.stages.find((s) => s.key === c.stage)
+                                      ?.label ?? c.stage)}
+                                    {c.situation ? ` · ${c.situation}` : ""}
+                                    {c.angle !== "generic"
+                                      ? ` · ${c.angle === "defensive" ? "your churn moment" : `vs ${c.angle}`}`
+                                      : ""}
+                                  </span>
+                                  <textarea
+                                    className="input w-full resize-none field-sizing-content text-sm"
+                                    rows={1}
+                                    value={c.text}
+                                    onChange={(e) =>
+                                      setGrid({
+                                        ...grid,
+                                        cells: grid.cells.map((q, j) =>
+                                          j === c.i
+                                            ? { ...q, text: e.target.value }
+                                            : q
+                                        ),
+                                      })
+                                    }
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label="remove cell"
+                                    onClick={() =>
+                                      setGrid({
+                                        ...grid,
+                                        cells: grid.cells.filter(
+                                          (_, j) => j !== c.i
+                                        ),
+                                      })
+                                    }
+                                    className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )
+                ) : prompts === null ? (
                   <button
                     type="button"
                     onClick={generate}
@@ -695,14 +896,18 @@ export default function AppHomePage() {
                 {error && <p className="text-sm text-danger">{error}</p>}
 
                 {/* Say what the button will spend before it spends it. */}
-                {prompts && (
+                {(batteryMode === "grid" ? grid !== null : prompts !== null) && (
                   <p className="text-[13px] text-ink-3">
                     Creating this tracker starts your first run:{" "}
-                    {prompts.filter((p) => p.text.trim()).length} questions ×{" "}
-                    {FIRST_RUN_REPEATS} repeats ×{" "}
+                    {(batteryMode === "grid"
+                      ? grid!.cells.filter((c) => c.text.trim()).length
+                      : prompts!.filter((p) => p.text.trim()).length)}{" "}
+                    questions × {FIRST_RUN_REPEATS} repeats ×{" "}
                     {engineSet.length || 1} assistant
                     {engineSet.length === 1 ? "" : "s"} ={" "}
-                    {prompts.filter((p) => p.text.trim()).length *
+                    {(batteryMode === "grid"
+                      ? grid!.cells.filter((c) => c.text.trim()).length
+                      : prompts!.filter((p) => p.text.trim()).length) *
                       FIRST_RUN_REPEATS *
                       (engineSet.length || 1)}{" "}
                     answers. It runs in the background — you can watch it land.
@@ -731,8 +936,11 @@ export default function AppHomePage() {
                     onClick={create}
                     disabled={
                       submitting ||
-                      prompts === null ||
-                      prompts.filter((p) => p.text.trim()).length < 4 ||
+                      (batteryMode === "grid"
+                        ? grid === null ||
+                          grid.cells.filter((c) => c.text.trim()).length < 4
+                        : prompts === null ||
+                          prompts.filter((p) => p.text.trim()).length < 4) ||
                       // Now that this button spends money, an empty panel must
                       // not silently fall back to a single engine.
                       engineSet.length === 0

@@ -6,6 +6,7 @@ import type {
   DictionaryEntry,
   Framing,
   HumanCode,
+  Intent,
   Project,
   Prompt,
   Run,
@@ -62,6 +63,20 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id TEXT`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS evidence_drawer INTEGER NOT NULL DEFAULT 1`;
       await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS human_override INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS moderators TEXT`;
+      await sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS instrument_version INTEGER NOT NULL DEFAULT 0`;
+      await sql`CREATE TABLE IF NOT EXISTS intents (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        layer TEXT NOT NULL,
+        situation TEXT,
+        angle TEXT NOT NULL,
+        text TEXT NOT NULL,
+        seq SERIAL
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_intents_project ON intents (project_id)`;
+      await sql`ALTER TABLE prompts ADD COLUMN IF NOT EXISTS intent_id TEXT`;
       await sql`CREATE TABLE IF NOT EXISTS answer_labels (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
@@ -256,6 +271,8 @@ function rowToProject(r: Record<string, unknown>): Project {
     dictionary_version: (r.dictionary_version as number) ?? 1,
     evidence_drawer: (r.evidence_drawer as number) ?? 1,
     human_override: (r.human_override as number) ?? 0,
+    moderators: (r.moderators as string | null) ?? null,
+    instrument_version: (r.instrument_version as number) ?? 0,
     created_at: iso(r.created_at)!,
   };
 }
@@ -327,8 +344,8 @@ export const pgStore: Store = {
   async createProject(input) {
     const sql = await db();
     const id = crypto.randomUUID();
-    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set)
-      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId}, ${JSON.stringify(input.reasonTaxonomy)}, ${JSON.stringify(input.engineSet)})`;
+    await sql`INSERT INTO projects (id, name, brand, competitors, category, audience, user_id, reason_taxonomy, engine_set, moderators, instrument_version)
+      VALUES (${id}, ${input.name}, ${input.brand}, ${JSON.stringify(input.competitors)}, ${input.category}, ${input.audience}, ${input.userId}, ${JSON.stringify(input.reasonTaxonomy)}, ${JSON.stringify(input.engineSet)}, ${input.moderators ?? null}, ${input.instrumentVersion ?? 0})`;
     return (await this.getProject(id))!;
   },
 
@@ -687,17 +704,41 @@ export const pgStore: Store = {
       project_id: projectId,
       text: p.text,
       theme: p.theme,
+      intent_id: p.intentId ?? null,
     }));
     if (rows.length > 0) {
-      await sql`INSERT INTO prompts ${sql(rows, "id", "project_id", "text", "theme")}`;
+      await sql`INSERT INTO prompts ${sql(rows, "id", "project_id", "text", "theme", "intent_id")}`;
     }
     return this.listPrompts(projectId);
+  },
+
+  async insertIntents(projectId, intents) {
+    const sql = await db();
+    const rows = intents.map((i) => ({
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      stage: i.stage,
+      layer: i.layer,
+      situation: i.situation,
+      angle: i.angle,
+      text: i.text,
+    }));
+    if (rows.length > 0) {
+      await sql`INSERT INTO intents ${sql(rows, "id", "project_id", "stage", "layer", "situation", "angle", "text")}`;
+    }
+    return this.listIntents(projectId);
+  },
+
+  async listIntents(projectId) {
+    const sql = await db();
+    const rows = await sql`SELECT * FROM intents WHERE project_id = ${projectId} ORDER BY seq`;
+    return rows.map((r) => ({ ...r }) as unknown as Intent);
   },
 
   async listPrompts(projectId) {
     const sql = await db();
     const rows =
-      await sql`SELECT id, project_id, text, theme, flagged, flag_reason, suggested_alternatives, retired
+      await sql`SELECT id, project_id, text, theme, intent_id, flagged, flag_reason, suggested_alternatives, retired
         FROM prompts WHERE project_id = ${projectId} ORDER BY seq`;
     return rows.map(
       (r) =>

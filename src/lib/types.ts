@@ -1,9 +1,16 @@
+/**
+ * Classic batteries use the five named themes. Grid-built batteries store
+ * their stage key as the theme (problem_recognition, criteria, ...), except
+ * cells that name a brand, which store "branded" so the unbranded funnel
+ * stays blind — their stage identity lives on the linked intent row.
+ */
 export type PromptTheme =
   | "discovery"
   | "recommendation"
   | "comparison"
   | "use_case"
-  | "branded";
+  | "branded"
+  | (string & {});
 
 export type RunStatus = "pending" | "running" | "complete" | "failed";
 
@@ -55,7 +62,28 @@ export interface Project {
    * unreviewed answers. Off by default — a reviewer's click must never move
    * a client-facing number without someone deliberately enabling it. */
   human_override: number;
+  /** JSON Moderators when the battery was built by the instrument designer;
+   * null for classic suggested batteries. */
+  moderators: string | null;
+  /** 0 = classic battery; >=1 = grid-built, bumped on grid edits. */
+  instrument_version: number;
   created_at: string;
+}
+
+/**
+ * One cell of a grid-built battery: a stage × situation × angle position in
+ * the buying decision. Prompts link back via intent_id; the intent keeps the
+ * stage identity even when the prompt stores theme "branded".
+ */
+export interface Intent {
+  id: string;
+  project_id: string;
+  stage: string;
+  layer: string;
+  situation: string | null;
+  angle: string;
+  text: string;
+  seq: number;
 }
 
 /** Metrics a human can adjudicate from the evidence drawer. */
@@ -125,6 +153,8 @@ export interface Prompt {
   project_id: string;
   text: string;
   theme: PromptTheme;
+  /** Grid-built prompts link to their intent; null for classic batteries. */
+  intent_id: string | null;
   /** Set by the post-first-run health check when a prompt looks defective. */
   flagged: number;
   flag_reason: string | null;
@@ -505,6 +535,9 @@ export interface Store {
     userId: string | null;
     reasonTaxonomy: string[];
     engineSet: string[];
+    /** JSON Moderators for grid-built batteries. */
+    moderators?: string | null;
+    instrumentVersion?: number;
   }): Promise<Project>;
   getDictionary(projectId: string): Promise<DictionaryEntry[]>;
   upsertDictionaryEntry(input: {
@@ -614,9 +647,20 @@ export interface Store {
   getSetupDraft(id: string): Promise<SetupDraft | null>;
   listSetupDrafts(userId: string | null): Promise<SetupDraft[]>;
   deleteSetupDraft(id: string): Promise<void>;
+  insertIntents(
+    projectId: string,
+    intents: {
+      stage: string;
+      layer: string;
+      situation: string | null;
+      angle: string;
+      text: string;
+    }[]
+  ): Promise<Intent[]>;
+  listIntents(projectId: string): Promise<Intent[]>;
   insertPrompts(
     projectId: string,
-    prompts: { text: string; theme: PromptTheme }[]
+    prompts: { text: string; theme: PromptTheme; intentId?: string | null }[]
   ): Promise<Prompt[]>;
   listPrompts(projectId: string): Promise<Prompt[]>;
   setPromptFlag(
