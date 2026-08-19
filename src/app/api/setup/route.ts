@@ -4,7 +4,12 @@ import { requireAuth } from "@/lib/auth";
 import { apiKeyConfigured } from "@/lib/engine/providers";
 import { getBrandProfile, getBattery } from "@/lib/engine/suggest";
 
-const schema = z.object({ brand: z.string().trim().min(1) });
+const schema = z.object({
+  brand: z.string().trim().min(1),
+  /** Grid-mode setup wants the profile only — the decision grid replaces the
+   * classic battery, so drafting one here would waste the slowest call. */
+  skipBattery: z.boolean().optional(),
+});
 
 export const maxDuration = 120;
 
@@ -28,6 +33,9 @@ export async function POST(req: Request) {
   }
   const brand = parsed.data.brand;
   const profile = await getBrandProfile(brand);
+  if (parsed.data.skipBattery) {
+    return NextResponse.json({ profile, prompts: null });
+  }
   const prompts = await getBattery({
     brand,
     category: profile.category,

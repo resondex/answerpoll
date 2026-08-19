@@ -216,10 +216,14 @@ export default function AppHomePage() {
   async function setup() {
     setSuggesting(true);
     setError(null);
+    // Profile only — the battery is a second, separate call. One serverless
+    // function running two reasoning-model calls back to back can exceed the
+    // platform's time limit and die as "estimation failed"; split, each call
+    // stays comfortably inside it and progress is visible between them.
     const res = await fetch("/api/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ brand }),
+      body: JSON.stringify({ brand, skipBattery: true }),
     });
     const data = await res.json().catch(() => ({}));
     setSuggesting(false);
@@ -233,12 +237,21 @@ export default function AppHomePage() {
     setCompetitors(data.profile.competitors);
     setCompDraft("");
     setAudience(data.profile.audience);
-    setPrompts(data.prompts);
+    setPrompts(null);
     setServedProfile({
       category: data.profile.category,
       competitors: data.profile.competitors,
       audience: data.profile.audience,
     });
+    // Classic mode drafts its battery right away, as before — just as its
+    // own call. Grid mode waits for the compose button.
+    if (batteryMode === "classic") {
+      await generateWith({
+        category: data.profile.category,
+        competitors: data.profile.competitors,
+        audience: data.profile.audience,
+      });
+    }
   }
 
   // Committed pills only — text sitting in the add-another box isn't a change.
@@ -263,19 +276,22 @@ export default function AppHomePage() {
     setCompetitors(competitors.filter((c) => c !== name));
   }
 
-  async function generate() {
+  async function generateWith(p: {
+    category: string;
+    competitors: string[];
+    audience: string;
+  }) {
     setGenerating(true);
     setError(null);
-    const comps = allCompetitors();
     const res = await fetch("/api/prompts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: studyName.trim() || undefined,
         brand,
-        category,
-        audience: audience || undefined,
-        competitors: comps,
+        category: p.category,
+        audience: p.audience || undefined,
+        competitors: p.competitors,
         force: true,
       }),
     });
@@ -286,8 +302,20 @@ export default function AppHomePage() {
       return;
     }
     setPrompts(data.prompts);
-    setServedProfile({ category, competitors: comps, audience: audience || "" });
+    setServedProfile({
+      category: p.category,
+      competitors: p.competitors,
+      audience: p.audience || "",
+    });
     setEditing(false);
+  }
+
+  async function generate() {
+    await generateWith({
+      category,
+      competitors: allCompetitors(),
+      audience: audience || "",
+    });
   }
 
   async function generateGrid() {
@@ -414,10 +442,40 @@ export default function AppHomePage() {
               </button>
             </div>
             <span className="text-xs font-normal text-ink-3">
-              We&apos;ll estimate your market and draft the question battery —
-              you review everything before it runs.
+              We&apos;ll estimate your market
+              {batteryMode === "classic"
+                ? " and draft the question battery"
+                : ", then compose your decision grid"}{" "}
+              — you review everything before it runs.
             </span>
           </label>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[12px] text-ink-3 mr-1">Battery:</span>
+            {(
+              [
+                ["classic", "Classic prompts"],
+                ["grid", "Decision grid"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setBatteryMode(mode)}
+                className={`rounded-full px-3 py-1 text-[12px] font-medium border ${
+                  batteryMode === mode
+                    ? "border-primary bg-primary-soft text-primary"
+                    : "border-line text-ink-3 hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            {batteryMode === "grid" && (
+              <span className="text-[11px] text-ink-3 ml-1">
+                every stage of the buying decision, composed for your category
+              </span>
+            )}
+          </div>
         </form>
       </section>
 
@@ -527,10 +585,14 @@ export default function AppHomePage() {
                   className="h-7 w-7 rounded-full border-[3px] border-line border-t-primary animate-spin"
                 />
                 <p className="text-sm font-medium">
-                  Estimating your market and drafting questions…
+                  {batteryMode === "grid"
+                    ? "Estimating your market…"
+                    : "Estimating your market and drafting questions…"}
                 </p>
                 <p className="text-[13px] text-ink-3">
-                  category · competitors · audience · prompt battery
+                  {batteryMode === "grid"
+                    ? "category · competitors · audience — the grid composes next"
+                    : "category · competitors · audience · prompt battery"}
                 </p>
               </div>
             ) : (
