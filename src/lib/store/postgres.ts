@@ -215,6 +215,16 @@ function ensureSchema(): Promise<void> {
       await sql`CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_responses_run ON responses(run_id)`;
       await sql`CREATE INDEX IF NOT EXISTS idx_mentions_response ON mentions(response_id)`;
+      // The app reads and writes as the table owner over DATABASE_URL, which
+      // bypasses RLS — but Supabase also exposes every public table through
+      // its REST API to anyone holding the browser-public anon key. RLS with
+      // no policies is the lock: owner unaffected, REST sees nothing. Runs on
+      // every boot so a newly created table can never ship exposed.
+      const bare = await sql`SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public' AND NOT rowsecurity`;
+      for (const t of bare) {
+        await sql`ALTER TABLE public.${sql(t.tablename as string)} ENABLE ROW LEVEL SECURITY`;
+      }
     })();
   }
   return globalThis.__answerpoll_schema;
