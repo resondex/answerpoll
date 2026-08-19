@@ -453,17 +453,17 @@ export default function AppHomePage() {
             <span className="text-xs font-normal text-ink-3">
               We&apos;ll estimate your market
               {batteryMode === "classic"
-                ? " and draft the question battery"
-                : ", then compose your decision grid"}{" "}
+                ? " and draft your visibility scan"
+                : ", then compose your Buyer Landscape"}{" "}
               — you review everything before it runs.
             </span>
           </label>
           <div className="flex items-center gap-1.5">
-            <span className="text-[12px] text-ink-3 mr-1">Battery:</span>
+            <span className="text-[12px] text-ink-3 mr-1">Question set:</span>
             {(
               [
-                ["classic", "Classic prompts"],
-                ["grid", "Decision grid"],
+                ["classic", "Visibility scan"],
+                ["grid", "Buyer Landscape"],
               ] as const
             ).map(([mode, label]) => (
               <button
@@ -479,11 +479,11 @@ export default function AppHomePage() {
                 {label}
               </button>
             ))}
-            {batteryMode === "grid" && (
-              <span className="text-[11px] text-ink-3 ml-1">
-                every stage of the buying decision, composed for your category
-              </span>
-            )}
+            <span className="text-[11px] text-ink-3 ml-1">
+              {batteryMode === "grid"
+                ? "every stage of your buyer's decision, composed for your category"
+                : "the standard GEO battery, running in minutes"}
+            </span>
           </div>
         </form>
       </section>
@@ -600,8 +600,8 @@ export default function AppHomePage() {
                 </p>
                 <p className="text-[13px] text-ink-3">
                   {batteryMode === "grid"
-                    ? "category · competitors · audience — the grid composes next"
-                    : "category · competitors · audience · prompt battery"}
+                    ? "category · competitors · audience — your Landscape composes next"
+                    : "category · competitors · audience · visibility scan"}
                 </p>
               </div>
             ) : (
@@ -706,11 +706,11 @@ export default function AppHomePage() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[12px] text-ink-3 mr-1">Battery:</span>
+                  <span className="text-[12px] text-ink-3 mr-1">Question set:</span>
                   {(
                     [
-                      ["classic", "Classic prompts"],
-                      ["grid", "Decision grid"],
+                      ["classic", "Visibility scan"],
+                      ["grid", "Buyer Landscape"],
                     ] as const
                   ).map(([mode, label]) => (
                     <button
@@ -726,12 +726,11 @@ export default function AppHomePage() {
                       {label}
                     </button>
                   ))}
-                  {batteryMode === "grid" && (
-                    <span className="text-[11px] text-ink-3 ml-1">
-                      every stage of the buying decision, composed for your
-                      category
-                    </span>
-                  )}
+                  <span className="text-[11px] text-ink-3 ml-1">
+                    {batteryMode === "grid"
+                      ? "every stage of your buyer's decision, composed for your category"
+                      : "the standard GEO battery, running in minutes"}
+                  </span>
                 </div>
 
                 {batteryMode === "grid" ? (
@@ -743,8 +742,8 @@ export default function AppHomePage() {
                       className="btn-primary w-fit"
                     >
                       {gridLoading
-                        ? "Composing the grid…"
-                        : "Compose decision grid"}
+                        ? "Composing your Landscape…"
+                        : "Compose Buyer Landscape"}
                     </button>
                   ) : (
                     <div className="grid gap-3">
