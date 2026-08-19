@@ -276,11 +276,17 @@ export default function AppHomePage() {
     setCompetitors(competitors.filter((c) => c !== name));
   }
 
-  async function generateWith(p: {
-    category: string;
-    competitors: string[];
-    audience: string;
-  }) {
+  async function generateWith(
+    p: {
+      category: string;
+      competitors: string[];
+      audience: string;
+    },
+    // force bypasses the battery cache - only the explicit Regenerate button
+    // wants that; the automatic draft after setup should reuse a cached
+    // battery and return instantly for repeat brands.
+    force = false
+  ) {
     setGenerating(true);
     setError(null);
     const res = await fetch("/api/prompts/generate", {
@@ -292,7 +298,7 @@ export default function AppHomePage() {
         category: p.category,
         audience: p.audience || undefined,
         competitors: p.competitors,
-        force: true,
+        force,
       }),
     });
     const data = await res.json();
@@ -311,11 +317,14 @@ export default function AppHomePage() {
   }
 
   async function generate() {
-    await generateWith({
-      category,
-      competitors: allCompetitors(),
-      audience: audience || "",
-    });
+    await generateWith(
+      {
+        category,
+        competitors: allCompetitors(),
+        audience: audience || "",
+      },
+      true
+    );
   }
 
   async function generateGrid() {
