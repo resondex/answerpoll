@@ -106,9 +106,10 @@ export default function AppHomePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [modalOpen]);
 
-  function start(e: React.FormEvent) {
-    e.preventDefault();
+  function start(mode: "classic" | "grid") {
     if (!brand.trim()) return;
+    setBatteryMode(mode);
+    setGrid(null);
     setCategory("");
     setStudyName("");
     setCompetitors([]);
@@ -120,7 +121,7 @@ export default function AppHomePage() {
     setEditing(false);
     setError(null);
     setModalOpen(true);
-    void setup();
+    void setup(mode);
   }
 
   function resumeDraft(d: SetupDraft) {
@@ -175,7 +176,7 @@ export default function AppHomePage() {
     setDrafts(drafts.filter((d) => d.id !== id));
   }
 
-  async function setup() {
+  async function setup(mode: "classic" | "grid" = batteryMode) {
     setSuggesting(true);
     setError(null);
     // Profile only — the battery is a second, separate call. One serverless
@@ -208,7 +209,7 @@ export default function AppHomePage() {
     });
     // Classic mode drafts its battery right away, as before — just as its
     // own call. Grid mode waits for the compose button.
-    if (batteryMode === "classic") {
+    if (mode === "classic") {
       await generateWith({
         category: data.profile.category,
         competitors: data.profile.competitors,
@@ -382,60 +383,53 @@ export default function AppHomePage() {
           your buyers ask and scores who gets named.
         </p>
 
-        <form onSubmit={start} className="card p-6 grid gap-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            start("grid");
+          }}
+          className="card p-6 grid gap-4"
+        >
           <div className="section-label">New tracker</div>
           <label className="grid gap-1.5 text-sm font-medium">
             Your brand
-            <div className="flex gap-2">
-              <input
-                className="input w-full"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="e.g. Resondex"
-                required
-              />
-              <button
-                type="submit"
-                disabled={!brand.trim()}
-                className="btn-primary shrink-0"
-              >
-                Start
-              </button>
-            </div>
+            <input
+              className="input w-full"
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+              placeholder="e.g. Resondex"
+              required
+            />
             <span className="text-xs font-normal text-ink-3">
-              We&apos;ll estimate your market
-              {batteryMode === "classic"
-                ? " and draft your visibility scan"
-                : ", then compose your Buyer Landscape"}{" "}
-              — you review everything before it runs.
+              We&apos;ll estimate your market - you review everything before
+              it runs.
             </span>
           </label>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[12px] text-ink-3 mr-1">Question set:</span>
-            {(
-              [
-                ["classic", "Visibility scan"],
-                ["grid", "Buyer Landscape"],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setBatteryMode(mode)}
-                className={`rounded-full px-3 py-1 text-[12px] font-medium border ${
-                  batteryMode === mode
-                    ? "border-primary bg-primary-soft text-primary"
-                    : "border-line text-ink-3 hover:text-ink"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="text-[11px] text-ink-3 ml-1">
-              {batteryMode === "grid"
-                ? "every stage of your buyer's decision, composed for your category"
-                : "the standard GEO battery, running in minutes"}
-            </span>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => start("grid")}
+              disabled={!brand.trim()}
+              className="btn-primary text-left px-4 py-3"
+            >
+              <span className="flex flex-col items-start gap-0.5">
+                <span>Start Buyer Landscape</span>
+                <span className="text-[11px] font-normal opacity-80">
+                  every stage of your buyer&apos;s decision, composed for your category
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => start("classic")}
+              disabled={!brand.trim()}
+              className="rounded-lg border border-line px-4 py-3 text-left grid gap-0.5 text-sm font-medium text-ink hover:border-primary disabled:opacity-50"
+            >
+              <span>Start Visibility scan</span>
+              <span className="text-[11px] font-normal text-ink-3">
+                the standard GEO battery, running in minutes
+              </span>
+            </button>
           </div>
         </form>
       </section>
@@ -635,53 +629,12 @@ export default function AppHomePage() {
                   />
                 </label>
 
-                <div className="grid gap-1.5">
-                  <span className="text-sm font-medium">
-                    AI engines{" "}
-                    <span className="font-normal text-ink-3">
-                      (the tracker&apos;s core panel — every run and the trend
-                      measure these)
-                    </span>
+                <div className="flex items-center gap-2 border-t border-line pt-4">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                    Question set
                   </span>
-                  <EnginePicker
-                    options={engineOptions}
-                    selected={engineSet}
-                    onToggle={(engId, checked) =>
-                      setEngineSet((prev) =>
-                        checked
-                          ? [...prev, engId]
-                          : prev.filter((m) => m !== engId)
-                      )
-                    }
-                    onPreset={(list) => setEngineSet(list)}
-                  />
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[12px] text-ink-3 mr-1">Question set:</span>
-                  {(
-                    [
-                      ["classic", "Visibility scan"],
-                      ["grid", "Buyer Landscape"],
-                    ] as const
-                  ).map(([mode, label]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setBatteryMode(mode)}
-                      className={`rounded-full px-3 py-1 text-[12px] font-medium border ${
-                        batteryMode === mode
-                          ? "border-primary bg-primary-soft text-primary"
-                          : "border-line text-ink-3 hover:text-ink"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                  <span className="text-[11px] text-ink-3 ml-1">
-                    {batteryMode === "grid"
-                      ? "every stage of your buyer's decision, composed for your category"
-                      : "the standard GEO battery, running in minutes"}
+                  <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-medium text-primary">
+                    {batteryMode === "grid" ? "Buyer Landscape" : "Visibility scan"}
                   </span>
                 </div>
 
@@ -835,6 +788,34 @@ export default function AppHomePage() {
                 )}
 
                 {error && <p className="text-sm text-danger">{error}</p>}
+
+                {/* The engine panel is the last decision: it multiplies
+                    everything above, so it waits until the battery is final. */}
+                {(batteryMode === "grid"
+                  ? grid !== null && grid.step === "phrasings" && gridBusy === null
+                  : prompts !== null) && (
+                  <div className="grid gap-1.5 border-t border-line pt-4">
+                    <span className="text-sm font-medium">
+                      AI engines{" "}
+                      <span className="font-normal text-ink-3">
+                        (the tracker&apos;s core panel - every run and the trend
+                        measure these)
+                      </span>
+                    </span>
+                    <EnginePicker
+                      options={engineOptions}
+                      selected={engineSet}
+                      onToggle={(engId, checked) =>
+                        setEngineSet((prev) =>
+                          checked
+                            ? [...prev, engId]
+                            : prev.filter((m) => m !== engId)
+                        )
+                      }
+                      onPreset={(list) => setEngineSet(list)}
+                    />
+                  </div>
+                )}
 
                 {/* Say what the button will spend before it spends it. */}
                 {(batteryMode === "grid"
