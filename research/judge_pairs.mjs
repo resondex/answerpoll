@@ -1,7 +1,7 @@
 // Forced-choice: which of the pair was AI-generated? 50% = indistinguishable.
 import { readFileSync } from "fs";
-import OpenAI from "/Users/tylersolloway/Documents/GitHub/answerpoll/node_modules/openai/index.mjs";
-const key = readFileSync("/Users/tylersolloway/Documents/GitHub/answerpoll/.env.local","utf8").split("\n").find(l=>l.startsWith("OPENAI_API_KEY="))?.slice(15).trim();
+import OpenAI from "/Users/tylersolloway/Documents/GitHub/procerno/node_modules/openai/index.mjs";
+const key = readFileSync("/Users/tylersolloway/Documents/GitHub/procerno/.env.local","utf8").split("\n").find(l=>l.startsWith("OPENAI_API_KEY="))?.slice(15).trim();
 const client = new OpenAI({ apiKey: key });
 const real = JSON.parse(readFileSync("commercial_prompts_v3_real.json","utf8"));
 const v2 = JSON.parse(readFileSync("v2_prompts.json","utf8"));

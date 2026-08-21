@@ -1,11 +1,11 @@
 // Clean-vs-messy battery experiment via Batch API: completions then extraction.
 import { readFileSync, writeFileSync } from "fs";
-import OpenAI from "/Users/tylersolloway/Documents/GitHub/answerpoll/node_modules/openai/index.mjs";
+import OpenAI from "/Users/tylersolloway/Documents/GitHub/procerno/node_modules/openai/index.mjs";
 
 const DIR =
   "/private/tmp/claude-501/-Users-tylersolloway-Documents-Resondex/31011d25-22ff-456a-afe9-2bb72a192dd2/scratchpad";
 const key = readFileSync(
-  "/Users/tylersolloway/Documents/GitHub/answerpoll/.env.local",
+  "/Users/tylersolloway/Documents/GitHub/procerno/.env.local",
   "utf8"
 )
   .split("\n")
