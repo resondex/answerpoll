@@ -1,6 +1,6 @@
-# Answerpoll
+# Procerno
 
-**How AI assistants rank your brand.** Answerpoll asks an LLM the questions your
+**How AI assistants rank your brand.** Procerno asks an LLM the questions your
 buyers actually ask — repeatedly, so the answer is a measurement rather than an
 anecdote — then scores how often your brand and your competitors get mentioned,
 where you rank inside the answer, and how you're framed.
@@ -59,11 +59,11 @@ A run of 14 prompts × 5 repeats = 70 completions + 70 extraction calls; with
 
 ## Deploying (Vercel)
 
-1. Import `tsolloway/answerpoll` at vercel.com/new (framework auto-detected).
+1. Import `tsolloway/procerno` at vercel.com/new (framework auto-detected).
 2. Provision a Postgres database — Supabase (use the pooled/pgbouncer
    connection string) or Neon via Vercel's storage marketplace.
 3. Set env vars in the Vercel project: `DATABASE_URL`, `OPENAI_API_KEY`.
-4. Deploy, then point the `answerpoll.com` DNS (Cloudflare) at Vercel per
+4. Deploy, then point the `procerno.com` DNS (Cloudflare) at Vercel per
    Vercel's domain instructions.
 
 ## Roadmap (not yet built)

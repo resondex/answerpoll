@@ -9,7 +9,7 @@ import type {
 import type { buildCanonicalizer } from "./metrics";
 
 /**
- * Study verification — Answerpoll grading its own homework.
+ * Study verification — Procerno grading its own homework.
  *
  * Every headline figure is recounted here from the raw response and mention
  * rows, through code that shares nothing with computeRunMetrics but the

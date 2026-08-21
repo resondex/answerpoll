@@ -6,7 +6,7 @@ import type { Org, OrgMember } from "@/lib/types";
 
 /**
  * Admin surface. Two privilege levels:
- * - Answerpoll staff (staff_users / STAFF_EMAILS): everything — all orgs,
+ * - Procerno staff (staff_users / STAFF_EMAILS): everything — all orgs,
  *   all trackers, org assignment, staff management.
  * - Org admins: member management for the orgs they administer.
  * Everyone else: 404 (no existence leak).

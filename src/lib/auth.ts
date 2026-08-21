@@ -84,7 +84,7 @@ export async function getAuth(): Promise<AuthContext | null> {
   return null;
 }
 
-/** Answerpoll staff — god tier. Backed by the staff_users table plus an
+/** Procerno staff — god tier. Backed by the staff_users table plus an
  * env escape hatch (STAFF_EMAILS, comma-separated). */
 export async function isStaff(auth: AuthContext): Promise<boolean> {
   if (!auth.email) return false;

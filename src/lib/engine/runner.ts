@@ -137,7 +137,7 @@ export async function driveRunChunk(
           cursor = pending.length;
           return;
         }
-        console.error(`answerpoll run ${runId} task failed:`, err);
+        console.error(`procerno run ${runId} task failed:`, err);
       }
     }
   }
@@ -148,7 +148,7 @@ export async function driveRunChunk(
 
   if (outage.err) {
     await store.updateRunStatus(runId, "failed", outage.err.message);
-    console.error(`answerpoll run ${runId} halted: ${outage.err.message}`);
+    console.error(`procerno run ${runId} halted: ${outage.err.message}`);
     return "failed";
   }
 
@@ -321,7 +321,7 @@ export function runInBackground(runId: string): Promise<void> {
     }
     if (outcome === "finalize") await finalizeRun(runId);
   })().catch(async (err) => {
-    console.error(`answerpoll run ${runId} crashed:`, err);
+    console.error(`procerno run ${runId} crashed:`, err);
     await store.updateRunStatus(runId, "failed", String(err));
   });
 }
@@ -362,7 +362,7 @@ export async function driveAndChain(
       });
     }
   } catch (err) {
-    console.error(`answerpoll run ${runId} crashed:`, err);
+    console.error(`procerno run ${runId} crashed:`, err);
     await store.updateRunStatus(runId, "failed", String(err));
   }
 }

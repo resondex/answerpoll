@@ -17,9 +17,9 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Answerpoll — how AI assistants rank your brand",
+  title: "Procerno — how AI assistants rank your brand",
   description:
-    "Answerpoll measures how often AI assistants name your brand for the questions your buyers ask — mention rates, rank, and share of voice, sampled until they're statistics.",
+    "Procerno measures how often AI assistants name your brand for the questions your buyers ask — mention rates, rank, and share of voice, sampled until they're statistics.",
 };
 
 function Mark({ size = 22 }: { size?: number }) {
@@ -52,7 +52,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/" className="flex items-center gap-2.5">
               <Mark />
               <span className="text-[17px] font-semibold tracking-tight">
-                Answerpoll
+                Procerno
               </span>
             </Link>
             <nav className="flex items-center gap-5 text-sm">
@@ -107,7 +107,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         </main>
         <footer className="border-t border-line">
           <div className="mx-auto max-w-5xl px-6 py-5 flex items-center justify-between text-[13px] text-ink-3">
-            <span>© 2026 Answerpoll</span>
+            <span>© 2026 Procerno</span>
             <span>every answer sampled, every rate with its interval</span>
           </div>
         </footer>

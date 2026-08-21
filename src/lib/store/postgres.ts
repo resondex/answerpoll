@@ -20,31 +20,31 @@ import { matchKey } from "../brand_key";
 
 declare global {
   // eslint-disable-next-line no-var
-  var __answerpoll_sql: ReturnType<typeof postgres> | undefined;
+  var __procerno_sql: ReturnType<typeof postgres> | undefined;
   // eslint-disable-next-line no-var
-  var __answerpoll_schema: Promise<void> | undefined;
+  var __procerno_schema: Promise<void> | undefined;
 }
 
 function getSql() {
-  if (!globalThis.__answerpoll_sql) {
+  if (!globalThis.__procerno_sql) {
     const url = process.env.DATABASE_URL!;
     // Hosted poolers (Supabase supavisor) expect TLS; local dev databases
     // usually don't have certs. prepare:false is required for
     // transaction-mode poolers.
     const local = /localhost|127\.0\.0\.1/.test(url);
-    globalThis.__answerpoll_sql = postgres(url, {
+    globalThis.__procerno_sql = postgres(url, {
       prepare: false,
       max: 5,
       ssl: local ? undefined : "require",
     });
   }
-  return globalThis.__answerpoll_sql;
+  return globalThis.__procerno_sql;
 }
 
 function ensureSchema(): Promise<void> {
-  if (!globalThis.__answerpoll_schema) {
+  if (!globalThis.__procerno_schema) {
     const sql = getSql();
-    globalThis.__answerpoll_schema = (async () => {
+    globalThis.__procerno_schema = (async () => {
       await sql`CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -242,7 +242,7 @@ function ensureSchema(): Promise<void> {
       }
     })();
   }
-  return globalThis.__answerpoll_schema;
+  return globalThis.__procerno_schema;
 }
 
 async function db() {

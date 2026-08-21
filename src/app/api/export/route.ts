@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "header required" }, { status: 400 });
   }
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Answerpoll";
+  wb.creator = "Procerno";
   const ws = wb.addWorksheet((body.sheet ?? "Data").slice(0, 28));
   ws.addRow(header);
   const head = ws.getRow(1);

@@ -95,7 +95,7 @@ export default function AdminPage() {
       <div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Admin{data.staff ? " — Answerpoll staff" : ""}
+            Admin{data.staff ? " — Procerno staff" : ""}
           </h1>
           <Link href="/app" className="text-sm font-medium text-primary hover:opacity-80">
             ← trackers
@@ -287,7 +287,7 @@ export default function AdminPage() {
       {/* ---- Staff (staff only) ---- */}
       {data.staff && (
         <section className="grid gap-3">
-          <h2 className="section-label">Answerpoll staff</h2>
+          <h2 className="section-label">Procerno staff</h2>
           <div className="card p-5 grid gap-2">
             {data.staffEmails.map((e) => (
               <div key={e} className="flex items-center gap-3 text-sm">

@@ -160,7 +160,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
 
   const addFooter = (slide: PptxGenJS.Slide, page: string) => {
     slide.addText(
-      `${brand} AI visibility study · ${stamp} · Answerpoll by Resondex${isBeta ? " · AI narrative (beta)" : ""}`,
+      `${brand} AI visibility study · ${stamp} · Procerno by Resondex${isBeta ? " · AI narrative (beta)" : ""}`,
       { x: 0.5, y: 7.08, w: 10, h: 0.3, fontSize: 9, color: INK3, fontFace: FONT }
     );
     slide.addText(page, {
@@ -216,7 +216,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
       `${x.metrics.totalResponses} coded answers · ${x.run.model} · ${stamp} · run ${x.run.id.slice(0, 8)}`,
       { x: 0.8, y: 4.25, w: 11.7, h: 0.4, fontSize: 13, color: "DCE6EC", fontFace: FONT }
     );
-    s.addText("Answerpoll by Resondex — data made decisive.", {
+    s.addText("Procerno by Resondex — data made decisive.", {
       x: 0.8, y: 6.6, w: 8, h: 0.4, fontSize: 12, color: "DCE6EC", fontFace: FONT,
     });
     if (isBeta) {
@@ -757,7 +757,7 @@ export async function buildStudyDeck(x: DeckInputs): Promise<Buffer> {
     const s = pptx.addSlide();
     s.background = { color: SLATE };
     s.addText("Data made decisive.", { x: 0.8, y: 3.1, w: 11.7, h: 0.8, fontSize: 32, bold: true, color: PAPER, fontFace: FONT });
-    s.addText("Answerpoll by Resondex · answerpoll.vercel.app", { x: 0.8, y: 4.0, w: 11.7, h: 0.4, fontSize: 14, color: "DCE6EC", fontFace: FONT });
+    s.addText("Procerno by Resondex · procerno.com", { x: 0.8, y: 4.0, w: 11.7, h: 0.4, fontSize: 14, color: "DCE6EC", fontFace: FONT });
   }
 
   const out = await pptx.write({ outputType: "nodebuffer" });

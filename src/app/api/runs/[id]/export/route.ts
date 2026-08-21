@@ -104,7 +104,7 @@ export async function GET(
       {
         headers: {
           "Content-Type": "application/json",
-          "Content-Disposition": `attachment; filename="answerpoll_${slug}_${stamp}.json"`,
+          "Content-Disposition": `attachment; filename="procerno_${slug}_${stamp}.json"`,
         },
       }
     );
@@ -194,7 +194,7 @@ export async function GET(
   return new NextResponse(toCsv(rows), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="answerpoll_${slug}_${table}_${stamp}.csv"`,
+      "Content-Disposition": `attachment; filename="procerno_${slug}_${table}_${stamp}.csv"`,
     },
   });
 }

@@ -102,5 +102,5 @@ is the kind of thing we think every measurement vendor should be buying.
 
 ---
 
-*Answerpoll measures how AI assistants rank your brand - with sampled runs,
+*Procerno measures how AI assistants rank your brand - with sampled runs,
 confidence intervals, and raw data you can download. Built by Resondex.*

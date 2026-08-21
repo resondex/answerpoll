@@ -26,7 +26,7 @@ const DB_PATH = path.join(DB_DIR, "answerpoll.db");
 
 declare global {
   // eslint-disable-next-line no-var
-  var __answerpoll_db: Database.Database | undefined;
+  var __procerno_db: Database.Database | undefined;
 }
 
 function createDb(): Database.Database {
@@ -360,10 +360,10 @@ function parseRun(row: Record<string, unknown>): Run {
 }
 
 function getDb(): Database.Database {
-  if (!globalThis.__answerpoll_db) {
-    globalThis.__answerpoll_db = createDb();
+  if (!globalThis.__procerno_db) {
+    globalThis.__procerno_db = createDb();
   }
-  return globalThis.__answerpoll_db;
+  return globalThis.__procerno_db;
 }
 
 interface ProjectRaw extends Omit<Project, "competitors"> {

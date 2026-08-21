@@ -52,7 +52,7 @@ const TIERS = [
     name: "Pro",
     price: "$99",
     cadence: "per month",
-    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Answerpoll%20Pro" },
+    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Procerno%20Pro" },
     highlight: true,
     features: [
       "5 brand trackers",
@@ -66,7 +66,7 @@ const TIERS = [
     name: "Enterprise",
     price: "Custom",
     cadence: "annual",
-    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Answerpoll%20Enterprise" },
+    cta: { label: "Talk to us", href: "mailto:tyler@resondex.com?subject=Procerno%20Enterprise" },
     highlight: false,
     features: [
       "Unlimited trackers",
@@ -87,7 +87,7 @@ export default function LandingPage() {
           who gets <em className="font-serif text-primary">named</em>?
         </h1>
         <p className="text-[17px] text-ink-2 leading-relaxed mb-8">
-          Answerpoll polls the answer engines. It asks an LLM the questions your
+          Procerno polls the answer engines. It asks an LLM the questions your
           buyers ask — sampled repeatedly, so every number is a measurement with
           a confidence interval — and scores how often you get named, where you
           rank, and how you&apos;re framed.
@@ -122,7 +122,7 @@ export default function LandingPage() {
           </h2>
           <p className="text-[15px] text-ink-2 leading-relaxed">
             LLM answers change every time you ask. One query is an anecdote —
-            Answerpoll samples, reports the uncertainty, and hands you the raw
+            Procerno samples, reports the uncertainty, and hands you the raw
             data behind every number.
           </p>
         </div>
