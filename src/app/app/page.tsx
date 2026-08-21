@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Project, PromptTheme, Run, SetupDraft } from "@/lib/types";
 import {
+  GridSetupPanel,
+  gridPromptCount,
+  type GridState,
+} from "./grid_setup";
+import {
   EnginePicker,
   defaultEnginesFor,
   type EngineOption,
@@ -18,49 +23,6 @@ const FIRST_RUN_REPEATS = 5;
 interface DraftPrompt {
   text: string;
   theme: PromptTheme;
-}
-
-/** A grid-built cell as returned by /api/setup/grid, editable in review. */
-interface GridCellUi {
-  stage: string;
-  layer: string;
-  situation: string | null;
-  angle: string;
-  text: string;
-}
-
-interface GridData {
-  moderators: Record<string, unknown> & { rationale?: string };
-  stages: { key: string; label: string; layer: string }[];
-  situations: { label: string; description: string }[];
-  cells: GridCellUi[];
-}
-
-const LAYERS = [
-  "awareness",
-  "consideration",
-  "decision",
-  "retention",
-  "loyalty",
-] as const;
-
-/** The chips the classification banner shows, in reading order. */
-function moderatorChips(m: GridData["moderators"]): string[] {
-  const dict: Record<string, string> = {
-    spec: "spec-driven", taste: "taste-driven", trust: "trust-driven",
-    considered: "considered", habitual: "habitual",
-    think: "rational", feel: "identity-led",
-    solo: "solo buyer", household: "household", committee: "committee-bought",
-    one_shot: "one-shot", replenishment: "replenishment", subscription: "subscription",
-    performance: "performance risk", financial: "financial risk",
-    social: "social risk", physical: "physical risk",
-  };
-  return [
-    m.verifiability, m.involvement, m.think_feel,
-    m.decision_unit, m.rhythm, m.risk,
-  ]
-    .map((v) => dict[String(v)] ?? null)
-    .filter((v): v is string => v !== null);
 }
 
 const THEMES: PromptTheme[] = [
@@ -89,8 +51,8 @@ export default function AppHomePage() {
   // The two battery builders: the classic suggested list, and the decision
   // grid. Both feed the same create call; neither replaces the other.
   const [batteryMode, setBatteryMode] = useState<"classic" | "grid">("classic");
-  const [grid, setGrid] = useState<GridData | null>(null);
-  const [gridLoading, setGridLoading] = useState(false);
+  const [grid, setGrid] = useState<GridState | null>(null);
+  const [gridBusy, setGridBusy] = useState<string | null>(null);
   // Snapshot of the details the current battery was generated from — when the
   // live fields drift from it, we offer regeneration; when they match, we don't.
   const [servedProfile, setServedProfile] = useState<{
@@ -238,6 +200,7 @@ export default function AppHomePage() {
     setCompDraft("");
     setAudience(data.profile.audience);
     setPrompts(null);
+    setGrid(null);
     setServedProfile({
       category: data.profile.category,
       competitors: data.profile.competitors,
@@ -327,31 +290,9 @@ export default function AppHomePage() {
     );
   }
 
-  async function generateGrid() {
-    setGridLoading(true);
-    setError(null);
-    const res = await fetch("/api/setup/grid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        brand,
-        category,
-        competitors: allCompetitors(),
-        audience: audience || undefined,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setGridLoading(false);
-    if (!res.ok) {
-      setError(data.error ?? "grid generation failed");
-      return;
-    }
-    setGrid(data.instrument);
-  }
-
   async function create() {
     const usingGrid = batteryMode === "grid";
-    if (usingGrid ? !grid : !prompts) return;
+    if (usingGrid ? !grid || grid.step !== "phrasings" : !prompts) return;
     setSubmitting(true);
     setError(null);
     const res = await fetch("/api/projects", {
@@ -368,7 +309,16 @@ export default function AppHomePage() {
           ? {
               grid: {
                 moderators: grid!.moderators,
-                cells: grid!.cells.filter((c) => c.text.trim().length > 0),
+                cells: grid!.cells
+                  .filter((c) => c.text.trim().length > 0)
+                  .map((c) => ({
+                    stage: c.stage,
+                    layer: c.layer,
+                    situation: c.situation,
+                    angle: c.angle,
+                    text: c.text,
+                    phrasings: c.phrasings.filter((p) => p.trim().length > 0),
+                  })),
               },
             }
           : { prompts: prompts!.filter((p) => p.text.trim().length > 0) }),
@@ -398,7 +348,9 @@ export default function AppHomePage() {
         body: JSON.stringify({
           model: panel[0] ?? "gpt-5-mini",
           ...(panel.length > 0 ? { models: panel } : {}),
-          repeats: FIRST_RUN_REPEATS,
+          // The Landscape samples by paraphrase, not by repeating one wording:
+          // its prompts already carry the variation, so one pass each.
+          repeats: usingGrid ? 1 : FIRST_RUN_REPEATS,
         }),
       });
     } catch {
@@ -734,99 +686,18 @@ export default function AppHomePage() {
                 </div>
 
                 {batteryMode === "grid" ? (
-                  grid === null ? (
-                    <button
-                      type="button"
-                      onClick={generateGrid}
-                      disabled={!detailsReady || gridLoading}
-                      className="btn-primary w-fit"
-                    >
-                      {gridLoading
-                        ? "Composing your Landscape…"
-                        : "Compose Buyer Landscape"}
-                    </button>
-                  ) : (
-                    <div className="grid gap-3">
-                      <div className="rounded-lg border border-line bg-surface-1 px-3.5 py-2.5 grid gap-1.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-                            We read your category as
-                          </span>
-                          {moderatorChips(grid.moderators).map((c) => (
-                            <span
-                              key={c}
-                              className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-medium text-primary"
-                            >
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                        {typeof grid.moderators.rationale === "string" && (
-                          <p className="text-[12px] text-ink-3">
-                            {grid.moderators.rationale} — edit any cell below;
-                            regenerate by switching details.
-                          </p>
-                        )}
-                      </div>
-                      <div className="grid gap-3 max-h-96 overflow-y-auto pr-1">
-                        {LAYERS.map((layer) => {
-                          const cells = grid.cells
-                            .map((c, i) => ({ ...c, i }))
-                            .filter((c) => c.layer === layer);
-                          if (cells.length === 0) return null;
-                          return (
-                            <div key={layer} className="grid gap-1.5">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-                                {layer}
-                              </span>
-                              {cells.map((c) => (
-                                <div key={c.i} className="flex items-start gap-2">
-                                  <span className="w-40 shrink-0 pt-1.5 text-[11px] leading-tight text-ink-3">
-                                    {(grid.stages.find((s) => s.key === c.stage)
-                                      ?.label ?? c.stage)}
-                                    {c.situation ? ` · ${c.situation}` : ""}
-                                    {c.angle !== "generic"
-                                      ? ` · ${c.angle === "defensive" ? "your churn moment" : `vs ${c.angle}`}`
-                                      : ""}
-                                  </span>
-                                  <textarea
-                                    className="input w-full resize-none field-sizing-content text-sm"
-                                    rows={1}
-                                    value={c.text}
-                                    onChange={(e) =>
-                                      setGrid({
-                                        ...grid,
-                                        cells: grid.cells.map((q, j) =>
-                                          j === c.i
-                                            ? { ...q, text: e.target.value }
-                                            : q
-                                        ),
-                                      })
-                                    }
-                                  />
-                                  <button
-                                    type="button"
-                                    aria-label="remove cell"
-                                    onClick={() =>
-                                      setGrid({
-                                        ...grid,
-                                        cells: grid.cells.filter(
-                                          (_, j) => j !== c.i
-                                        ),
-                                      })
-                                    }
-                                    className="text-ink-3 hover:text-danger text-lg leading-none px-1"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )
+                  <GridSetupPanel
+                    brand={brand}
+                    category={category}
+                    competitors={allCompetitors()}
+                    audience={audience}
+                    detailsReady={Boolean(detailsReady)}
+                    state={grid}
+                    setState={setGrid}
+                    busy={gridBusy}
+                    setBusy={setGridBusy}
+                    setError={setError}
+                  />
                 ) : prompts === null ? (
                   <button
                     type="button"
@@ -966,21 +837,25 @@ export default function AppHomePage() {
                 {error && <p className="text-sm text-danger">{error}</p>}
 
                 {/* Say what the button will spend before it spends it. */}
-                {(batteryMode === "grid" ? grid !== null : prompts !== null) && (
+                {(batteryMode === "grid"
+                  ? grid !== null && grid.step === "phrasings"
+                  : prompts !== null) && (
                   <p className="text-[13px] text-ink-3">
                     Creating this tracker starts your first run:{" "}
-                    {(batteryMode === "grid"
-                      ? grid!.cells.filter((c) => c.text.trim()).length
-                      : prompts!.filter((p) => p.text.trim()).length)}{" "}
-                    questions × {FIRST_RUN_REPEATS} repeats ×{" "}
+                    {batteryMode === "grid"
+                      ? gridPromptCount(grid)
+                      : prompts!.filter((p) => p.text.trim()).length}{" "}
+                    {batteryMode === "grid" ? "prompts" : "questions"} ×{" "}
+                    {batteryMode === "grid" ? 1 : FIRST_RUN_REPEATS}{" "}
+                    {batteryMode === "grid" ? "pass" : "repeats"} ×{" "}
                     {engineSet.length || 1} assistant
                     {engineSet.length === 1 ? "" : "s"} ={" "}
                     {(batteryMode === "grid"
-                      ? grid!.cells.filter((c) => c.text.trim()).length
+                      ? gridPromptCount(grid)
                       : prompts!.filter((p) => p.text.trim()).length) *
-                      FIRST_RUN_REPEATS *
+                      (batteryMode === "grid" ? 1 : FIRST_RUN_REPEATS) *
                       (engineSet.length || 1)}{" "}
-                    answers. It runs in the background — you can watch it land.
+                    answers. It runs in the background - you can watch it land.
                   </p>
                 )}
 
@@ -1008,7 +883,9 @@ export default function AppHomePage() {
                       submitting ||
                       (batteryMode === "grid"
                         ? grid === null ||
-                          grid.cells.filter((c) => c.text.trim()).length < 4
+                          grid.step !== "phrasings" ||
+                          gridBusy !== null ||
+                          gridPromptCount(grid) < 4
                         : prompts === null ||
                           prompts.filter((p) => p.text.trim()).length < 4) ||
                       // Now that this button spends money, an empty panel must

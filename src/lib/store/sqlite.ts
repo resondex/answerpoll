@@ -1081,6 +1081,7 @@ export const sqliteStore: Store = {
       ).run(projectId);
       db.prepare("DELETE FROM runs WHERE project_id = ?").run(projectId);
       db.prepare("DELETE FROM prompts WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM intents WHERE project_id = ?").run(projectId);
       db.prepare("DELETE FROM dictionary_entries WHERE project_id = ?").run(
         projectId
       );

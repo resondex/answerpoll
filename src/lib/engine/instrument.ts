@@ -482,7 +482,231 @@ export async function generateGrid(input: {
   return cells;
 }
 
+/* ------------------------------ phrasings ------------------------------- */
+
+/** The brands (client + rivals) a text names, lowercased and sorted - the
+ * blind/branded signature a paraphrase must preserve from its seed. */
+export function brandSignature(
+  text: string,
+  brand: string,
+  competitors: string[]
+): string {
+  const t = text.toLowerCase();
+  return [brand, ...competitors]
+    .map((b) => b.trim().toLowerCase())
+    .filter((b) => b && t.includes(b))
+    .sort()
+    .join("|");
+}
+
+const PHRASINGS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    cells: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          index: { type: "integer" },
+          phrasings: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                text: { type: "string" },
+                asker: { type: "string" },
+              },
+              required: ["text", "asker"],
+            },
+          },
+        },
+        required: ["index", "phrasings"],
+      },
+    },
+  },
+  required: ["cells"],
+} as const;
+
+export interface Phrasing {
+  text: string;
+  asker: string;
+}
+
+// Bump when the paraphrase prompt or filters change: cached sets written
+// under old instructions must not be served as if they were new.
+const PHRASINGS_VERSION = "p2";
+// Over-generate so the overlap filter can be strict and still fill the set.
+const PHRASINGS_EXTRA = 3;
+
+/**
+ * Paraphrase sets: for each (confirmed) cell, write the other wordings real
+ * buyers would use for the same designed question. Variation comes from
+ * wording, register, length, and who is asking - never from changing what
+ * is asked. Called per layer so no single request runs long.
+ *
+ * Constraints are enforced in code, not trusted to the model: a paraphrase
+ * must name exactly the brands its seed names (blind cells stay blind,
+ * branded cells keep their rival), and near-duplicates are dropped.
+ */
+export async function generatePhrasings(input: {
+  brand: string;
+  category: string;
+  competitors: string[];
+  audience: string | null;
+  moderators: Moderators;
+  cells: { stage: string; situation: string | null; angle: string; text: string }[];
+  /** Total phrasings wanted per cell including the seed. */
+  count: number;
+}): Promise<Phrasing[][]> {
+  const want = Math.max(0, input.count - 1);
+  if (want === 0 || input.cells.length === 0) return input.cells.map(() => []);
+  const rivals = input.competitors.slice(0, 4);
+  const key = cacheKey("phrasings", [
+    PHRASINGS_VERSION, input.brand, rivals.join(","), input.audience, String(input.count),
+    input.cells.map((c) => c.text).join("\n"),
+  ]);
+  const hit = await store.cacheGet(key, CACHE_TTL_MS);
+  if (hit) return JSON.parse(hit) as Phrasing[][];
+
+  const cellText = input.cells
+    .map(
+      (c, i) =>
+        `${i}. [stage=${c.stage} situation=${c.situation ?? "-"} angle=${c.angle}] ${c.text}`
+    )
+    .join("\n");
+  const res = await openaiClient().chat.completions.create({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You write paraphrase sets for a research instrument that measures " +
+          "a brand's standing in AI assistant answers. Each seed prompt below " +
+          "is one designed question. For EACH seed, write exactly " +
+          `${want + PHRASINGS_EXTRA} additional DISTINCT ways a real buyer would ask the SAME ` +
+          "question - same circumstance, same intent, same brands named - in " +
+          "the wordings people actually type into a chat assistant.\n" +
+          "Each paraphrase is a DIFFERENT PERSON in the same circumstance " +
+          "describing it their own way - NOT a rewording of the seed. Do not " +
+          "copy the seed's specific details (its numbers, its examples, its " +
+          "list of symptoms); invent plausible ones of your own that fit the " +
+          "scenario, or leave details out entirely. Some askers give " +
+          "backstory, some just ask.\n" +
+          "Vary, across the set: who is asking (pick realistic roles for the " +
+          "audience - e.g. founder, engineering manager, IT director, " +
+          "procurement, a parent, a gift buyer - and tag each with `asker`), " +
+          "register (casual forum post to formal RFP language), length (a " +
+          "terse 8-word ask to a two-sentence backstory), and question form.\n" +
+          "Rules:\n" +
+          "- If the seed names NO brand, name NO brand or product in any " +
+          "paraphrase. Blind prompts are the measurement.\n" +
+          "- If the seed names brands, every paraphrase names exactly those " +
+          "same brands and no others.\n" +
+          "- Never change the circumstance or the decision being made; never " +
+          "add a new constraint the seed does not have.\n" +
+          "- No verbatim repeats, no trivial reorderings; each paraphrase " +
+          "should be something a different person would plausibly type.\n" +
+          `Decision unit: ${input.moderators.decision_unit}. ` +
+          "Return one object per seed with its index and its paraphrases, in order.",
+      },
+      {
+        role: "user",
+        content:
+          `Client brand: ${input.brand}\nCategory: ${input.category}\n` +
+          `Rivals: ${rivals.join(", ")}\nAudience: ${input.audience ?? "unknown"}\n\n` +
+          `Seeds:\n${cellText}`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "phrasings", strict: true, schema: PHRASINGS_SCHEMA },
+    },
+  });
+  const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as {
+    cells: { index: number; phrasings: Phrasing[] }[];
+  };
+  const out: Phrasing[][] = input.cells.map(() => []);
+  for (const c of parsed.cells ?? []) {
+    const seed = input.cells[c.index];
+    if (!seed) continue;
+    const sig = brandSignature(seed.text, input.brand, rivals);
+    const seen = new Set<string>([norm(seed.text)]);
+    const keptWords: Set<string>[] = [wordSet(seed.text)];
+    const kept: Phrasing[] = [];
+    for (const p of c.phrasings ?? []) {
+      const text = humanize((p.text ?? "").trim());
+      if (!text) continue;
+      // The signature check is the blind/branded discipline: a paraphrase of
+      // a blind seed that names a brand is not a paraphrase, it is a leak.
+      if (brandSignature(text, input.brand, rivals) !== sig) continue;
+      const n = norm(text);
+      if (seen.has(n)) continue;
+      // A paraphrase that shares most of its words with the seed or a sibling
+      // is a thesaurus pass, not another person asking; drop it.
+      const ws = wordSet(text);
+      if (keptWords.some((k) => jaccard(k, ws) > MAX_OVERLAP)) continue;
+      seen.add(n);
+      keptWords.push(ws);
+      kept.push({ text, asker: (p.asker ?? "").trim() });
+      if (kept.length >= want) break;
+    }
+    out[c.index] = kept;
+  }
+  await store.cacheSet(key, JSON.stringify(out));
+  return out;
+}
+
+function norm(t: string): string {
+  return t.trim().toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ");
+}
+
+const MAX_OVERLAP = 0.5;
+const STOP = new Set(
+  "a an the and or of to for in on with we our us is are it this that how what which do does can should would i my me be as at by from have has need want".split(" ")
+);
+
+function wordSet(t: string): Set<string> {
+  return new Set(norm(t).split(" ").filter((w) => w.length > 2 && !STOP.has(w)));
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/** Real people type hyphens and straight quotes; model output leans on em
+ * dashes and curly quotes, which reads as machine-written to the engines. */
+function humanize(t: string): string {
+  return t
+    .replace(/\s*[\u2014\u2013]\s*/g, " - ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u2026/g, "...");
+}
+
 /* ------------------------------ orchestrator ---------------------------- */
+
+/** Gate 1 of setup: the category read, the composed stages, and the
+ * scenarios - everything the user confirms before any prompt is written. */
+export async function composeInstrument(input: {
+  category: string;
+  audience: string | null;
+}): Promise<{ moderators: Moderators; stages: ComposedStage[]; situations: Situation[] }> {
+  const moderators = await classifyModerators(input);
+  const stages = composeStages(moderators);
+  const situations = await generateSituations({
+    category: input.category,
+    audience: input.audience,
+    decisionUnit: moderators.decision_unit,
+  });
+  return { moderators, stages, situations };
+}
+
 
 export interface Instrument {
   moderators: Moderators;

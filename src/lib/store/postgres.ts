@@ -855,6 +855,7 @@ export const pgStore: Store = {
       await tx`DELETE FROM responses WHERE run_id IN (SELECT id FROM runs WHERE project_id = ${projectId})`;
       await tx`DELETE FROM runs WHERE project_id = ${projectId}`;
       await tx`DELETE FROM prompts WHERE project_id = ${projectId}`;
+      await tx`DELETE FROM intents WHERE project_id = ${projectId}`;
       await tx`DELETE FROM dictionary_entries WHERE project_id = ${projectId}`;
       await tx`DELETE FROM projects WHERE id = ${projectId}`;
     });

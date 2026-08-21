@@ -51,6 +51,9 @@ const createSchema = z.object({
             situation: z.string().trim().nullable(),
             angle: z.string().trim().min(1),
             text: z.string().trim().min(1),
+            /** The confirmed paraphrase set for this cell; each becomes its
+             * own prompt under the same intent. */
+            phrasings: z.array(z.string().trim().min(1)).max(20).optional(),
           })
         )
         .min(4)
@@ -147,14 +150,24 @@ export async function POST(req: Request) {
     // Grid path: intents carry the stage identity; prompts carry the stage
     // as their theme UNLESS the text names the brand or a rival, in which
     // case the prompt stores "branded" so the unbranded funnel stays blind.
-    const intents = await store.insertIntents(project.id, grid.cells);
+    // Each cell's seed prompt and its paraphrases all hang off one intent;
+    // the theme is decided per prompt, so a paraphrase that names a brand is
+    // fenced off individually even if its seed is blind.
+    const intents = await store.insertIntents(
+      project.id,
+      grid.cells.map((c) => ({
+        stage: c.stage, layer: c.layer, situation: c.situation, angle: c.angle, text: c.text,
+      }))
+    );
     await store.insertPrompts(
       project.id,
-      grid.cells.map((c, i) => ({
-        text: c.text,
-        theme: namesAnyBrand(c.text, brand, competitors) ? "branded" : c.stage,
-        intentId: intents[i]?.id ?? null,
-      }))
+      grid.cells.flatMap((c, i) =>
+        [c.text, ...(c.phrasings ?? [])].map((text) => ({
+          text,
+          theme: namesAnyBrand(text, brand, competitors) ? "branded" : c.stage,
+          intentId: intents[i]?.id ?? null,
+        }))
+      )
     );
   } else {
     await store.insertPrompts(
