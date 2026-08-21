@@ -11,14 +11,14 @@ const STEPS = [
   },
   {
     title: "Score who gets named.",
-    body: "Every answer is parsed for brand mentions — yours, your competitors', and the ones the model volunteers — with position, framing, and share of voice.",
+    body: "Every answer is parsed for brand mentions - yours, your competitors', and the ones the model volunteers - with position, framing, and share of voice.",
   },
 ];
 
 const FEATURES = [
   {
     title: "Brand leaderboard",
-    body: "Mention rate and average position for every brand in the conversation — including competitors you didn't know you had.",
+    body: "Mention rate and average position for every brand in the conversation - including competitors you didn't know you had.",
   },
   {
     title: "Trend over time",
@@ -56,7 +56,7 @@ const TIERS = [
     highlight: true,
     features: [
       "5 brand trackers",
-      "Scheduled runs — weekly or monthly, automatic",
+      "Scheduled runs - weekly or monthly, automatic",
       "Trend history with confidence bands",
       "Priority support",
       "Early access to new engines as they ship",
@@ -88,8 +88,8 @@ export default function LandingPage() {
         </h1>
         <p className="text-[17px] text-ink-2 leading-relaxed mb-8">
           Procerno polls the answer engines. It asks an LLM the questions your
-          buyers ask — sampled repeatedly, so every number is a measurement with
-          a confidence interval — and scores how often you get named, where you
+          buyers ask - sampled repeatedly, so every number is a measurement with
+          a confidence interval - and scores how often you get named, where you
           rank, and how you&apos;re framed.
         </p>
         <div className="flex items-center justify-center gap-4">
@@ -121,7 +121,7 @@ export default function LandingPage() {
             Measurement, engineered.
           </h2>
           <p className="text-[15px] text-ink-2 leading-relaxed">
-            LLM answers change every time you ask. One query is an anecdote —
+            LLM answers change every time you ask. One query is an anecdote  - 
             Procerno samples, reports the uncertainty, and hands you the raw
             data behind every number.
           </p>
@@ -197,7 +197,7 @@ export default function LandingPage() {
           Your buyers are already asking.
         </h2>
         <p className="text-[15px] text-ink-2 mb-6">
-          Find out who the answer engines recommend — and where you stand.
+          Find out who the answer engines recommend - and where you stand.
         </p>
         <Link href="/login" className="btn-primary text-[15px] px-6 py-3">
           Start free

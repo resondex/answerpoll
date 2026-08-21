@@ -17,9 +17,9 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Procerno — how AI assistants rank your brand",
+  title: "Procerno - how AI assistants rank your brand",
   description:
-    "Procerno measures how often AI assistants name your brand for the questions your buyers ask — mention rates, rank, and share of voice, sampled until they're statistics.",
+    "Procerno measures how often AI assistants name your brand for the questions your buyers ask - mention rates, rank, and share of voice, sampled until they're statistics.",
 };
 
 function Mark({ size = 22 }: { size?: number }) {
