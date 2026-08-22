@@ -36,6 +36,8 @@ export interface GridStage {
   layer: string;
   situational: boolean;
   rivals: "none" | "each" | "defensive_offensive";
+  /** The composer's verdict; the user can keep a stage it skipped. */
+  recommended?: boolean;
 }
 
 export interface GridState {
@@ -143,7 +145,7 @@ export function useGridSetup(a: GridSetupArgs) {
       step: "compose",
       moderators: data.moderators,
       stages: data.stages,
-      keptStages: data.stages.map((s) => s.key),
+      keptStages: data.stages.filter((s) => s.recommended !== false).map((s) => s.key),
       // An edited read keeps the user's scenarios unless the decision unit
       // changed, which changes what a scenario even is.
       scenarios:
@@ -291,7 +293,7 @@ export function StagesGate({
 
       <div className="grid gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Stages - untick any that don&apos;t fit your category
+          All stages - the recommended set is ticked; keep any others that fit
         </span>
         <div className="grid gap-3 sm:grid-cols-3">
           {LAYERS.map((layer) => {
@@ -304,6 +306,7 @@ export function StagesGate({
                 </span>
                 {stages.map((s) => {
                   const kept = state.keptStages.includes(s.key);
+                  const rec = s.recommended !== false;
                   return (
                     <label key={s.key} className="flex items-center gap-2 text-[13px]">
                       <input
@@ -318,9 +321,14 @@ export function StagesGate({
                           })
                         }
                       />
-                      <span className={kept ? "text-ink" : "text-ink-3 line-through"}>
+                      <span className={kept ? "text-ink" : rec ? "text-ink-3 line-through" : "text-ink-3"}>
                         {s.label}
                       </span>
+                      {rec && (
+                        <span className="text-[10px] font-medium uppercase tracking-wide text-primary/70">
+                          recommended
+                        </span>
+                      )}
                     </label>
                   );
                 })}

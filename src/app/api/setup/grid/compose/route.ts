@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { apiKeyConfigured } from "@/lib/engine/providers";
 import {
   composeInstrument,
-  composeStages,
+  stageLibrary,
   generateSituations,
   type Moderators,
 } from "@/lib/engine/instrument";
@@ -36,30 +36,31 @@ export async function POST(req: Request) {
   }
   const audience = parsed.data.audience || null;
   let moderators: Moderators;
-  let stages;
   let situations;
   if (parsed.data.moderators) {
     moderators = parsed.data.moderators as unknown as Moderators;
-    stages = composeStages(moderators);
     situations = await generateSituations({
       category: parsed.data.category,
       audience,
       decisionUnit: moderators.decision_unit,
     });
   } else {
-    ({ moderators, stages, situations } = await composeInstrument({
+    ({ moderators, situations } = await composeInstrument({
       category: parsed.data.category,
       audience,
     }));
   }
+  // The whole library goes to the client with the composer's verdict on
+  // each stage: the user sees every stage and starts from the recommended set.
   return NextResponse.json({
     moderators,
-    stages: stages.map((s) => ({
+    stages: stageLibrary(moderators).map((s) => ({
       key: s.key,
       label: s.label,
       layer: s.layer,
       situational: s.situational,
       rivals: s.rivals,
+      recommended: s.recommended,
     })),
     scenarios: situations,
   });

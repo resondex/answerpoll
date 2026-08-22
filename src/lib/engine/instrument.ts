@@ -119,136 +119,143 @@ export interface ComposedStage {
   hint: string;
 }
 
+export type LibraryStage = ComposedStage & {
+  /** Whether the composer's rules pick this stage for the category. The
+   * user sees the whole library and can keep a stage the rules skipped. */
+  recommended: boolean;
+};
+
 /**
- * The deterministic composer: moderators in, stage list out. Pure rules on
- * purpose - auditable, consistent, and testable without a model call. This
- * is the part that makes the battery an instrument rather than a suggestion.
+ * The master library, in journey order, with the composer's verdict on each
+ * stage. Pure rules on purpose - auditable, consistent, and testable without
+ * a model call. This is the part that makes the battery an instrument rather
+ * than a suggestion.
  */
-export function composeStages(m: Moderators): ComposedStage[] {
-  const stages: (ComposedStage | null)[] = [
+export function stageLibrary(m: Moderators): LibraryStage[] {
+  const considered = m.involvement === "considered";
+  return [
     {
       key: "problem_recognition", label: "Problem recognition", layer: "awareness",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: "Pain-phrased and pre-category: the buyer describes the problem without knowing the category exists. Never name the category, a brand, or a product type.",
     },
-    m.think_feel === "think" && m.involvement === "considered"
-      ? {
-          key: "category_education", label: "Category education", layer: "awareness",
-          situational: false, rivals: "none",
-          hint: "The buyer asks what the category is or does ('what does a X actually do').",
-        }
-      : null,
+    {
+      key: "category_education", label: "Category education", layer: "awareness",
+      situational: false, rivals: "none", recommended: m.think_feel === "think" && considered,
+      hint: "The buyer asks what the category is or does ('what does a X actually do').",
+    },
     {
       key: "discovery", label: "Discovery", layer: "awareness",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: "Open category discovery: 'best X for ...' style asks, no brands named.",
     },
     {
       key: "shortlist", label: "Shortlist", layer: "consideration",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: "The buyer asks for a small set of options to consider.",
     },
     {
       key: "criteria", label: "Criteria formation", layer: "consideration",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "The buyer asks what to look for / what matters when choosing.",
     },
-    m.verifiability === "spec"
-      ? {
-          key: "feature_screening", label: "Feature screening", layer: "consideration",
-          situational: true, rivals: "none",
-          hint: "Attribute-first asks: which options have a specific capability.",
-        }
-      : null,
+    {
+      key: "feature_screening", label: "Feature screening", layer: "consideration",
+      situational: true, rivals: "none", recommended: m.verifiability === "spec",
+      hint: "Attribute-first asks: which options have a specific capability.",
+    },
     {
       key: "use_case", label: "Use-case fit", layer: "consideration",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: "Situation-first asks describing a concrete need or workflow.",
     },
     {
       key: "social_validation", label: "Social validation", layer: "consideration",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: m.think_feel === "feel"
         ? "What people love, compliment, or identify with - social proof in identity terms."
         : "What people actually use and rate well - reviews, communities, popularity.",
     },
-    m.involvement === "considered"
-      ? {
-          key: "comparison",
-          label: m.verifiability === "taste" ? "Dupes & alternatives" : "Comparison",
-          layer: "decision", situational: true, rivals: "each",
-          hint: m.verifiability === "taste"
-            ? "Head-to-head and 'similar to X but cheaper/different' asks naming the rival."
-            : "Head-to-head asks naming the client brand against the rival.",
-        }
-      : {
-          key: "premium_worth", label: "Is premium worth it", layer: "decision",
-          situational: false, rivals: "none",
-          hint: "Whether the premium option genuinely beats the basic/store option.",
-        },
+    {
+      key: "comparison",
+      label: m.verifiability === "taste" ? "Dupes & alternatives" : "Comparison",
+      layer: "decision", situational: true, rivals: "each", recommended: considered,
+      hint: m.verifiability === "taste"
+        ? "Head-to-head and 'similar to X but cheaper/different' asks naming the rival."
+        : "Head-to-head asks naming the client brand against the rival.",
+    },
+    {
+      key: "premium_worth", label: "Is premium worth it", layer: "decision",
+      situational: false, rivals: "none", recommended: !considered,
+      hint: "Whether the premium option genuinely beats the basic/store option.",
+    },
     {
       key: "objections", label: "Objections / risk", layer: "decision",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: `The buyer voices the category's dominant worry (${m.risk}) about the client brand by name.`,
     },
     {
       key: "pricing", label: "Pricing / value", layer: "decision",
-      situational: true, rivals: "none",
+      situational: true, rivals: "none", recommended: true,
       hint: "Cost and value-for-money asks; some generic to the category, some naming the client brand.",
     },
-    m.decision_unit === "committee"
-      ? {
-          key: "business_case", label: "Business case", layer: "decision",
-          situational: false, rivals: "none",
-          hint: "The buyer asks for help justifying the client brand internally ('make the case to my CFO').",
-        }
-      : null,
+    {
+      key: "business_case", label: "Business case", layer: "decision",
+      situational: false, rivals: "none", recommended: m.decision_unit === "committee",
+      hint: "The buyer asks for help justifying the client brand internally ('make the case to my CFO').",
+    },
     {
       key: "churn_triggers", label: "Churn triggers", layer: "retention",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "An existing customer wonders whether the client brand is still the right choice.",
     },
     {
       key: "alternatives", label: "Alternatives", layer: "retention",
-      situational: false, rivals: "defensive_offensive",
+      situational: false, rivals: "defensive_offensive", recommended: true,
       hint: "'Alternatives to X' asks - one for the client brand (defensive) and one per rival (offensive).",
     },
-    m.rhythm === "subscription"
-      ? {
-          key: "renewal", label: "Renewal", layer: "retention",
-          situational: false, rivals: "none",
-          hint: "At renewal: is the client brand worth keeping, are there cheaper options.",
-        }
-      : null,
+    {
+      key: "renewal", label: "Renewal", layer: "retention",
+      situational: false, rivals: "none", recommended: m.rhythm === "subscription",
+      hint: "At renewal: is the client brand worth keeping, are there cheaper options.",
+    },
     {
       key: "problem_resolution", label: "Problem resolution", layer: "retention",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "A support-style ask: something about the client brand is broken or messy, how to fix it.",
     },
     {
       key: "expansion", label: "Expansion", layer: "loyalty",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "A happy customer considers using the client brand for more ('roll it out further', 'use it for Y too').",
     },
     {
       key: "ecosystem", label: "Ecosystem", layer: "loyalty",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "What works well WITH the client brand - add-ons, companions, integrations.",
     },
     {
       key: "advocacy", label: "Advocacy", layer: "loyalty",
-      situational: false, rivals: "none",
+      situational: false, rivals: "none", recommended: true,
       hint: "A customer asks how to defend or recommend the client brand to someone else.",
     },
-    m.rhythm === "replenishment"
-      ? {
-          key: "repertoire", label: "Repertoire", layer: "loyalty",
-          situational: false, rivals: "none",
-          hint: "Deepening the habit: more from the same brand, or is it worth switching from the usual.",
-        }
-      : null,
+    {
+      key: "repertoire", label: "Repertoire", layer: "loyalty",
+      situational: false, rivals: "none", recommended: m.rhythm === "replenishment",
+      hint: "Deepening the habit: more from the same brand, or is it worth switching from the usual.",
+    },
   ];
-  return stages.filter((s): s is ComposedStage => s !== null);
+}
+
+/** A library entry without the verdict - what the cell planner consumes. */
+export function stripVerdict(s: LibraryStage): ComposedStage {
+  const { key, label, layer, situational, rivals, hint } = s;
+  return { key, label, layer, situational, rivals, hint };
+}
+
+/** The composed skeleton: the library's recommended stages, in order. */
+export function composeStages(m: Moderators): ComposedStage[] {
+  return stageLibrary(m).filter((s) => s.recommended).map(stripVerdict);
 }
 
 /* ------------------------------ situations ------------------------------ */

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
 import { apiKeyConfigured } from "@/lib/engine/providers";
-import { composeStages, generateGrid, type Moderators } from "@/lib/engine/instrument";
+import { stageLibrary, stripVerdict, generateGrid, type Moderators } from "@/lib/engine/instrument";
 
 export const maxDuration = 120;
 
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
   const { brand, category, competitors, audience, stageKeys, scenarios } = parsed.data;
   const moderators = parsed.data.moderators as unknown as Moderators;
   const kept = new Set(stageKeys);
-  const stages = composeStages(moderators).filter((s) => kept.has(s.key));
+  const stages = stageLibrary(moderators).filter((s) => kept.has(s.key)).map(stripVerdict);
   if (stages.length === 0) {
     return NextResponse.json({ error: "keep at least one stage" }, { status: 400 });
   }
