@@ -560,6 +560,10 @@ export async function generatePhrasings(input: {
   cells: { stage: string; situation: string | null; angle: string; text: string }[];
   /** Total phrasings wanted per cell including the seed. */
   count: number;
+  /** Skip the cache read: the user asked for a fresh set. */
+  force?: boolean;
+  /** Diagnostic hook: receives the raw parsed model output. */
+  onRaw?: (raw: unknown) => void;
 }): Promise<Phrasing[][]> {
   const want = Math.max(0, input.count - 1);
   if (want === 0 || input.cells.length === 0) return input.cells.map(() => []);
@@ -568,94 +572,116 @@ export async function generatePhrasings(input: {
     PHRASINGS_VERSION, input.brand, rivals.join(","), input.audience, String(input.count),
     input.cells.map((c) => c.text).join("\n"),
   ]);
-  const hit = await store.cacheGet(key, CACHE_TTL_MS);
+  const hit = input.force ? null : await store.cacheGet(key, CACHE_TTL_MS);
   if (hit) return JSON.parse(hit) as Phrasing[][];
 
-  const cellText = input.cells
-    .map(
-      (c, i) =>
-        `${i}. [stage=${c.stage} situation=${c.situation ?? "-"} angle=${c.angle}] ${c.text}`
-    )
-    .join("\n");
-  const res = await openaiClient().chat.completions.create({
-    model: MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You write paraphrase sets for a research instrument that measures " +
-          "a brand's standing in AI assistant answers. Each seed prompt below " +
-          "is one designed question. For EACH seed, write exactly " +
-          `${want + PHRASINGS_EXTRA} additional DISTINCT ways a real buyer would ask the SAME ` +
-          "question - same circumstance, same intent, same brands named - in " +
-          "the wordings people actually type into a chat assistant.\n" +
-          "Each paraphrase is a DIFFERENT PERSON in the same circumstance " +
-          "describing it their own way - NOT a rewording of the seed. Do not " +
-          "copy the seed's specific details (its numbers, its examples, its " +
-          "list of symptoms); invent plausible ones of your own that fit the " +
-          "scenario, or leave details out entirely. Some askers give " +
-          "backstory, some just ask.\n" +
-          "Vary, across the set: who is asking (pick realistic roles for the " +
-          "audience - e.g. founder, engineering manager, IT director, " +
-          "procurement, a parent, a gift buyer - and tag each with `asker`), " +
-          "register (casual forum post to formal RFP language), length (a " +
-          "terse 8-word ask to a two-sentence backstory), and question form.\n" +
-          "Rules:\n" +
-          "- If the seed names NO brand, name NO brand or product in any " +
-          "paraphrase. Blind prompts are the measurement.\n" +
-          "- If the seed names brands, every paraphrase names exactly those " +
-          "same brands and no others.\n" +
-          "- Never change the circumstance or the decision being made; never " +
-          "add a new constraint the seed does not have.\n" +
-          "- No verbatim repeats, no trivial reorderings; each paraphrase " +
-          "should be something a different person would plausibly type.\n" +
-          `Decision unit: ${input.moderators.decision_unit}. ` +
-          "Return one object per seed with its index and its paraphrases, in order.",
+  const rivalsList = rivals;
+  /** One model pass over a subset of cells; returns kept phrasings per
+   * subset position. Filtering happens here so a retry sees real gaps. */
+  async function pass(subset: typeof input.cells): Promise<Phrasing[][]> {
+    const cellText = subset
+      .map(
+        (c, i) =>
+          `${i}. [stage=${c.stage} situation=${c.situation ?? "-"} angle=${c.angle}] ${c.text}`
+      )
+      .join("\n");
+    const res = await openaiClient().chat.completions.create({
+      model: MODEL,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You write paraphrase sets for a research instrument that measures " +
+            "a brand's standing in AI assistant answers. Each seed prompt below " +
+            "is one designed question. For EACH seed, write exactly " +
+            `${want + PHRASINGS_EXTRA} additional DISTINCT ways a real buyer would ask the SAME ` +
+            "question - same circumstance, same intent, same brands named - in " +
+            "the wordings people actually type into a chat assistant.\n" +
+            "Each paraphrase is a DIFFERENT PERSON in the same circumstance " +
+            "describing it their own way - NOT a rewording of the seed. Do not " +
+            "copy the seed's specific details (its numbers, its examples, its " +
+            "list of symptoms); invent plausible ones of your own that fit the " +
+            "scenario, or leave details out entirely. Some askers give " +
+            "backstory, some just ask.\n" +
+            "Vary, across the set: who is asking (pick realistic roles for the " +
+            "audience - e.g. founder, engineering manager, IT director, " +
+            "procurement, a parent, a gift buyer - and tag each with `asker`), " +
+            "register (casual forum post to formal RFP language), length (a " +
+            "terse 8-word ask to a two-sentence backstory), and question form.\n" +
+            "Rules:\n" +
+            "- If the seed names NO brand, name NO brand or product in any " +
+            "paraphrase. Blind prompts are the measurement.\n" +
+            "- If the seed names brands, every paraphrase names exactly those " +
+            "same brands and no others.\n" +
+            "- Never change the circumstance or the decision being made; never " +
+            "add a new constraint the seed does not have.\n" +
+            "- No verbatim repeats, no trivial reorderings; each paraphrase " +
+            "should be something a different person would plausibly type.\n" +
+            `Decision unit: ${input.moderators.decision_unit}. ` +
+            "Return one object per seed with its index and its paraphrases, in order.",
+        },
+        {
+          role: "user",
+          content:
+            `Client brand: ${input.brand}\nCategory: ${input.category}\n` +
+            `Rivals: ${rivalsList.join(", ")}\nAudience: ${input.audience ?? "unknown"}\n\n` +
+            `Seeds:\n${cellText}`,
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "phrasings", strict: true, schema: PHRASINGS_SCHEMA },
       },
-      {
-        role: "user",
-        content:
-          `Client brand: ${input.brand}\nCategory: ${input.category}\n` +
-          `Rivals: ${rivals.join(", ")}\nAudience: ${input.audience ?? "unknown"}\n\n` +
-          `Seeds:\n${cellText}`,
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: "phrasings", strict: true, schema: PHRASINGS_SCHEMA },
-    },
-  });
-  const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as {
-    cells: { index: number; phrasings: Phrasing[] }[];
-  };
-  const out: Phrasing[][] = input.cells.map(() => []);
-  for (const c of parsed.cells ?? []) {
-    const seed = input.cells[c.index];
-    if (!seed) continue;
-    const sig = brandSignature(seed.text, input.brand, rivals);
-    const seen = new Set<string>([norm(seed.text)]);
-    const keptWords: Set<string>[] = [wordSet(seed.text)];
-    const kept: Phrasing[] = [];
-    for (const p of c.phrasings ?? []) {
-      const text = humanize((p.text ?? "").trim());
-      if (!text) continue;
-      // The signature check is the blind/branded discipline: a paraphrase of
-      // a blind seed that names a brand is not a paraphrase, it is a leak.
-      if (brandSignature(text, input.brand, rivals) !== sig) continue;
-      const n = norm(text);
-      if (seen.has(n)) continue;
-      // A paraphrase that shares most of its words with the seed or a sibling
-      // is a thesaurus pass, not another person asking; drop it.
-      const ws = wordSet(text);
-      if (keptWords.some((k) => jaccard(k, ws) > MAX_OVERLAP)) continue;
-      seen.add(n);
-      keptWords.push(ws);
-      kept.push({ text, asker: (p.asker ?? "").trim() });
-      if (kept.length >= want) break;
+    });
+    const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as {
+      cells: { index: number; phrasings: Phrasing[] }[];
+    };
+    input.onRaw?.(parsed);
+    const result: Phrasing[][] = subset.map(() => []);
+    for (const c of parsed.cells ?? []) {
+      const seed = subset[c.index];
+      if (!seed) continue;
+      const sig = brandSignature(seed.text, input.brand, rivalsList);
+      const seen = new Set<string>([norm(seed.text)]);
+      const keptWords: Set<string>[] = [wordSet(seed.text)];
+      const kept: Phrasing[] = [];
+      for (const p of c.phrasings ?? []) {
+        const text = humanize((p.text ?? "").trim());
+        if (!text) continue;
+        // The signature check is the blind/branded discipline: a paraphrase of
+        // a blind seed that names a brand is not a paraphrase, it is a leak.
+        if (brandSignature(text, input.brand, rivalsList) !== sig) continue;
+        const n = norm(text);
+        if (seen.has(n)) continue;
+        // A paraphrase that shares most of its words with the seed or a sibling
+        // is a thesaurus pass, not another person asking; drop it.
+        const ws = wordSet(text);
+        if (keptWords.some((k) => jaccard(k, ws) > MAX_OVERLAP)) continue;
+        seen.add(n);
+        keptWords.push(ws);
+        kept.push({ text, asker: (p.asker ?? "").trim() });
+        if (kept.length >= want) break;
+      }
+      result[c.index] = kept;
     }
-    out[c.index] = kept;
+    return result;
   }
-  await store.cacheSet(key, JSON.stringify(out));
+
+  const out = await pass(input.cells);
+  // Reasoning models occasionally return a degenerate, near-empty set for a
+  // whole batch. One retry on the cells that came up short (under half the
+  // target) fills the gap without re-running what already worked.
+  const deficient = out.map((k, i) => (k.length < want / 2 ? i : -1)).filter((i) => i >= 0);
+  if (deficient.length > 0) {
+    const again = await pass(deficient.map((i) => input.cells[i]));
+    deficient.forEach((i, k) => {
+      if (again[k].length > out[i].length) out[i] = again[k];
+    });
+  }
+  // Never cache an all-empty result: that would make a transient failure sticky.
+  if (out.some((k) => k.length > 0)) {
+    await store.cacheSet(key, JSON.stringify(out));
+  }
   return out;
 }
 

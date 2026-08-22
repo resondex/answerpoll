@@ -174,6 +174,7 @@ function ensureSchema(): Promise<void> {
         prompts TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
+      await sql`ALTER TABLE setup_drafts ADD COLUMN IF NOT EXISTS wizard TEXT`;
       await sql`CREATE TABLE IF NOT EXISTS prompts (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
@@ -302,6 +303,7 @@ function rowToDraft(r: Record<string, unknown>): SetupDraft {
     competitors: JSON.parse((r.competitors as string) ?? "[]"),
     audience: (r.audience as string | null) ?? null,
     prompts: r.prompts ? JSON.parse(r.prompts as string) : null,
+    wizard: r.wizard ? JSON.parse(r.wizard as string) : null,
     updated_at: iso(r.updated_at)!,
   };
 }
@@ -623,12 +625,13 @@ export const pgStore: Store = {
     const id = input.id ?? crypto.randomUUID();
     const competitors = JSON.stringify(input.competitors);
     const prompts = input.prompts ? JSON.stringify(input.prompts) : null;
-    await sql`INSERT INTO setup_drafts (id, user_id, brand, category, competitors, audience, prompts, updated_at)
-      VALUES (${id}, ${input.userId}, ${input.brand}, ${input.category}, ${competitors}, ${input.audience}, ${prompts}, now())
+    const wizard = input.wizard ? JSON.stringify(input.wizard) : null;
+    await sql`INSERT INTO setup_drafts (id, user_id, brand, category, competitors, audience, prompts, wizard, updated_at)
+      VALUES (${id}, ${input.userId}, ${input.brand}, ${input.category}, ${competitors}, ${input.audience}, ${prompts}, ${wizard}, now())
       ON CONFLICT (id) DO UPDATE SET
         brand = ${input.brand}, category = ${input.category},
         competitors = ${competitors}, audience = ${input.audience},
-        prompts = ${prompts}, updated_at = now()`;
+        prompts = ${prompts}, wizard = ${wizard}, updated_at = now()`;
     return (await this.getSetupDraft(id))!;
   },
 

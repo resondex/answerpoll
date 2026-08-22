@@ -496,6 +496,8 @@ export interface SetupDraft {
   competitors: string[];
   audience: string | null;
   prompts: { text: string; theme: PromptTheme }[] | null;
+  /** Setup-wizard state saved at every gate (mode, step, grid, engines). */
+  wizard: Record<string, unknown> | null;
   updated_at: string;
 }
 
@@ -643,6 +645,7 @@ export interface Store {
     competitors: string[];
     audience: string | null;
     prompts: { text: string; theme: PromptTheme }[] | null;
+    wizard?: Record<string, unknown> | null;
   }): Promise<SetupDraft>;
   getSetupDraft(id: string): Promise<SetupDraft | null>;
   listSetupDrafts(userId: string | null): Promise<SetupDraft[]>;

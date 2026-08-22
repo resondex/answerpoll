@@ -155,6 +155,10 @@ function createDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_mentions_response ON mentions(response_id);
   `);
   // Databases created before these columns existed need the ALTERs.
+  const draftCols = db.prepare("PRAGMA table_info(setup_drafts)").all() as { name: string }[];
+  if (!draftCols.some((c) => c.name === "wizard")) {
+    db.exec("ALTER TABLE setup_drafts ADD COLUMN wizard TEXT");
+  }
   const cols = db.prepare("PRAGMA table_info(projects)").all() as {
     name: string;
   }[];
@@ -417,6 +421,7 @@ function parseDraft(row: Record<string, string | null>): SetupDraft {
     competitors: JSON.parse(row.competitors ?? "[]"),
     audience: row.audience ?? null,
     prompts: row.prompts ? JSON.parse(row.prompts) : null,
+    wizard: row.wizard ? JSON.parse(row.wizard) : null,
     updated_at: row.updated_at!,
   };
 }
@@ -808,6 +813,9 @@ export const sqliteStore: Store = {
         input.audience,
         input.prompts ? JSON.stringify(input.prompts) : null
       );
+    getDb()
+      .prepare("UPDATE setup_drafts SET wizard = ? WHERE id = ?")
+      .run(input.wizard ? JSON.stringify(input.wizard) : null, id);
     return (await this.getSetupDraft(id))!;
   },
 

@@ -24,6 +24,7 @@ const saveSchema = z.object({
     )
     .nullable()
     .default(null),
+  wizard: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 export async function GET() {
@@ -57,6 +58,7 @@ export async function POST(req: Request) {
     competitors: parsed.data.competitors,
     audience: parsed.data.audience || null,
     prompts: parsed.data.prompts,
+    wizard: parsed.data.wizard ?? null,
   });
   return NextResponse.json({ draft }, { status: 201 });
 }

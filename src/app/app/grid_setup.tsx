@@ -3,16 +3,9 @@
 import { useState } from "react";
 
 /**
- * Buyer Landscape setup: three confirm gates, each cheap to redo and each
- * catching errors before the next step multiplies them.
- *
- *   1. stages & scenarios  - the composed skeleton; the user keeps/drops
- *      stages and edits scenarios before any prompt exists
- *   2. prompts             - one seed prompt per cell; edit or remove
- *   3. paraphrases         - the full phrasing set per cell; edit or remove
- *
- * The page owns the state (create() and the cost line read it); this
- * component owns the gate UI and the three API calls.
+ * Buyer Landscape setup pieces: the state shape, the three API calls, and
+ * one view per gate. The wizard decides where these live (rail, footer,
+ * container); these know nothing about that.
  */
 
 export const PHRASING_COUNT = 10;
@@ -37,10 +30,18 @@ export interface GridCellUi {
   phrasings: string[];
 }
 
+export interface GridStage {
+  key: string;
+  label: string;
+  layer: string;
+  situational: boolean;
+  rivals: "none" | "each" | "defensive_offensive";
+}
+
 export interface GridState {
   step: "compose" | "cells" | "phrasings";
   moderators: Record<string, unknown> & { rationale?: string };
-  stages: { key: string; label: string; layer: string }[];
+  stages: GridStage[];
   keptStages: string[];
   scenarios: { label: string; description: string }[];
   cells: GridCellUi[];
@@ -54,45 +55,61 @@ export function gridPromptCount(g: GridState | null): number {
     .reduce((n, c) => n + 1 + c.phrasings.filter((p) => p.trim()).length, 0);
 }
 
-/** The chips the classification banner shows, in reading order. */
-export function moderatorChips(m: GridState["moderators"]): string[] {
-  const dict: Record<string, string> = {
-    spec: "spec-driven", taste: "taste-driven", trust: "trust-driven",
-    considered: "considered", habitual: "habitual",
-    think: "rational", feel: "identity-led",
-    solo: "solo buyer", household: "household", committee: "committee-bought",
-    one_shot: "one-shot", replenishment: "replenishment", subscription: "subscription",
-    performance: "performance risk", financial: "financial risk",
-    social: "social risk", physical: "physical risk",
-  };
-  return [
-    m.verifiability, m.involvement, m.think_feel,
-    m.decision_unit, m.rhythm, m.risk,
-  ]
-    .map((v) => dict[String(v)] ?? null)
-    .filter((v): v is string => v !== null);
+/** Cells the kept stages and scenarios will produce - the same expansion
+ * rules the engine's planner applies, so the count is exact before anything
+ * is written. */
+export function gridCellCount(g: GridState | null, rivalCount: number): number {
+  if (!g) return 0;
+  const r = Math.min(rivalCount, 4);
+  const kept = new Set(g.keptStages);
+  return g.stages
+    .filter((s) => kept.has(s.key))
+    .reduce((n, s) => {
+      if (s.rivals === "each") return n + r;
+      if (s.rivals === "defensive_offensive") return n + 1 + r;
+      if (s.situational) return n + Math.max(g.scenarios.length, 1);
+      return n + 1;
+    }, 0);
 }
 
-interface Props {
+export function namesAny(text: string, names: string[]): boolean {
+  const t = text.toLowerCase();
+  return names.some((n) => n.trim() && t.includes(n.trim().toLowerCase()));
+}
+
+/** The category read, as editable dimensions. Changing one recomposes the
+ * stage list - the composer is pure code, so that is instant. */
+export const MODERATOR_FIELDS: { key: string; options: [string, string][] }[] = [
+  { key: "verifiability", options: [["spec", "spec-driven"], ["taste", "taste-driven"], ["trust", "trust-driven"]] },
+  { key: "involvement", options: [["considered", "considered"], ["habitual", "habitual"]] },
+  { key: "think_feel", options: [["think", "rational"], ["feel", "identity-led"]] },
+  { key: "decision_unit", options: [["solo", "solo buyer"], ["household", "household"], ["committee", "committee-bought"]] },
+  { key: "rhythm", options: [["one_shot", "one-shot"], ["replenishment", "replenishment"], ["subscription", "subscription"]] },
+  { key: "risk", options: [["performance", "performance risk"], ["financial", "financial risk"], ["social", "social risk"], ["physical", "physical risk"]] },
+];
+
+/** The chips the classification banner shows, in reading order. */
+export function moderatorChips(m: GridState["moderators"]): string[] {
+  return MODERATOR_FIELDS.map((f) => {
+    const v = String(m[f.key] ?? "");
+    return f.options.find(([k]) => k === v)?.[1] ?? null;
+  }).filter((v): v is string => v !== null);
+}
+
+/* ------------------------------- API calls ------------------------------ */
+
+export interface GridSetupArgs {
   brand: string;
   category: string;
   competitors: string[];
   audience: string;
-  detailsReady: boolean;
   state: GridState | null;
   setState: (s: GridState | null) => void;
-  /** Label of the call in flight, or null when idle. */
-  busy: string | null;
   setBusy: (b: string | null) => void;
   setError: (e: string | null) => void;
 }
 
-export function GridSetupPanel({
-  brand, category, competitors, audience, detailsReady,
-  state, setState, busy, setBusy, setError,
-}: Props) {
-  const [openCell, setOpenCell] = useState<number | null>(null);
-
+export function useGridSetup(a: GridSetupArgs) {
   async function post<T>(path: string, body: unknown): Promise<T | null> {
     const res = await fetch(path, {
       method: "POST",
@@ -101,61 +118,76 @@ export function GridSetupPanel({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error ?? "something went wrong");
+      a.setError(data.error ?? "something went wrong");
       return null;
     }
     return data as T;
   }
 
-  async function compose() {
-    setBusy("Reading your category…");
-    setError(null);
+  /** Gate 1. With `moderators`, recompose from an edited category read. */
+  async function compose(moderators?: GridState["moderators"]): Promise<GridState | null> {
+    a.setBusy(moderators ? "Recomposing…" : "Reading your category…");
+    a.setError(null);
     const data = await post<{
       moderators: GridState["moderators"];
-      stages: GridState["stages"];
+      stages: GridStage[];
       scenarios: GridState["scenarios"];
-    }>("/api/setup/grid/compose", { category, audience: audience || undefined });
-    setBusy(null);
-    if (!data) return;
-    setState({
+    }>("/api/setup/grid/compose", {
+      category: a.category,
+      audience: a.audience || undefined,
+      moderators,
+    });
+    a.setBusy(null);
+    if (!data) return null;
+    const next: GridState = {
       step: "compose",
       moderators: data.moderators,
       stages: data.stages,
       keptStages: data.stages.map((s) => s.key),
-      scenarios: data.scenarios,
+      // An edited read keeps the user's scenarios unless the decision unit
+      // changed, which changes what a scenario even is.
+      scenarios:
+        moderators && a.state && a.state.moderators.decision_unit === data.moderators.decision_unit
+          ? a.state.scenarios
+          : data.scenarios,
       cells: [],
-    });
+    };
+    a.setState(next);
+    return next;
   }
 
-  async function writeCells() {
-    if (!state) return;
-    setBusy("Writing your prompts…");
-    setError(null);
+  /** Gate 2: one seed prompt per cell. */
+  async function writeCells(): Promise<GridState | null> {
+    if (!a.state) return null;
+    a.setBusy("Writing your prompts…");
+    a.setError(null);
     const data = await post<{ cells: Omit<GridCellUi, "phrasings">[] }>(
       "/api/setup/grid/cells",
       {
-        brand, category, competitors, audience: audience || undefined,
-        moderators: state.moderators,
-        stageKeys: state.keptStages,
-        scenarios: state.scenarios,
+        brand: a.brand, category: a.category, competitors: a.competitors,
+        audience: a.audience || undefined,
+        moderators: a.state.moderators,
+        stageKeys: a.state.keptStages,
+        scenarios: a.state.scenarios,
       }
     );
-    setBusy(null);
-    if (!data) return;
-    setState({
-      ...state,
+    a.setBusy(null);
+    if (!data) return null;
+    const next: GridState = {
+      ...a.state,
       step: "cells",
       cells: data.cells.map((c) => ({ ...c, phrasings: [] })),
-    });
+    };
+    a.setState(next);
+    return next;
   }
 
-  async function writePhrasings() {
-    if (!state) return;
-    setError(null);
-    const cells = state.cells.filter((c) => c.text.trim());
+  /** Gate 3: paraphrase sets, in small batches so no request runs long. */
+  async function writePhrasings(force = false): Promise<GridState | null> {
+    if (!a.state) return null;
+    a.setError(null);
+    const cells = a.state.cells.filter((c) => c.text.trim());
     const merged: GridCellUi[] = cells.map((c) => ({ ...c, phrasings: [] }));
-    // Small batches, in layer order: a whole grid in one request would run
-    // past the platform's function limit; ~8 cells keeps each call short.
     const batches: { layer: string; idx: number[] }[] = [];
     for (const layer of LAYERS) {
       const idx = merged.map((c, i) => (c.layer === layer ? i : -1)).filter((i) => i >= 0);
@@ -165,12 +197,13 @@ export function GridSetupPanel({
     }
     let done = 0;
     for (const { layer, idx } of batches) {
-      setBusy(`Writing paraphrases… ${layer} (${done}/${cells.length})`);
+      a.setBusy(`Writing paraphrases… ${layer} (${done}/${cells.length})`);
       const data = await post<{ phrasings: { text: string; asker: string }[][] }>(
         "/api/setup/grid/phrasings",
         {
-          brand, category, competitors, audience: audience || undefined,
-          moderators: state.moderators,
+          brand: a.brand, category: a.category, competitors: a.competitors,
+          audience: a.audience || undefined,
+          moderators: a.state.moderators,
           cells: idx.map((i) => ({
             stage: merged[i].stage,
             situation: merged[i].situation,
@@ -178,301 +211,262 @@ export function GridSetupPanel({
             text: merged[i].text,
           })),
           count: PHRASING_COUNT,
+          force,
         }
       );
       if (!data) {
-        setBusy(null);
-        return;
+        a.setBusy(null);
+        return null;
       }
       idx.forEach((i, k) => {
         merged[i] = { ...merged[i], phrasings: (data.phrasings[k] ?? []).map((p) => p.text) };
       });
       done += idx.length;
     }
-    setBusy(null);
-    setState({ ...state, step: "phrasings", cells: merged });
-    setOpenCell(null);
+    a.setBusy(null);
+    const next: GridState = { ...a.state, step: "phrasings", cells: merged };
+    a.setState(next);
+    return next;
   }
 
-  function stageLabel(key: string): string {
-    return state?.stages.find((s) => s.key === key)?.label ?? key;
-  }
+  return { compose, writeCells, writePhrasings };
+}
 
-  function cellMeta(c: GridCellUi): string {
-    return (
-      stageLabel(c.stage) +
-      (c.situation ? ` · ${c.situation}` : "") +
-      (c.angle !== "generic"
-        ? ` · ${c.angle === "defensive" ? "your churn moment" : `vs ${c.angle}`}`
-        : "")
-    );
-  }
+/* -------------------------------- views --------------------------------- */
 
-  /* ------------------------------- gate 0 -------------------------------- */
-  if (!state) {
-    return (
-      <button
-        type="button"
-        onClick={compose}
-        disabled={!detailsReady || busy !== null}
-        className="btn-primary w-fit"
-      >
-        {busy ?? "Compose stages & scenarios"}
-      </button>
-    );
-  }
+function stageLabel(state: GridState, key: string): string {
+  return state.stages.find((s) => s.key === key)?.label ?? key;
+}
 
-  const banner = (
-    <div className="rounded-lg border border-line bg-surface-1 px-3.5 py-2.5 grid gap-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          We read your category as
-        </span>
-        {moderatorChips(state.moderators).map((c) => (
-          <span
-            key={c}
-            className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-medium text-primary"
-          >
-            {c}
-          </span>
-        ))}
-      </div>
-      {typeof state.moderators.rationale === "string" && (
-        <p className="text-[12px] text-ink-3">{state.moderators.rationale}</p>
-      )}
-    </div>
+export function cellMeta(state: GridState, c: GridCellUi): string {
+  return (
+    stageLabel(state, c.stage) +
+    (c.situation ? ` · ${c.situation}` : "") +
+    (c.angle !== "generic"
+      ? ` · ${c.angle === "defensive" ? "your churn moment" : `vs ${c.angle}`}`
+      : "")
   );
+}
 
-  const stepper = (
-    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
-      {(
-        [
-          ["compose", "1 · Stages & scenarios"],
-          ["cells", "2 · Prompts"],
-          ["phrasings", "3 · Paraphrases"],
-        ] as const
-      ).map(([k, label], i) => (
-        <span key={k} className="flex items-center gap-2">
-          {i > 0 && <span className="text-line">›</span>}
-          <span className={k === state.step ? "text-primary" : "text-ink-3"}>{label}</span>
-        </span>
-      ))}
-    </div>
-  );
-
-  /* ------------------------------- gate 1 -------------------------------- */
-  if (state.step === "compose") {
-    return (
-      <div className="grid gap-3">
-        {stepper}
-        {banner}
-        <div className="grid gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-            Stages - untick any that don&apos;t fit your category
+/** Gate 1: the category read (editable), the stages (keep/drop), the scenarios. */
+export function StagesGate({
+  state, setState, onRecompose, busy,
+}: {
+  state: GridState;
+  setState: (s: GridState) => void;
+  onRecompose: (m: GridState["moderators"]) => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="grid gap-5">
+      <div className="rounded-lg border border-line bg-surface-1 px-4 py-3 grid gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3 mr-1">
+            We read your category as
           </span>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {LAYERS.map((layer) => {
-              const stages = state.stages.filter((s) => s.layer === layer);
-              if (stages.length === 0) return null;
-              return (
-                <div key={layer} className="grid gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-                    {layer}
-                  </span>
-                  {stages.map((s) => {
-                    const kept = state.keptStages.includes(s.key);
-                    return (
-                      <label key={s.key} className="flex items-center gap-2 text-[13px]">
-                        <input
-                          type="checkbox"
-                          checked={kept}
-                          onChange={(e) =>
-                            setState({
-                              ...state,
-                              keptStages: e.target.checked
-                                ? [...state.keptStages, s.key]
-                                : state.keptStages.filter((k) => k !== s.key),
-                            })
-                          }
-                        />
-                        <span className={kept ? "text-ink" : "text-ink-3 line-through"}>
-                          {s.label}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div className="grid gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-            Buying scenarios - the circumstances that change the right answer
-          </span>
-          {state.scenarios.map((sc, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <input
-                className="input w-40 shrink-0 text-sm"
-                value={sc.label}
-                placeholder="label"
-                onChange={(e) =>
-                  setState({
-                    ...state,
-                    scenarios: state.scenarios.map((q, j) =>
-                      j === i ? { ...q, label: e.target.value } : q
-                    ),
-                  })
-                }
-              />
-              <textarea
-                className="input w-full resize-none field-sizing-content text-sm"
-                rows={1}
-                value={sc.description}
-                placeholder="one sentence describing the circumstance"
-                onChange={(e) =>
-                  setState({
-                    ...state,
-                    scenarios: state.scenarios.map((q, j) =>
-                      j === i ? { ...q, description: e.target.value } : q
-                    ),
-                  })
-                }
-              />
-              <button
-                type="button"
-                aria-label="remove scenario"
-                onClick={() =>
-                  setState({ ...state, scenarios: state.scenarios.filter((_, j) => j !== i) })
-                }
-                className="text-ink-3 hover:text-danger text-lg leading-none px-1"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {state.scenarios.length < 4 && (
-            <button
-              type="button"
-              onClick={() =>
-                setState({
-                  ...state,
-                  scenarios: [...state.scenarios, { label: "", description: "" }],
-                })
+          {MODERATOR_FIELDS.map((f) => (
+            <select
+              key={f.key}
+              aria-label={f.key.replace("_", " ")}
+              value={String(state.moderators[f.key] ?? "")}
+              disabled={busy}
+              onChange={(e) =>
+                onRecompose({ ...state.moderators, [f.key]: e.target.value })
               }
-              className="text-[13px] font-medium text-primary hover:opacity-80 w-fit"
+              className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-medium text-primary border-0 cursor-pointer"
             >
-              + Add scenario
-            </button>
-          )}
+              {f.options.map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          ))}
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={compose}
-            disabled={busy !== null}
-            className="text-[13px] font-medium text-ink-3 hover:text-ink"
-          >
-            Recompose
-          </button>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={writeCells}
-            disabled={
-              busy !== null ||
-              state.keptStages.length === 0 ||
-              state.scenarios.some((s) => !s.label.trim())
-            }
-            className="btn-primary"
-          >
-            {busy ?? "Looks right - write the prompts"}
-          </button>
-        </div>
+        {typeof state.moderators.rationale === "string" && (
+          <p className="text-[12px] text-ink-3">
+            {state.moderators.rationale} Change any read above and the stages
+            recompose.
+          </p>
+        )}
       </div>
-    );
-  }
 
-  /* ------------------------------- gate 2 -------------------------------- */
-  if (state.step === "cells") {
-    return (
-      <div className="grid gap-3">
-        {stepper}
-        <div className="grid gap-3 max-h-96 overflow-y-auto pr-1">
+      <div className="grid gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+          Stages - untick any that don&apos;t fit your category
+        </span>
+        <div className="grid gap-3 sm:grid-cols-3">
           {LAYERS.map((layer) => {
-            const cells = state.cells.map((c, i) => ({ ...c, i })).filter((c) => c.layer === layer);
-            if (cells.length === 0) return null;
+            const stages = state.stages.filter((s) => s.layer === layer);
+            if (stages.length === 0) return null;
             return (
-              <div key={layer} className="grid gap-1.5">
+              <div key={layer} className="grid gap-1 content-start">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
                   {layer}
                 </span>
-                {cells.map((c) => (
-                  <div key={c.i} className="flex items-start gap-2">
-                    <span className="w-40 shrink-0 pt-1.5 text-[11px] leading-tight text-ink-3">
-                      {cellMeta(c)}
-                    </span>
-                    <textarea
-                      className="input w-full resize-none field-sizing-content text-sm"
-                      rows={1}
-                      value={c.text}
-                      onChange={(e) =>
-                        setState({
-                          ...state,
-                          cells: state.cells.map((q, j) =>
-                            j === c.i ? { ...q, text: e.target.value } : q
-                          ),
-                        })
-                      }
-                    />
-                    <button
-                      type="button"
-                      aria-label="remove cell"
-                      onClick={() =>
-                        setState({ ...state, cells: state.cells.filter((_, j) => j !== c.i) })
-                      }
-                      className="text-ink-3 hover:text-danger text-lg leading-none px-1"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
+                {stages.map((s) => {
+                  const kept = state.keptStages.includes(s.key);
+                  return (
+                    <label key={s.key} className="flex items-center gap-2 text-[13px]">
+                      <input
+                        type="checkbox"
+                        checked={kept}
+                        onChange={(e) =>
+                          setState({
+                            ...state,
+                            keptStages: e.target.checked
+                              ? [...state.keptStages, s.key]
+                              : state.keptStages.filter((k) => k !== s.key),
+                          })
+                        }
+                      />
+                      <span className={kept ? "text-ink" : "text-ink-3 line-through"}>
+                        {s.label}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             );
           })}
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setState({ ...state, step: "compose", cells: [] })}
-            disabled={busy !== null}
-            className="text-[13px] font-medium text-ink-3 hover:text-ink"
-          >
-            ← Back to stages & scenarios
-          </button>
-          <span className="flex-1" />
-          <button
-            type="button"
-            onClick={writePhrasings}
-            disabled={busy !== null || state.cells.filter((c) => c.text.trim()).length < 4}
-            className="btn-primary"
-          >
-            {busy ?? "Looks right - write the paraphrases"}
-          </button>
-        </div>
       </div>
-    );
-  }
 
-  /* ------------------------------- gate 3 -------------------------------- */
+      <div className="grid gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+          Buying scenarios - the circumstances that change the right answer
+        </span>
+        {state.scenarios.map((sc, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <input
+              className="input w-48 shrink-0 text-sm"
+              value={sc.label}
+              placeholder="label"
+              onChange={(e) =>
+                setState({
+                  ...state,
+                  scenarios: state.scenarios.map((q, j) =>
+                    j === i ? { ...q, label: e.target.value } : q
+                  ),
+                })
+              }
+            />
+            <textarea
+              className="input w-full resize-none field-sizing-content text-sm"
+              rows={1}
+              value={sc.description}
+              placeholder="one sentence describing the circumstance"
+              onChange={(e) =>
+                setState({
+                  ...state,
+                  scenarios: state.scenarios.map((q, j) =>
+                    j === i ? { ...q, description: e.target.value } : q
+                  ),
+                })
+              }
+            />
+            <button
+              type="button"
+              aria-label="remove scenario"
+              onClick={() =>
+                setState({ ...state, scenarios: state.scenarios.filter((_, j) => j !== i) })
+              }
+              className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {state.scenarios.length < 4 && (
+          <button
+            type="button"
+            onClick={() =>
+              setState({
+                ...state,
+                scenarios: [...state.scenarios, { label: "", description: "" }],
+              })
+            }
+            className="text-[13px] font-medium text-primary hover:opacity-80 w-fit"
+          >
+            + Add scenario
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Gate 2: one seed prompt per cell, grouped by layer. */
+export function CellsGate({
+  state, setState, brandNames,
+}: {
+  state: GridState;
+  setState: (s: GridState) => void;
+  brandNames: string[];
+}) {
+  return (
+    <div className="grid gap-4">
+      {LAYERS.map((layer) => {
+        const cells = state.cells.map((c, i) => ({ ...c, i })).filter((c) => c.layer === layer);
+        if (cells.length === 0) return null;
+        return (
+          <div key={layer} className="grid gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+              {layer}
+            </span>
+            {cells.map((c) => (
+              <div key={c.i} className="flex items-start gap-2">
+                <span className="w-44 shrink-0 pt-1.5 text-[11px] leading-tight text-ink-3">
+                  {cellMeta(state, c)}
+                  <span className={`ml-1 ${namesAny(c.text, brandNames) ? "text-warning" : "text-primary"}`}>
+                    · {namesAny(c.text, brandNames) ? "branded" : "blind"}
+                  </span>
+                </span>
+                <textarea
+                  className="input w-full resize-none field-sizing-content text-sm"
+                  rows={1}
+                  value={c.text}
+                  onChange={(e) =>
+                    setState({
+                      ...state,
+                      cells: state.cells.map((q, j) =>
+                        j === c.i ? { ...q, text: e.target.value } : q
+                      ),
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  aria-label="remove cell"
+                  onClick={() =>
+                    setState({ ...state, cells: state.cells.filter((_, j) => j !== c.i) })
+                  }
+                  className="text-ink-3 hover:text-danger text-lg leading-none px-1"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Gate 3: every cell's paraphrase set, expandable. */
+export function PhrasingsGate({
+  state, setState,
+}: {
+  state: GridState;
+  setState: (s: GridState) => void;
+}) {
+  const [openCell, setOpenCell] = useState<number | null>(null);
   return (
     <div className="grid gap-3">
-      {stepper}
       <p className="text-[12px] text-ink-3">
         Each prompt is asked {PHRASING_COUNT} ways - the same question in the
         wordings real buyers use. Open a cell to edit or remove any of them.
       </p>
-      <div className="grid gap-1.5 max-h-96 overflow-y-auto pr-1">
+      <div className="grid gap-1.5">
         {state.cells.map((c, i) => {
           const open = openCell === i;
           const n = 1 + c.phrasings.filter((p) => p.trim()).length;
@@ -483,8 +477,8 @@ export function GridSetupPanel({
                 onClick={() => setOpenCell(open ? null : i)}
                 className="w-full flex items-start gap-3 px-3 py-2 text-left"
               >
-                <span className="w-36 shrink-0 text-[11px] leading-tight text-ink-3 pt-0.5">
-                  {cellMeta(c)}
+                <span className="w-44 shrink-0 text-[11px] leading-tight text-ink-3 pt-0.5">
+                  {cellMeta(state, c)}
                 </span>
                 <span className="flex-1 text-sm text-ink-2">{c.text}</span>
                 <span
@@ -551,31 +545,6 @@ export function GridSetupPanel({
             </div>
           );
         })}
-      </div>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() =>
-            setState({
-              ...state,
-              step: "cells",
-              cells: state.cells.map((c) => ({ ...c, phrasings: [] })),
-            })
-          }
-          disabled={busy !== null}
-          className="text-[13px] font-medium text-ink-3 hover:text-ink"
-        >
-          ← Back to prompts
-        </button>
-        <span className="flex-1" />
-        <button
-          type="button"
-          onClick={writePhrasings}
-          disabled={busy !== null}
-          className="text-[13px] font-medium text-ink-3 hover:text-ink"
-        >
-          {busy ?? "Rewrite paraphrases"}
-        </button>
       </div>
     </div>
   );

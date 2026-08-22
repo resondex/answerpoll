@@ -26,6 +26,7 @@ const Body = z.object({
     .min(1)
     .max(30),
   count: z.number().int().min(2).max(20).default(10),
+  force: z.boolean().optional(),
 });
 
 /** Gate 3: the paraphrase set for each confirmed seed prompt. */
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
-  const { brand, category, competitors, audience, cells, count } = parsed.data;
+  const { brand, category, competitors, audience, cells, count, force } = parsed.data;
   const phrasings = await generatePhrasings({
     brand,
     category,
@@ -48,6 +49,7 @@ export async function POST(req: Request) {
     moderators: parsed.data.moderators as unknown as Moderators,
     cells,
     count,
+    force,
   });
   return NextResponse.json({ phrasings });
 }
