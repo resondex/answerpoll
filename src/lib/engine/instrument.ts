@@ -333,6 +333,61 @@ export async function generateSituations(input: {
   return situations;
 }
 
+/**
+ * One more scenario for the same category, distinct from the ones already
+ * on the table (whether the user kept them or not). Same admission test as
+ * the initial set. Cached by what it was asked to avoid, so the next user
+ * in the same category with the same list gets the same suggestion.
+ */
+export async function suggestScenario(input: {
+  category: string;
+  audience: string | null;
+  decisionUnit: Moderators["decision_unit"];
+  exclude: Situation[];
+}): Promise<Situation | null> {
+  const avoid = input.exclude.map((s) => s.label.trim().toLowerCase()).filter(Boolean).sort();
+  const key = cacheKey("scenario_more", [
+    input.category, input.audience, input.decisionUnit, avoid.join("|"),
+  ]);
+  const hit = await store.cacheGet(key, CACHE_TTL_MS);
+  if (hit) return JSON.parse(hit) as Situation;
+  const res = await openaiClient().chat.completions.create({
+    model: MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Propose exactly ONE additional buyer situation for a research " +
+          "instrument. A situation earns its place ONLY if it changes what a " +
+          "competent advisor would recommend - facts about the decision, never " +
+          "facts about the speaker. It must be genuinely different from every " +
+          "situation already listed (a different axis of circumstance, not a " +
+          "variant of one). Use " + SITUATION_TEMPLATE[input.decisionUnit] +
+          "Label 2-4 plain words; description one short sentence.",
+      },
+      {
+        role: "user",
+        content:
+          `Category: ${input.category}\nAudience: ${input.audience ?? "unknown"}\n` +
+          `Already listed:\n${input.exclude.map((s) => `- ${s.label}: ${s.description}`).join("\n") || "- (none)"}`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "situations", strict: true, schema: SITUATIONS_SCHEMA },
+    },
+  });
+  const parsed = JSON.parse(res.choices[0]?.message?.content ?? "{}") as {
+    situations: Situation[];
+  };
+  const fresh = (parsed.situations ?? []).find(
+    (s) => s.label.trim() && !avoid.includes(s.label.trim().toLowerCase())
+  );
+  if (!fresh) return null;
+  await store.cacheSet(key, JSON.stringify(fresh));
+  return fresh;
+}
+
 /* -------------------------------- cells --------------------------------- */
 
 export interface GridCell {

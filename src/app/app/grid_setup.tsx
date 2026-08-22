@@ -40,13 +40,52 @@ export interface GridStage {
   recommended?: boolean;
 }
 
+export interface ScenarioRow {
+  label: string;
+  description: string;
+  /** Came from the model (initial set or "suggest another") - never
+   * deletable, only unticked, so it can always come back. */
+  suggested: boolean;
+  /** Whether this row is in the grid. */
+  on: boolean;
+  /** The suggestion as generated, for "reset to suggested". */
+  original?: { label: string; description: string };
+}
+
+export const MAX_SCENARIOS = 4;
+
 export interface GridState {
   step: "compose" | "cells" | "phrasings";
   moderators: Record<string, unknown> & { rationale?: string };
   stages: GridStage[];
   keptStages: string[];
+  /** The active scenarios - what the cell planner multiplies by. Kept in
+   * sync with scenarioRows (the editable table) by withScenarioRows(). */
   scenarios: { label: string; description: string }[];
+  scenarioRows?: ScenarioRow[];
   cells: GridCellUi[];
+}
+
+/** The editable scenario table; older drafts only carry the active list. */
+export function scenarioRows(g: GridState): ScenarioRow[] {
+  return (
+    g.scenarioRows ??
+    g.scenarios.map((s) => ({ ...s, suggested: true, on: true, original: { ...s } }))
+  );
+}
+
+export function withScenarioRows(g: GridState, rows: ScenarioRow[]): GridState {
+  return {
+    ...g,
+    scenarioRows: rows,
+    scenarios: rows.filter((r) => r.on).map(({ label, description }) => ({ label, description })),
+  };
+}
+
+function rowsFromSuggested(list: { label: string; description: string }[]): ScenarioRow[] {
+  return list.map((s, i) => ({
+    ...s, suggested: true, on: i < MAX_SCENARIOS, original: { ...s },
+  }));
 }
 
 /** Prompts the tracker will hold: every kept seed plus its paraphrases. */
@@ -141,21 +180,49 @@ export function useGridSetup(a: GridSetupArgs) {
     });
     a.setBusy(null);
     if (!data) return null;
-    const next: GridState = {
-      step: "compose",
-      moderators: data.moderators,
-      stages: data.stages,
-      keptStages: data.stages.filter((s) => s.recommended !== false).map((s) => s.key),
-      // An edited read keeps the user's scenarios unless the decision unit
-      // changed, which changes what a scenario even is.
-      scenarios:
-        moderators && a.state && a.state.moderators.decision_unit === data.moderators.decision_unit
-          ? a.state.scenarios
-          : data.scenarios,
-      cells: [],
-    };
+    // An edited read keeps the user's scenario table unless the decision
+    // unit changed, which changes what a scenario even is.
+    const keepRows =
+      moderators && a.state && a.state.moderators.decision_unit === data.moderators.decision_unit;
+    const next: GridState = withScenarioRows(
+      {
+        step: "compose",
+        moderators: data.moderators,
+        stages: data.stages,
+        keptStages: data.stages.filter((s) => s.recommended !== false).map((s) => s.key),
+        scenarios: [],
+        cells: [],
+      },
+      keepRows && a.state ? scenarioRows(a.state) : rowsFromSuggested(data.scenarios)
+    );
     a.setState(next);
     return next;
+  }
+
+  /** Gate 1 helper: one more scenario, distinct from everything listed. */
+  async function suggestScenario(): Promise<void> {
+    if (!a.state) return;
+    const rows = scenarioRows(a.state);
+    a.setBusy("Thinking of another scenario…");
+    a.setError(null);
+    const data = await post<{ scenario: { label: string; description: string } }>(
+      "/api/setup/grid/scenario",
+      {
+        category: a.category,
+        audience: a.audience || undefined,
+        decisionUnit: a.state.moderators.decision_unit,
+        exclude: rows.map(({ label, description }) => ({ label, description })),
+      }
+    );
+    a.setBusy(null);
+    if (!data) return;
+    const active = rows.filter((r) => r.on).length;
+    a.setState(
+      withScenarioRows(a.state, [
+        ...rows,
+        { ...data.scenario, suggested: true, on: active < MAX_SCENARIOS, original: { ...data.scenario } },
+      ])
+    );
   }
 
   /** Gate 2: one seed prompt per cell. */
@@ -231,7 +298,7 @@ export function useGridSetup(a: GridSetupArgs) {
     return next;
   }
 
-  return { compose, writeCells, writePhrasings };
+  return { compose, writeCells, writePhrasings, suggestScenario };
 }
 
 /* -------------------------------- views --------------------------------- */
@@ -252,13 +319,19 @@ export function cellMeta(state: GridState, c: GridCellUi): string {
 
 /** Gate 1: the category read (editable), the stages (keep/drop), the scenarios. */
 export function StagesGate({
-  state, setState, onRecompose, busy,
+  state, setState, onRecompose, onSuggestScenario, busy,
 }: {
   state: GridState;
   setState: (s: GridState) => void;
   onRecompose: (m: GridState["moderators"]) => void;
+  onSuggestScenario: () => void;
   busy: boolean;
 }) {
+  const rows = scenarioRows(state);
+  const active = rows.filter((r) => r.on).length;
+  const setRows = (next: ScenarioRow[]) => setState(withScenarioRows(state, next));
+  const updateRow = (i: number, patch: Partial<ScenarioRow>) =>
+    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
     <div className="grid gap-5">
       <div className="rounded-lg border border-line bg-surface-1 px-4 py-3 grid gap-2">
@@ -339,64 +412,86 @@ export function StagesGate({
       </div>
 
       <div className="grid gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
-          Buying scenarios - the circumstances that change the right answer
-        </span>
-        {state.scenarios.map((sc, i) => (
-          <div key={i} className="flex items-start gap-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+            Buying scenarios - the circumstances that change the right answer
+          </span>
+          <span className="text-[11px] text-ink-3">
+            {active} of {MAX_SCENARIOS} in the grid - each one multiplies the scenario stages
+          </span>
+        </div>
+        {rows.map((sc, i) => (
+          <div key={i} className={`flex items-start gap-2 ${sc.on ? "" : "opacity-60"}`}>
+            <input
+              type="checkbox"
+              aria-label={sc.on ? "remove from grid" : "add to grid"}
+              className="mt-2.5"
+              checked={sc.on}
+              disabled={!sc.on && active >= MAX_SCENARIOS}
+              onChange={(e) => updateRow(i, { on: e.target.checked })}
+            />
             <input
               className="input w-48 shrink-0 text-sm"
               value={sc.label}
               placeholder="label"
-              onChange={(e) =>
-                setState({
-                  ...state,
-                  scenarios: state.scenarios.map((q, j) =>
-                    j === i ? { ...q, label: e.target.value } : q
-                  ),
-                })
-              }
+              onChange={(e) => updateRow(i, { label: e.target.value })}
             />
             <textarea
               className="input w-full resize-none field-sizing-content text-sm"
               rows={1}
               value={sc.description}
               placeholder="one sentence describing the circumstance"
-              onChange={(e) =>
-                setState({
-                  ...state,
-                  scenarios: state.scenarios.map((q, j) =>
-                    j === i ? { ...q, description: e.target.value } : q
-                  ),
-                })
-              }
+              onChange={(e) => updateRow(i, { description: e.target.value })}
             />
-            <button
-              type="button"
-              aria-label="remove scenario"
-              onClick={() =>
-                setState({ ...state, scenarios: state.scenarios.filter((_, j) => j !== i) })
-              }
-              className="text-ink-3 hover:text-danger text-lg leading-none px-1"
-            >
-              ×
-            </button>
+            {sc.suggested ? (
+              <span className="w-6 shrink-0 pt-2 text-center text-[10px] font-medium uppercase tracking-wide text-primary/70" title="suggested - untick to leave it out">
+                ✓
+              </span>
+            ) : (
+              <button
+                type="button"
+                aria-label="delete scenario"
+                onClick={() => setRows(rows.filter((_, j) => j !== i))}
+                className="w-6 shrink-0 text-ink-3 hover:text-danger text-lg leading-none"
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
-        {state.scenarios.length < 4 && (
+        <div className="flex flex-wrap items-center gap-4">
           <button
             type="button"
             onClick={() =>
-              setState({
-                ...state,
-                scenarios: [...state.scenarios, { label: "", description: "" }],
-              })
+              setRows([...rows, { label: "", description: "", suggested: false, on: active < MAX_SCENARIOS }])
             }
-            className="text-[13px] font-medium text-primary hover:opacity-80 w-fit"
+            className="text-[13px] font-medium text-primary hover:opacity-80"
           >
-            + Add scenario
+            + Add your own
           </button>
-        )}
+          <button
+            type="button"
+            onClick={onSuggestScenario}
+            disabled={busy}
+            className="text-[13px] font-medium text-primary hover:opacity-80 disabled:opacity-50"
+          >
+            Suggest another
+          </button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() =>
+              setRows(
+                rows
+                  .filter((r) => r.suggested)
+                  .map((r, i) => ({ ...r, ...(r.original ?? {}), on: i < MAX_SCENARIOS }))
+              )
+            }
+            className="text-[13px] font-medium text-ink-3 hover:text-ink"
+          >
+            Reset to suggested
+          </button>
+        </div>
       </div>
     </div>
   );
